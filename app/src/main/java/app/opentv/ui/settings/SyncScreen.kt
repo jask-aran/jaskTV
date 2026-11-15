@@ -24,6 +24,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.opentv.R
 import app.opentv.sync.SyncServer
+import app.opentv.sync.CloudSyncConfig
 import app.opentv.ui.SyncViewModel
 
 /**
@@ -53,7 +60,7 @@ fun SyncScreen(
     onBack: () -> Unit,
     viewModel: SyncViewModel = viewModel(),
 ) {
-    var mode by remember { mutableStateOf(Mode.SHARE) }
+    var mode by remember { mutableStateOf(Mode.CLOUD) }
 
     Column(
         Modifier
@@ -70,7 +77,9 @@ fun SyncScreen(
         )
 
         Spacer(Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ModeChip("Internet", mode == Mode.CLOUD) { mode = Mode.CLOUD }
             ModeChip(stringResource(R.string.sync_share_from_here), mode == Mode.SHARE) { mode = Mode.SHARE }
             ModeChip(stringResource(R.string.sync_receive), mode == Mode.RECEIVE) { mode = Mode.RECEIVE }
             ModeChip(stringResource(R.string.sync_nas), mode == Mode.NAS) { mode = Mode.NAS }
@@ -78,6 +87,7 @@ fun SyncScreen(
         Spacer(Modifier.height(20.dp))
 
         when (mode) {
+            Mode.CLOUD -> CloudPane(viewModel)
             Mode.SHARE -> SharePane(viewModel)
             Mode.RECEIVE -> ReceivePane(viewModel)
             Mode.NAS -> NasPane(viewModel)
@@ -85,7 +95,93 @@ fun SyncScreen(
     }
 }
 
-private enum class Mode { SHARE, RECEIVE, NAS }
+private enum class Mode { CLOUD, SHARE, RECEIVE, NAS }
+
+/**
+ * Account-like, internet-wide library sync via existing WebDAV hosting.
+ * Every device uses the same WebDAV folder and encryption phrase; no jaskTV server is needed.
+ */
+@Composable
+private fun CloudPane(viewModel: SyncViewModel) {
+    val initial = remember { viewModel.cloudSettings() }
+    var url by remember { mutableStateOf(initial.endpoint) }
+    var username by remember { mutableStateOf(initial.username) }
+    var password by remember { mutableStateOf(initial.password) }
+    var phrase by remember { mutableStateOf(initial.encryptionPhrase) }
+    var enabled by remember { mutableStateOf(initial.enabled) }
+    var error by remember { mutableStateOf("") }
+    val state by viewModel.cloudState.collectAsState()
+    val valid = url.trim().startsWith("https://", ignoreCase = true) &&
+        username.isNotBlank() && password.isNotBlank() && phrase.length >= 12
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        .padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(Modifier.widthIn(max = 720.dp)) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Sync Libraries over the internet", style = MaterialTheme.typography.titleLarge)
+                Text("Uses existing hosted WebDAV storage (for example Koofr or Nextcloud). " +
+                    "No jaskTV account server. The files are encrypted end-to-end with a " +
+                    "shared passphrase; all your devices need the same connection details.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Only small metadata snapshots travel: viewer profiles, saved collections, " +
+                    "favourites and playback progress. Video files stay on each device.",
+                    style = MaterialTheme.typography.bodySmall)
+                HorizontalDivider()
+                OutlinedTextField(url, onValueChange = { url = it.trim() },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("WebDAV folder URL (HTTPS)") },
+                    placeholder = { Text("https://app.koofr.net/dav/Koofr") })
+                OutlinedTextField(username, onValueChange = { username = it.trim() },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("WebDAV username") })
+                OutlinedTextField(password, onValueChange = { password = it },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    label = { Text("WebDAV app password") })
+                OutlinedTextField(phrase, onValueChange = { phrase = it },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    label = { Text("Shared encryption phrase (12+ characters)") })
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Automatic sync when the app opens and periodically",
+                        modifier = Modifier.weight(1f))
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(enabled = valid, onClick = {
+                        val ok = viewModel.saveCloudSettings(CloudSyncConfig(
+                            endpoint = url.trim(), username = username.trim(),
+                            password = password, encryptionPhrase = phrase, enabled = enabled))
+                        error = if (ok) "Connection settings saved." else "Could not save these settings."
+                    }) { Text("Save connection") }
+                    OutlinedButton(enabled = valid && state !is SyncViewModel.CloudState.Syncing,
+                        onClick = {
+                            val ok = viewModel.saveCloudSettings(CloudSyncConfig(
+                                endpoint = url.trim(), username = username.trim(),
+                                password = password, encryptionPhrase = phrase, enabled = true))
+                            if (ok) {
+                                enabled = true
+                                viewModel.syncCloudNow()
+                            } else error = "Could not save these settings."
+                        }) { Text("Sync now") }
+                }
+                if (error.isNotBlank()) Text(error, style = MaterialTheme.typography.bodySmall)
+                when (val current = state) {
+                    is SyncViewModel.CloudState.Syncing -> Text("Syncing encrypted data…")
+                    is SyncViewModel.CloudState.Done ->
+                        Text(current.message, color = MaterialTheme.colorScheme.primary)
+                    is SyncViewModel.CloudState.Failed ->
+                        Text(current.message, color = MaterialTheme.colorScheme.error)
+                    else -> Unit
+                }
+                Text("Sync is currently additive for Library collections. Removing or renaming " +
+                    "an item on one device may require manual cleanup on another. " +
+                    "Downloads are not transferred. Do not lose your encryption phrase.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
 
 @Composable
 private fun SharePane(viewModel: SyncViewModel) {
