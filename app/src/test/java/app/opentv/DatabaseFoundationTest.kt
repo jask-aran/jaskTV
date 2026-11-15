@@ -126,7 +126,7 @@ class DatabaseFoundationTest {
             assertThat(source.localPlaylistFileName).isNull()
             assertThat(source.localPlaylistDisplayName).isNull()
         }
-        assertThat(database!!.openHelper.writableDatabase.version).isEqualTo(17)
+        assertThat(database!!.openHelper.writableDatabase.version).isEqualTo(19)
         // Backfill updates must leave the external-content FTS index searchable.
         database!!.openHelper.writableDatabase.query("SELECT count(*) FROM movies_fts WHERE movies_fts MATCH 'film*'").use {
             assertThat(it.moveToFirst()).isTrue()

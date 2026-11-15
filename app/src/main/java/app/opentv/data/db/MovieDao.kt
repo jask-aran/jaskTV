@@ -159,14 +159,24 @@ abstract class MovieDao {
     @Query("UPDATE movies SET favourite = 1 WHERE streamUrl = :url")
     abstract suspend fun markFavouriteByUrl(url: String)
 
+    @Query("SELECT * FROM movies WHERE sourceId = :sourceId AND streamId IN (:streamIds)")
+    protected abstract suspend fun existingProviderRows(sourceId: Long, streamIds: List<String>): List<Movie>
+
     /** The sole entity-write entry point, including provider/TMDB enrichment. Recompute rather
      * than trusting copy() defaults: a changed name/year must never retain stale browse fields. */
     @Transaction
     open suspend fun upsertAll(movies: List<Movie>) {
         movies.chunked(500).forEach { batch ->
+            val existing = batch.groupBy { it.sourceId }.flatMap { (source, rows) ->
+                existingProviderRows(source, rows.map { it.streamId })
+            }.associateBy { it.sourceId to it.streamId }
             upsertDerived(batch.map { movie ->
+                val previous = existing[movie.sourceId to movie.streamId]
                 val key = MovieBrowseKey.from(movie.name, movie.year)
-                movie.copy(browseGroupKey = key.groupKey, browseQualityRank = key.qualityRank)
+                // Room's upsert updates by primary key, not the provider unique index. Reuse
+                // the stored id so refreshes update metadata and preserve playback/favourites.
+                movie.copy(id = previous?.id ?: movie.id, favourite = previous?.favourite ?: movie.favourite,
+                    browseGroupKey = key.groupKey, browseQualityRank = key.qualityRank)
             })
         }
     }

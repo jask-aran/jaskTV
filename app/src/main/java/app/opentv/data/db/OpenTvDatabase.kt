@@ -63,6 +63,10 @@ class Converters {
 
 @Database(
     entities = [
+        app.opentv.catalogue.MovieInventorySnapshot::class,
+        app.opentv.catalogue.MovieInventoryAsset::class,
+        app.opentv.catalogue.CanonicalMovie::class,
+        app.opentv.catalogue.MovieIdentityMatch::class,
         Source::class,
         Category::class,
         Channel::class,
@@ -84,11 +88,12 @@ class Converters {
         CollectionEntry::class,
         ChannelAliasOverride::class,
     ],
-    version = 17,
+    version = 19,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class OpenTvDatabase : RoomDatabase() {
+    abstract fun canonicalMovies(): app.opentv.catalogue.CanonicalMovieDao
     abstract fun sources(): SourceDao
     abstract fun categories(): CategoryDao
     abstract fun channels(): ChannelDao
@@ -384,6 +389,24 @@ abstract class OpenTvDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `canonical_movies` (`tmdbId` INTEGER NOT NULL, `title` TEXT COLLATE NOCASE NOT NULL, `originalTitle` TEXT NOT NULL, `year` INTEGER, `originalLanguage` TEXT, `posterUrl` TEXT, `backdropUrl` TEXT, `synopsis` TEXT, `genres` TEXT, `rating` REAL, `runtimeMinutes` INTEGER, `updatedMillis` INTEGER NOT NULL, PRIMARY KEY(`tmdbId`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_canonical_movies_title` ON `canonical_movies` (`title`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_canonical_movies_originalLanguage` ON `canonical_movies` (`originalLanguage`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `movie_identity_matches` (`sourceId` INTEGER NOT NULL, `streamId` TEXT NOT NULL, `evidence` TEXT NOT NULL, `tmdbId` INTEGER, `confidence` REAL NOT NULL, `provenance` TEXT NOT NULL, `manual` INTEGER NOT NULL, `candidateIds` TEXT NOT NULL, PRIMARY KEY(`sourceId`, `streamId`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_movie_identity_matches_evidence` ON `movie_identity_matches` (`evidence`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_movie_identity_matches_tmdbId` ON `movie_identity_matches` (`tmdbId`)")
+            }
+        }
+
+        internal val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `movie_inventory_snapshots` (`sourceId` INTEGER NOT NULL, `generation` TEXT NOT NULL, PRIMARY KEY(`sourceId`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `movie_inventory_assets` (`sourceId` INTEGER NOT NULL, `generation` TEXT NOT NULL, `streamId` TEXT NOT NULL, PRIMARY KEY(`sourceId`, `generation`, `streamId`))")
+            }
+        }
+
         fun build(context: Context): OpenTvDatabase =
             Room.databaseBuilder(context, OpenTvDatabase::class.java, "opentv.db")
                 // WAL keeps guide writes from blocking guide reads, so a background EPG
@@ -392,7 +415,7 @@ abstract class OpenTvDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
-                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17,
+                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                 )
                 // v1 predates the retained migration chain; all versions >= 2 must migrate.
                 .fallbackToDestructiveMigrationFrom(1)

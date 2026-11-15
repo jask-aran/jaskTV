@@ -112,9 +112,20 @@ class TmdbClient(
                 b.addQueryParameter(if (isMovie) "year" else "first_air_date_year", year.toString())
             }
             val results = get(b.build())?.jsonObject?.get("results")?.jsonArray ?: return null
-            return results.firstOrNull()?.jsonObject?.get("id")?.jsonPrimitive?.contentOrNull
+            val candidates = results.mapNotNull { element ->
+                val o = element.jsonObject
+                val id = o["id"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return@mapNotNull null
+                val titleField = if (isMovie) "title" else "name"
+                val originalField = if (isMovie) "original_title" else "original_name"
+                app.opentv.catalogue.MovieCandidate(id,
+                    o[titleField]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    o[originalField]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    o[if (isMovie) "release_date" else "first_air_date"]?.jsonPrimitive?.contentOrNull?.take(4)?.toIntOrNull())
+            }
+            val decision = app.opentv.catalogue.MovieMatching.decide(query, year, candidates)
+            return (decision as? app.opentv.catalogue.MovieMatchDecision.Accepted)?.candidate?.id?.toString()
         }
-        return run(withYear = year != null) ?: if (year != null) run(withYear = false) else null
+        return run(withYear = year != null)
     }
 
     private fun details(isMovie: Boolean, id: String, key: String): TmdbMeta? {
