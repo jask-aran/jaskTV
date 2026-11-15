@@ -48,9 +48,10 @@ internal object CloudCipher {
     private fun derive(phrase: String, salt: ByteArray): SecretKeySpec {
         val spec = PBEKeySpec(phrase.toCharArray(), salt, ITERATIONS, 256)
         try {
-            val algorithm = if (android.os.Build.VERSION.SDK_INT >= 26)
-                "PBKDF2WithHmacSHA256" else "PBKDF2WithHmacSHA1"
-            val bytes = SecretKeyFactory.getInstance(algorithm).generateSecret(spec).encoded
+            // A single KDF across API 23+ is essential: a phone and an older TV must produce
+            // identical keys from the same passphrase and random salt.
+            val bytes = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1")
+                .generateSecret(spec).encoded
             return SecretKeySpec(bytes, "AES")
         } finally {
             spec.clearPassword()
