@@ -60,6 +60,9 @@ internal fun DiscoveryResultRow(
     val context = LocalContext.current
     val catalog = remember(context) { ServiceLocator.get(context).catalogRepository }
     val scope = rememberCoroutineScope()
+    var favourite by remember(hit.channel.id, hit.channel.favourite) {
+        mutableStateOf(hit.channel.favourite)
+    }
     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).clickable { onPlayChannel(hit.channel) }
@@ -69,10 +72,18 @@ internal fun DiscoveryResultRow(
                 style = MaterialTheme.typography.bodySmall)
         }
         IconButton(onClick = {
-            scope.launch { catalog.setChannelFavourite(hit.channel.id, !hit.channel.favourite) }
+            val desired = !favourite
+            favourite = desired
+            scope.launch {
+                try {
+                    catalog.setChannelFavourite(hit.channel.id, desired)
+                } catch (_: Exception) {
+                    favourite = !desired
+                }
+            }
         }) {
-            Icon(if (hit.channel.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
-                contentDescription = if (hit.channel.favourite) "Remove favourite" else "Add favourite")
+            Icon(if (favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                contentDescription = if (favourite) "Remove favourite" else "Add favourite")
         }
     }
 }
