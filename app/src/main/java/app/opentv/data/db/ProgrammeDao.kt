@@ -13,6 +13,15 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ProgrammeDao {
+    /** Bounded, case-insensitive programme search for event discovery. */
+    @Query("""
+        SELECT * FROM programmes
+        WHERE title LIKE '%' || :query || '%' COLLATE NOCASE
+          AND endUtcMillis >= :fromMillis AND startUtcMillis <= :toMillis
+        ORDER BY startUtcMillis ASC LIMIT :limit
+    """)
+    suspend fun searchTitle(query: String, fromMillis: Long, toMillis: Long, limit: Int): List<Programme>
+
     @Query("""
         SELECT * FROM programmes
         WHERE epgChannelId IN (:channelIds)
