@@ -346,8 +346,8 @@ private fun PhoneTopBar(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Image(
-            painter = painterResource(R.drawable.ic_opentv_logo),
+        Icon(
+            Icons.Filled.Tv,
             contentDescription = null,
             modifier = Modifier.size(28.dp),
         )
@@ -452,13 +452,13 @@ private fun NavRail(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         // Brand: the logo mark alone when collapsed, the mark + "OpenTV" wordmark when open. The
-        // name stays on purpose — it's what people search for.
+        // only the jaskTV wordmark is shown when the rail is expanded.
         Row(
             Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Image(
-                painter = painterResource(R.drawable.ic_opentv_logo),
+            Icon(
+                Icons.Filled.Tv,
                 contentDescription = stringResource(R.string.app_name),
                 modifier = Modifier.size(34.dp),
             )
