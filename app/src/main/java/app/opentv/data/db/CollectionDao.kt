@@ -17,8 +17,11 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface CollectionDao {
-    @Query("SELECT * FROM user_collections ORDER BY createdMillis, id")
-    fun observeCollections(): Flow<List<UserCollection>>
+    @Query("SELECT * FROM user_collections WHERE profileId = :profileId ORDER BY createdMillis, id")
+    fun observeCollections(profileId: Long): Flow<List<UserCollection>>
+
+    @Query("SELECT * FROM user_collections ORDER BY profileId, createdMillis, id")
+    suspend fun allCollections(): List<UserCollection>
 
     @Insert
     suspend fun create(collection: UserCollection): Long
@@ -32,6 +35,14 @@ interface CollectionDao {
     @Query("DELETE FROM collection_entries WHERE collectionId = :id")
     suspend fun deleteEntries(id: Long)
 
+    @Query("SELECT id FROM user_collections WHERE profileId = :profileId")
+    suspend fun idsForProfile(profileId: Long): List<Long>
+
+    @Transaction
+    suspend fun deleteProfileCollections(profileId: Long) {
+        idsForProfile(profileId).forEach { delete(it) }
+    }
+
     @Transaction
     suspend fun delete(id: Long) {
         deleteEntries(id)
@@ -40,6 +51,9 @@ interface CollectionDao {
 
     @Query("SELECT * FROM collection_entries")
     fun observeAllEntries(): Flow<List<CollectionEntry>>
+
+    @Query("SELECT * FROM collection_entries")
+    suspend fun allEntries(): List<CollectionEntry>
 
     @Query("SELECT * FROM collection_entries WHERE collectionId = :id")
     fun observeEntries(id: Long): Flow<List<CollectionEntry>>
@@ -55,25 +69,28 @@ interface CollectionDao {
         SELECT DISTINCT c.* FROM channels c
         INNER JOIN collection_entries e ON e.sourceId = c.sourceId
             AND e.itemKey = c.streamId AND e.kind = 'channel'
-        WHERE c.hidden = 0 ORDER BY c.displayName
+        INNER JOIN user_collections uc ON uc.id = e.collectionId
+        WHERE c.hidden = 0 AND uc.profileId = :profileId ORDER BY c.displayName
     """)
-    fun observeAllCollectedChannels(): Flow<List<Channel>>
+    fun observeAllCollectedChannels(profileId: Long): Flow<List<Channel>>
 
     @Query("""
         SELECT DISTINCT m.* FROM movies m
         INNER JOIN collection_entries e ON e.sourceId = m.sourceId
             AND e.itemKey = m.streamId AND e.kind = 'movie'
-        ORDER BY m.name
+        INNER JOIN user_collections uc ON uc.id = e.collectionId
+        WHERE uc.profileId = :profileId ORDER BY m.name
     """)
-    fun observeAllCollectedMovies(): Flow<List<Movie>>
+    fun observeAllCollectedMovies(profileId: Long): Flow<List<Movie>>
 
     @Query("""
         SELECT DISTINCT s.* FROM series s
         INNER JOIN collection_entries e ON e.sourceId = s.sourceId
             AND e.itemKey = s.seriesId AND e.kind = 'show'
-        ORDER BY s.name
+        INNER JOIN user_collections uc ON uc.id = e.collectionId
+        WHERE uc.profileId = :profileId ORDER BY s.name
     """)
-    fun observeAllCollectedShows(): Flow<List<Series>>
+    fun observeAllCollectedShows(profileId: Long): Flow<List<Series>>
 
     @Query("""
         SELECT c.* FROM channels c
