@@ -182,6 +182,10 @@ interface ProfileDao {
     @Insert
     suspend fun insert(profile: Profile): Long
 
+    /** The first viewer exists even if the Profiles settings screen has never been opened. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDefault(profile: Profile): Long
+
     @Query("UPDATE profiles SET name = :name WHERE id = :id")
     suspend fun rename(id: Long, name: String)
 
