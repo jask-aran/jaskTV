@@ -51,6 +51,9 @@ class SyncEngine(private val graph: ServiceLocator.Graph) {
     }
 
     suspend fun gather(): SyncBundle {
+        // WorkManager may sync before the Profiles screen ever opens. Ensure the built-in
+        // viewer is present, using an idempotent insert to avoid racing another initializer.
+        graph.profiles.insertDefault(Profile(id = 1L, name = "Me", createdAtMillis = 0))
         val profiles = graph.profiles.all()
         val names = profiles.associate { it.id to it.name }
         val positions = graph.playbackPositions.all().mapNotNull { pos ->
