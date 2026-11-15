@@ -70,7 +70,7 @@ class BroadcastDiscovery(context: Context) {
         broadcasters.take(8).forEach { (name, country) ->
             if (name.length < 3) return@forEach
             val candidates = graph.catalogRepository.searchChannels(name).first()
-                .filter { matchesBroadcaster(it.shownName, name) || matchesBroadcaster(it.name, name) }
+                .filter { BroadcasterMatcher.matches(it.shownName, name) || BroadcasterMatcher.matches(it.name, name) }
                 .take(30)
             candidates.forEach { channel ->
                 if (channel.id !in found) {
@@ -87,13 +87,6 @@ class BroadcastDiscovery(context: Context) {
             .thenByDescending { it.channel.favourite }
             .thenByDescending { it.channel.qualityRank }
             .thenBy { it.channel.shownName }).take(100)
-    }
-
-    /** Normalised full-name matching avoids suggesting every Sky Sports channel for Sky Sports F1. */
-    private fun matchesBroadcaster(channelName: String, broadcaster: String): Boolean {
-        val normalName = channelName.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
-        val normalBroadcaster = broadcaster.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
-        return normalBroadcaster.length >= 3 && normalName.contains(normalBroadcaster)
     }
 
     private fun sportsDbBroadcasts(query: String): List<Pair<String, String>> {
