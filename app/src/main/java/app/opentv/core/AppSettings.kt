@@ -484,6 +484,16 @@ class AppSettings private constructor(context: Context) {
         _tmdbApiKey.value = trimmed
     }
 
+    /** Optional OMDb key for user-requested external review scores. Stored only on-device. */
+    private val _omdbApiKey = MutableStateFlow(prefs.getString(KEY_OMDB_KEY, "").orEmpty())
+    val omdbApiKey: StateFlow<String> = _omdbApiKey.asStateFlow()
+
+    fun setOmdbApiKey(key: String) {
+        val trimmed = key.trim()
+        prefs.edit().putString(KEY_OMDB_KEY, trimmed).apply()
+        _omdbApiKey.value = trimmed
+    }
+
     // ---- Stremio add-ons ---------------------------------------------------------------------
 
     /**
@@ -556,6 +566,7 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_NAS_AUTO_SYNC = "nas_auto_sync"
         private const val KEY_VOD_SYNCED_AT = "vod_synced_at"
         private const val KEY_TMDB_KEY = "tmdb_api_key"
+        private const val KEY_OMDB_KEY = "omdb_api_key"
         private const val KEY_STREMIO_ADDONS = "stremio_addons"
         private const val KEY_PAD_START = "rec_pad_start_min"
         private const val KEY_PAD_END = "rec_pad_end_min"
