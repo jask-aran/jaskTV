@@ -28,12 +28,14 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class SyncBundle(
-    val version: Int = 3,
+    val version: Int = 4,
     val generatedAtMillis: Long = 0,
     /** Profile names the peer knows about. Others add any they are missing (add-only). */
     val profiles: List<String> = emptyList(),
     /** Two-way, newest-wins resume points. */
     val positions: List<SyncPosition> = emptyList(),
+    /** Portable personal Library collections, grouped by viewing profile (name for v1 pairing). */
+    val collections: List<SyncCollection> = emptyList(),
     /** Additive curation, keyed by the stable identifiers noted above. */
     val favouriteChannels: List<String> = emptyList(),
     val hiddenChannels: List<String> = emptyList(),
@@ -80,4 +82,22 @@ data class SyncRecording(
     val startedAtMillis: Long = 0,
     val endedAtMillis: Long = 0,
     val sizeBytes: Long = 0,
+)
+
+/** A shared Library collection. The receiver maps portable keys to its own provider rows. */
+@Serializable
+data class SyncCollection(
+    val profile: String,
+    val name: String,
+    val createdMillis: Long = 0,
+    val members: List<SyncCollectionMember> = emptyList(),
+)
+
+@Serializable
+data class SyncCollectionMember(
+    val kind: String,
+    /** Stream URL for channel/movie, or provider series ID for a show. */
+    val key: String,
+    /** Provider URL for series disambiguation (avoids collisions across providers). */
+    val providerUrl: String = "",
 )
