@@ -103,9 +103,7 @@ class ProfilesViewModel(app: Application) : AndroidViewModel(app) {
     init {
         // Fresh installs create the table empty (no migration runs), so seed the default profile.
         viewModelScope.launch {
-            if (graph.profiles.all().isEmpty()) {
-                graph.profiles.insert(Profile(name = "Me", createdAtMillis = 0))
-            }
+            graph.profiles.insertDefault(Profile(id = 1L, name = "Me", createdAtMillis = 0))
         }
     }
 
