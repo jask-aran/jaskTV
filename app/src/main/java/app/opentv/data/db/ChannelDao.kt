@@ -16,6 +16,9 @@ private const val UPSERT_CHUNK = 500
 
 @Dao
 interface ChannelDao {
+    @Query("SELECT * FROM channels WHERE streamUrl = :url LIMIT 1")
+    suspend fun byStreamUrl(url: String): Channel?
+
     @Query("SELECT * FROM channels WHERE sourceId = :sourceId AND streamId = :streamId LIMIT 1")
     suspend fun byProviderKey(sourceId: Long, streamId: String): Channel?
 
