@@ -53,6 +53,7 @@ fun LibraryScreen(
     val graph = remember(context) { ServiceLocator.get(context) }
     val dao = remember(graph) { graph.database.collections() }
     val scope = rememberCoroutineScope()
+    val profileId by graph.settings.activeProfileId.collectAsState()
     val favourites by remember(graph) { graph.catalogRepository.observeFavouriteChannels() }
         .collectAsState(initial = emptyList())
     val movies by remember(graph) { graph.database.movies().observeFavourites() }
@@ -61,11 +62,11 @@ fun LibraryScreen(
         .collectAsState(initial = emptyList())
     val downloads by remember(graph) { graph.downloadRepository.observe() }
         .collectAsState(initial = emptyList())
-    val collections by remember(dao) { dao.observeCollections() }.collectAsState(initial = emptyList())
+    val collections by remember(dao, profileId) { dao.observeCollections(profileId) }.collectAsState(initial = emptyList())
     val memberships by remember(dao) { dao.observeAllEntries() }.collectAsState(initial = emptyList())
-    val collectedChannels by remember(dao) { dao.observeAllCollectedChannels() }.collectAsState(initial = emptyList())
-    val collectedMovies by remember(dao) { dao.observeAllCollectedMovies() }.collectAsState(initial = emptyList())
-    val collectedShows by remember(dao) { dao.observeAllCollectedShows() }.collectAsState(initial = emptyList())
+    val collectedChannels by remember(dao, profileId) { dao.observeAllCollectedChannels(profileId) }.collectAsState(initial = emptyList())
+    val collectedMovies by remember(dao, profileId) { dao.observeAllCollectedMovies(profileId) }.collectAsState(initial = emptyList())
+    val collectedShows by remember(dao, profileId) { dao.observeAllCollectedShows(profileId) }.collectAsState(initial = emptyList())
 
     suspend fun removeFromCollections(ref: SavedRef) {
         memberships.filter {
@@ -77,7 +78,11 @@ fun LibraryScreen(
     var sort by rememberSaveable { mutableStateOf("Name") }
     var sorting by remember { mutableStateOf(false) }
 
-    val collectionId = section.removePrefix("collection:").toLongOrNull()
+    val requestedCollectionId = section.removePrefix("collection:").toLongOrNull()
+    // Never display a different profile's collection when the viewer switches accounts.
+    val collectionId = requestedCollectionId?.takeIf { id ->
+        collections.any { it.id == id }
+    }
     val collectionChannels by remember(dao, collectionId) {
         collectionId?.let { dao.observeChannels(it) } ?: flowOf(emptyList<Channel>())
     }.collectAsState(initial = emptyList())
@@ -284,7 +289,7 @@ fun LibraryScreen(
                     scope.launch {
                         if (original == null) {
                             val id = dao.create(UserCollection(name = normalized,
-                                createdMillis = System.currentTimeMillis()))
+                                createdMillis = System.currentTimeMillis(), profileId = profileId))
                             section = "collection:$id"
                         } else dao.rename(original.id, normalized)
                     }
