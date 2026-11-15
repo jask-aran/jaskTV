@@ -18,7 +18,7 @@ class ReviewParserTest {
         }""")
         val score = ReviewParser.parse(row)!!
         assertThat(score.imdbId).isEqualTo("tt0137523")
-        assertThat(score.imdb).isWithin(0.001).of(8.8)
+        assertThat(score.imdb!!).isWithin(0.001).of(8.8)
         assertThat(score.votes).isEqualTo(2669989L)
         assertThat(score.rottenTomatoes).isEqualTo(81)
         assertThat(score.metacritic).isEqualTo(67)
