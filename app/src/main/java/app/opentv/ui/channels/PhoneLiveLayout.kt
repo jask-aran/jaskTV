@@ -88,7 +88,6 @@ fun PhoneLiveLayout(
     onSelectRecents: () -> Unit,
     onSelectFavourites: () -> Unit,
     onSelectCategory: (String?) -> Unit,
-    onQuery: (String) -> Unit,
     onOpenSearch: () -> Unit,
     emptyContent: @Composable () -> Unit,
     layout: AppSettings.PhoneLiveLayout,
@@ -96,7 +95,6 @@ fun PhoneLiveLayout(
     listContent: @Composable () -> Unit,
     guideContent: @Composable () -> Unit,
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
     var showSheet by remember { mutableStateOf(false) }
     val categoryLabel = categories.firstOrNull { it.key == selectedCategory }?.label
     val compact = isPhoneLandscape()
