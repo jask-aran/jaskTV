@@ -10,6 +10,8 @@ import app.opentv.core.ServiceLocator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.Credentials
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -22,6 +24,10 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
 class WebDavCloudSync(private val context: Context, private val graph: ServiceLocator.Graph) {
+    private companion object {
+        // WorkManager and manual Sync Now can fire together: one merge/publish at a time.
+        val syncLock = Mutex()
+    }
     sealed interface Result {
         data class Success(val merged: Int, val peers: Int) : Result
         data object NotConfigured : Result
@@ -34,7 +40,8 @@ class WebDavCloudSync(private val context: Context, private val graph: ServiceLo
         .followRedirects(false).followSslRedirects(false)
         .callTimeout(30, TimeUnit.SECONDS).build()
 
-    suspend fun sync(): Result = withContext(Dispatchers.IO) {
+    suspend fun sync(): Result = syncLock.withLock {
+        withContext(Dispatchers.IO) {
         val config = CloudSyncPrefs(context).load()
         if (!config.enabled || !config.isConfigured) return@withContext Result.NotConfigured
         try {
@@ -63,6 +70,7 @@ class WebDavCloudSync(private val context: Context, private val graph: ServiceLo
             throw e
         } catch (e: Exception) {
             Result.Failed(e.message?.take(180) ?: "Cloud sync failed. Verify URL, credentials and encryption phrase.")
+        }
         }
     }
 
