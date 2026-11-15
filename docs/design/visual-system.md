@@ -84,3 +84,9 @@ representative canonical poster grid in existing Foundation and Coil, behind
 app-owned component names. The source patterns are useful; the current libraries
 are not drop-in dependencies for the existing versions. A pinned older release
 might work but has not been compiled here. No library performance claim is made.
+
+Direct image inspection: the Infuse 8 announcement's linked preview is a playback
+track menu, not a media-grid image. Adopt its clear selected-track tick and quiet
+translucent panel; it does not establish grid density. The focus-thread image shows
+large artwork and a locally outlined episode tile. Adopt that clear local focus cue
+without the bright red frame or heavily blurred full-screen background.

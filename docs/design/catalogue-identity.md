@@ -97,3 +97,36 @@ These are raw provider claims, not validated canonical counts. Validate each
 unique TMDB movie hint once and reuse persisted metadata across all copies.
 At this size cold enrichment takes sustained background work; never block import,
 card rendering or playback on completing enrichment of the entire inventory.
+
+## Complete-import availability
+
+The audit found that Xtream refreshes retained provider rows absent from later
+responses. Canonical availability therefore uses `MovieInventorySnapshot` and
+`MovieInventoryAsset`, introduced by v18→v19. Stream each import into a new
+UUID generation, then activate it only when the movie endpoint completes. A
+transaction activates the generation and prunes old presence rows. The repository
+serialises VOD imports so pruning cannot remove another import's staging rows.
+Failed refreshes preserve the previous generation. Provider records and manual
+matches remain intact when a stream disappears. Disabled sources are excluded.
+For pre-snapshot installs, retained inventory is provisional until the next complete
+import; the app cannot reconstruct a historical provider response.
+
+Movie upserts now resolve existing (sourceId, streamId) rows before writing.
+This preserves the Room primary key, favourites and playback keys while replacing
+provider metadata. Room's primary-key upsert alone cannot update an incoming
+id=0 row that conflicts on a separate provider unique index.
+
+## Remaining scope
+
+The slice implements canonical Movies, exact-title/year matching, validated TMDB
+hints, source versions, persisted original-language selection and four sorts (title, release year, TMDB rating and provider-added date).
+It does not implement canonical TV episodes, manual-confirmation screens,
+canonical Library membership, playback-track language observation, regional/audio
+preferences, similarity/translated-alias expansion, trending or a new TV shell.
+New catalogue strings currently use English fallback. Review translations before
+a multilingual release. Real metadata verification needs a user-supplied TMDB key;
+fixture tests intercept HTTP and make no external metadata requests.
+
+Provider `addedMillis` is not the viewer’s first-seen date. The sort is labelled
+“Provider added date”; a true Recently Added to Your Library rail needs persistent
+first-seen timestamps and is not implemented in this slice.
