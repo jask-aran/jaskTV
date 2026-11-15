@@ -73,6 +73,8 @@ import app.opentv.ui.downloads.KIND_EPISODE
 import app.opentv.ui.downloads.KIND_MOVIE
 import android.widget.Toast
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Folder
+import app.opentv.ui.library.CollectionPickerDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
@@ -112,6 +114,7 @@ fun MovieDetailScreen(
     // null = the add-on picker is closed; a (possibly empty) list = show it. Separate flag for the spinner.
     var addonStreams by remember(movieId) { mutableStateOf<List<StremioStream>?>(null) }
     var addonLoading by remember(movieId) { mutableStateOf(false) }
+    var showCollectionPicker by remember(movieId) { mutableStateOf(false) }
 
     LaunchedEffect(movieId) {
         val loaded = viewModel.movieDetail(movieId)
@@ -145,6 +148,9 @@ fun MovieDetailScreen(
                 ) {
                     viewModel.toggleMovieFavourite(m)
                     movie = m.copy(favourite = !m.favourite)
+                }
+                DetailButton(icon = Icons.Filled.Folder, label = "Save to collection") {
+                    showCollectionPicker = true
                 }
                 // Save for offline viewing; the Downloads tab lists it.
                 DownloadControl(mediaKey = "movie:${m.id}", buildDownload = {
@@ -186,6 +192,11 @@ fun MovieDetailScreen(
             }
         }
     }
+
+    if (showCollectionPicker) CollectionPickerDialog(
+        kind = "movie", sourceId = m.sourceId, itemKey = m.streamId,
+        onDismiss = { showCollectionPicker = false },
+    )
 
     if (addonLoading || addonStreams != null) {
         AddonStreamPicker(
@@ -302,6 +313,7 @@ fun SeriesDetailScreen(
     val downloadScope = rememberCoroutineScope()
     var moreLike by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
     val favFocus = remember { FocusRequester() }
+    var showCollectionPicker by remember(seriesId) { mutableStateOf(false) }
 
     LaunchedEffect(seriesId) {
         val loaded = viewModel.seriesDetail(seriesId)
@@ -342,6 +354,9 @@ fun SeriesDetailScreen(
                 ) {
                     viewModel.toggleSeriesFavourite(s)
                     series = s.copy(favourite = !s.favourite)
+                }
+                DetailButton(icon = Icons.Filled.Folder, label = "Save to collection") {
+                    showCollectionPicker = true
                 }
             }
         }
@@ -413,6 +428,10 @@ fun SeriesDetailScreen(
             }
         }
     }
+    if (showCollectionPicker) CollectionPickerDialog(
+        kind = "show", sourceId = s.sourceId, itemKey = s.seriesId,
+        onDismiss = { showCollectionPicker = false },
+    )
 }
 
 // ---- Shared detail pieces ----------------------------------------------------------------------
