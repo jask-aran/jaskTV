@@ -231,6 +231,10 @@ fun AppSettingsScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
 
+        OmdbKeySection(settings)
+
+        Spacer(Modifier.height(16.dp))
+
         SleepTimerSection()
     }
 }
@@ -276,6 +280,41 @@ private fun TmdbKeySection(settings: AppSettings) {
                 )
             }
         }
+    }
+}
+
+/** Optional third-party review aggregates, without an IMDb scraping dependency. */
+@Composable
+private fun OmdbKeySection(settings: AppSettings) {
+    val context = LocalContext.current
+    val saved by settings.omdbApiKey.collectAsState()
+    var field by remember(saved) { mutableStateOf(saved) }
+    SettingsSection("Review scores (optional)") {
+        Text("OMDb can supply IMDb-reported scores, Rotten Tomatoes percentages and Metacritic scores on movie/show detail pages. It requires your own OMDb API key; without one jaskTV continues to use provider/TMDB metadata.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = field,
+            onValueChange = { field = it.trim() },
+            label = { Text("OMDb API key") },
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = {
+                settings.setOmdbApiKey(field)
+                Toast.makeText(context, "Review source settings saved", Toast.LENGTH_SHORT).show()
+            }) { Text("Save") }
+            if (saved.isNotBlank()) {
+                Spacer(Modifier.width(12.dp))
+                Text("Enabled", color = MaterialTheme.colorScheme.primary)
+            }
+        }
+        Text("Ratings are attributed to their source and are not independently verified by jaskTV.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
