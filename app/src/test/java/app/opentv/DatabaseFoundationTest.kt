@@ -144,6 +144,11 @@ class DatabaseFoundationTest {
         assertThat(dao.observeEntries(id).first()).hasSize(2)
         dao.rename(id, "Motorsport")
         assertThat(dao.observeCollections(1L).first().single().name).isEqualTo("Motorsport")
+        assertThat(dao.observeCollections(2L).first()).isEmpty()
+        val privateId = dao.create(UserCollection(name = "Private movies",
+            createdMillis = 200, profileId = 2L))
+        assertThat(dao.observeCollections(1L).first()).hasSize(1)
+        assertThat(dao.observeCollections(2L).first().single().id).isEqualTo(privateId)
 
         val aliases = database!!.channelAliases()
         val mapping = ChannelAliasOverride(17L, "sky-f1", "SkySportsF1.uk", "My F1 channel")
@@ -152,7 +157,8 @@ class DatabaseFoundationTest {
         aliases.save(mapping.copy(iptvOrgId = "SkySportsMainEvent.uk"))
         assertThat(aliases.find(17L, "sky-f1")?.iptvOrgId).isEqualTo("SkySportsMainEvent.uk")
         dao.delete(id)
-        assertThat(dao.observeCollections().first()).isEmpty()
+        assertThat(dao.observeCollections(1L).first()).isEmpty()
+        assertThat(dao.observeCollections(2L).first()).hasSize(1)
         assertThat(dao.observeEntries(id).first()).isEmpty()
         assertThat(aliases.find(17L, "sky-f1")).isNotNull()
     }
