@@ -50,6 +50,31 @@ interface CollectionDao {
     @Query("DELETE FROM collection_entries WHERE collectionId = :collectionId AND kind = :kind AND sourceId = :sourceId AND itemKey = :itemKey")
     suspend fun remove(collectionId: Long, kind: String, sourceId: Long, itemKey: String)
 
+    /** All collected items are part of Library / All even when they are not starred. */
+    @Query("""
+        SELECT DISTINCT c.* FROM channels c
+        INNER JOIN collection_entries e ON e.sourceId = c.sourceId
+            AND e.itemKey = c.streamId AND e.kind = 'channel'
+        WHERE c.hidden = 0 ORDER BY c.displayName
+    """)
+    fun observeAllCollectedChannels(): Flow<List<Channel>>
+
+    @Query("""
+        SELECT DISTINCT m.* FROM movies m
+        INNER JOIN collection_entries e ON e.sourceId = m.sourceId
+            AND e.itemKey = m.streamId AND e.kind = 'movie'
+        ORDER BY m.name
+    """)
+    fun observeAllCollectedMovies(): Flow<List<Movie>>
+
+    @Query("""
+        SELECT DISTINCT s.* FROM series s
+        INNER JOIN collection_entries e ON e.sourceId = s.sourceId
+            AND e.itemKey = s.seriesId AND e.kind = 'show'
+        ORDER BY s.name
+    """)
+    fun observeAllCollectedShows(): Flow<List<Series>>
+
     @Query("""
         SELECT c.* FROM channels c
         INNER JOIN collection_entries e ON e.sourceId = c.sourceId
