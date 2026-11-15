@@ -53,10 +53,6 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var updateLine by remember { mutableStateOf<String?>(null) }
-    var checking by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -69,37 +65,10 @@ fun AboutScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(20.dp))
 
         Section(stringResource(R.string.about_version)) {
-            Text("OpenTV Mobile ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                enabled = !checking,
-                onClick = {
-                    checking = true
-                    updateLine = null
-                    scope.launch {
-                        val graph = ServiceLocator.get(context)
-                        val update = runCatching {
-                            UpdateChecker(graph.httpClient, BuildConfig.VERSION_NAME).check()
-                        }.getOrNull()
-                        updateLine = when {
-                            update != null -> context.getString(R.string.about_update_available, update.versionName)
-                            else -> context.getString(R.string.about_up_to_date)
-                        }
-                        // Raise the shared update prompt right here — UpdateGate overlays every
-                        // screen, so the install dialog appears over About immediately.
-                        if (update != null) {
-                            app.opentv.update.UpdateHub.state.value =
-                                app.opentv.update.UpdateUiState.Available(update)
-                        }
-                        checking = false
-                    }
-                },
-            ) { Text(if (checking) stringResource(R.string.about_checking) else stringResource(R.string.about_check_updates)) }
-            // Below the button, not beside it: translated lines are long enough to squeeze it.
-            updateLine?.let {
-                Spacer(Modifier.height(8.dp))
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-            }
+            Text("jaskTV ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
+            Text("Updates are delivered through jaskTV releases, not OpenTV Mobile.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         Spacer(Modifier.height(16.dp))
@@ -173,11 +142,11 @@ fun AboutScreen(onBack: () -> Unit) {
                 "GNU General Public License v3.0",
                 url = "https://www.gnu.org/licenses/gpl-3.0.html",
             )
-            LinkLine(stringResource(R.string.about_source_code), "github.com/opentv-mobile/opentv-mobile")
-            LinkLine(stringResource(R.string.about_report_bug), "github.com/opentv-mobile/opentv-mobile/issues")
+            LinkLine(stringResource(R.string.about_source_code), "github.com/jask-aran/jaskTV")
+            LinkLine(stringResource(R.string.about_report_bug), "github.com/jask-aran/jaskTV/issues")
             // Credit where it is due: this app is built on OpenTV.
             LinkLine(stringResource(R.string.about_based_on), "github.com/opentvproject/opentv")
-            LinkLine(stringResource(R.string.about_install_page), "github.com/opentv-mobile/opentv-mobile/releases")
+            LinkLine(stringResource(R.string.about_install_page), "github.com/jask-aran/jaskTV/releases")
         }
     }
 }
