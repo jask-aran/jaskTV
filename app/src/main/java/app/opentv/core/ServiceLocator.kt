@@ -82,6 +82,10 @@ object ServiceLocator {
         /** Neutral Stremio add-on protocol client. Talks only to user-added manifest URLs. */
         val stremioClient: StremioClient by lazy { StremioClient(httpClient) }
 
+        val iptvOrgCatalog: app.opentv.discovery.IptvOrgCatalog by lazy {
+            app.opentv.discovery.IptvOrgCatalog(appContext)
+        }
+
         val sourceRepository: SourceRepository by lazy {
             SourceRepository(database.sources(), xtreamApi, stalkerApi, database)
         }
