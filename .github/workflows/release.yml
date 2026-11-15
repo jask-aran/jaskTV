@@ -68,16 +68,16 @@ jobs:
             exit 1
           fi
           mkdir -p dist
-          cp "$SOURCE" "dist/opentv-mobile-${TAG}.apk"
-          cp "$SOURCE" "dist/opentv-mobile.apk"
-          echo "path=dist/opentv-mobile-${TAG}.apk" >> "$GITHUB_OUTPUT"
+          cp "$SOURCE" "dist/jasktv-${TAG}.apk"
+          cp "$SOURCE" "dist/jasktv.apk"
+          echo "path=dist/jasktv-${TAG}.apk" >> "$GITHUB_OUTPUT"
           echo "signed=yes" >> "$GITHUB_OUTPUT"
 
       - name: Upload signed candidate APK
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: opentv-mobile-signed-candidate
+          name: jasktv-signed-candidate
           path: dist/*.apk
           if-no-files-found: error
 
