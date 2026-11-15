@@ -63,6 +63,16 @@ fun LibraryScreen(
         .collectAsState(initial = emptyList())
     val collections by remember(dao) { dao.observeCollections() }.collectAsState(initial = emptyList())
     val memberships by remember(dao) { dao.observeAllEntries() }.collectAsState(initial = emptyList())
+    val collectedChannels by remember(dao) { dao.observeAllCollectedChannels() }.collectAsState(initial = emptyList())
+    val collectedMovies by remember(dao) { dao.observeAllCollectedMovies() }.collectAsState(initial = emptyList())
+    val collectedShows by remember(dao) { dao.observeAllCollectedShows() }.collectAsState(initial = emptyList())
+
+    suspend fun removeFromCollections(ref: SavedRef) {
+        memberships.filter {
+            it.kind == ref.kind && it.sourceId == ref.sourceId && it.itemKey == ref.key
+        }.forEach { dao.remove(it.collectionId, it.kind, it.sourceId, it.itemKey) }
+    }
+
     var section by rememberSaveable { mutableStateOf("All") }
     var sort by rememberSaveable { mutableStateOf("Name") }
     var sorting by remember { mutableStateOf(false) }
@@ -78,9 +88,15 @@ fun LibraryScreen(
         collectionId?.let { dao.observeSeries(it) } ?: flowOf(emptyList<Series>())
     }.collectAsState(initial = emptyList())
 
-    val channelsToShow = if (collectionId == null) favourites else collectionChannels
-    val moviesToShow = if (collectionId == null) movies else collectionMovies
-    val showsToShow = if (collectionId == null) shows else collectionShows
+    val channelsToShow = if (collectionId == null)
+        (favourites + collectedChannels).distinctBy { it.sourceId to it.streamId }
+        else collectionChannels
+    val moviesToShow = if (collectionId == null)
+        (movies + collectedMovies).distinctBy { it.sourceId to it.streamId }
+        else collectionMovies
+    val showsToShow = if (collectionId == null)
+        (shows + collectedShows).distinctBy { it.sourceId to it.seriesId }
+        else collectionShows
     val entriesHere = if (collectionId == null) emptyList() else memberships.filter { it.collectionId == collectionId }
     val downloadsHere = downloads.filter {
         it.state == DownloadRepository.State.DONE && it.fileUri != null &&
@@ -189,10 +205,13 @@ fun LibraryScreen(
                             onRemove = if (collectionId != null) ({ scope.launch {
                                 dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
                             } }) else ({ scope.launch {
-                                favourites.filter { it.sourceId == channel.sourceId &&
+                                val variants = channelsToShow.filter { it.sourceId == channel.sourceId &&
                                     (it.streamId == channel.streamId ||
                                         (channel.groupKey.isNotBlank() && it.groupKey == channel.groupKey)) }
-                                    .forEach { graph.catalogRepository.setChannelFavourite(it.id, false) }
+                                variants.forEach { variant ->
+                                    graph.catalogRepository.setChannelFavourite(variant.id, false)
+                                    removeFromCollections(SavedRef("channel", variant.sourceId, variant.streamId))
+                                }
                             } }))
                     }
                 }
@@ -205,7 +224,10 @@ fun LibraryScreen(
                             { onOpenMovie(movie) }, onOrganize = { organize = ref },
                             onRemove = { scope.launch {
                                 if (collectionId != null) dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
-                                else graph.catalogRepository.setMovieFavourite(movie.id, false)
+                                else {
+                                    graph.catalogRepository.setMovieFavourite(movie.id, false)
+                                    removeFromCollections(ref)
+                                }
                             } })
                     }
                 }
@@ -218,7 +240,10 @@ fun LibraryScreen(
                             { onOpenSeries(show) }, onOrganize = { organize = ref },
                             onRemove = { scope.launch {
                                 if (collectionId != null) dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
-                                else graph.database.series().setFavourite(show.id, false)
+                                else {
+                                    graph.database.series().setFavourite(show.id, false)
+                                    removeFromCollections(ref)
+                                }
                             } })
                     }
                 }
