@@ -222,6 +222,9 @@ fun VodPlayerScreen(
             val dur = controller.player.duration
             kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.NonCancellable).launch {
                 savePosition(pos, dur)
+                // Publish the final resume point once playback ends, not just on a 30-minute
+                // timer. The worker waits for connectivity and does not require a running peer.
+                app.opentv.sync.CloudSyncWorker.onOpen(context)
             }
             controller.release()
             scope.cancel()
