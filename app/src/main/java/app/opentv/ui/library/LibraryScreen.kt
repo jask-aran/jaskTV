@@ -15,6 +15,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Link
+import app.opentv.ui.channels.ChannelMappingDialog
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material3.*
@@ -104,6 +106,7 @@ fun LibraryScreen(
     var creating by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<UserCollection?>(null) }
     var organize by remember { mutableStateOf<SavedRef?>(null) }
+    var mapChannel by remember { mutableStateOf<Channel?>(null) }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -182,6 +185,7 @@ fun LibraryScreen(
                         val ref = SavedRef("channel", channel.sourceId, channel.streamId)
                         LibraryRow(channel.shownName, channel.qualityLabel, { onPlayChannel(channel) },
                             onOrganize = { organize = ref },
+                            onMap = { mapChannel = channel },
                             onRemove = if (collectionId != null) ({ scope.launch {
                                 dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
                             } }) else ({ scope.launch {
@@ -233,6 +237,10 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+
+    mapChannel?.let { channel ->
+        ChannelMappingDialog(channel) { mapChannel = null }
     }
 
     if (creating || editor != null) {
@@ -318,6 +326,7 @@ private fun Heading(title: String, count: Int) {
 private fun LibraryRow(
     title: String, subtitle: String, onOpen: () -> Unit, onOrganize: () -> Unit,
     onRemove: (() -> Unit)?,
+    onMap: (() -> Unit)? = null,
 ) {
     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).clickable(onClick = onOpen).padding(vertical = 8.dp)) {
@@ -325,6 +334,9 @@ private fun LibraryRow(
             if (subtitle.isNotBlank()) Text(subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (onMap != null) IconButton(onClick = onMap) {
+            Icon(Icons.Filled.Link, contentDescription = "Map channel identity")
         }
         IconButton(onClick = onOrganize) {
             Icon(Icons.Filled.Folder, contentDescription = "Organise in collections")
