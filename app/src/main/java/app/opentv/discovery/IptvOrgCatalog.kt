@@ -53,6 +53,7 @@ class IptvOrgCatalog(context: Context) {
     private val cache = File(context.applicationContext.cacheDir, "jasktv-iptvorg-channels.json")
     private val http = OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
     private var loaded: List<ChannelIdentity>? = null
+    private var retryAfterMillis: Long = 0
     private var index: Map<String, List<ChannelIdentity>> = emptyMap()
     private var byId: Map<String, ChannelIdentity> = emptyMap()
     private val maxBytes = 15 * 1024 * 1024
@@ -117,14 +118,19 @@ class IptvOrgCatalog(context: Context) {
     private suspend fun ensureLoaded() = withContext(Dispatchers.IO) {
         if (loaded != null) return@withContext
         synchronized(this@IptvOrgCatalog) {
-            if (loaded != null) return@synchronized
+            if (loaded != null || System.currentTimeMillis() < retryAfterMillis) return@synchronized
             val cached = if (cache.isFile) runCatching {
                 cache.readText().takeIf { it.length <= maxBytes }
             }.getOrNull() else null
             val fresh = if (System.currentTimeMillis() - cache.lastModified() < refreshMillis)
                 cached else null
             val data = fresh ?: fetch() ?: cached
-            install(runCatching { parse(data ?: "[]") }.getOrDefault(emptyList()))
+            val decoded = data?.let { runCatching { parse(it) }.getOrNull() }
+            if (decoded == null) {
+                // Offline at startup is common. Retry later instead of persisting an empty map
+                // for the entire process lifetime.
+                retryAfterMillis = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(5)
+            } else install(decoded)
         }
     }
 
