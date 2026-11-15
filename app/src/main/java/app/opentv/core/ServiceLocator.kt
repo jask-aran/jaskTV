@@ -86,6 +86,10 @@ object ServiceLocator {
             app.opentv.discovery.IptvOrgCatalog(appContext)
         }
 
+        val omdbClient: app.opentv.data.remote.OmdbClient by lazy {
+            app.opentv.data.remote.OmdbClient(httpClient, settings)
+        }
+
         val sourceRepository: SourceRepository by lazy {
             SourceRepository(database.sources(), xtreamApi, stalkerApi, database)
         }
