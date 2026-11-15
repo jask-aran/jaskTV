@@ -9,6 +9,10 @@ import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import app.opentv.data.model.Source
 import app.opentv.data.model.SourceKind
+import app.opentv.data.model.UserCollection
+import app.opentv.data.model.CollectionEntry
+import app.opentv.data.model.ChannelAliasOverride
+import kotlinx.coroutines.flow.first
 import app.opentv.data.parser.MovieBrowseKey
 import app.opentv.data.repo.movieFixture
 import com.google.common.truth.Truth.assertThat
@@ -128,6 +132,29 @@ class DatabaseFoundationTest {
             assertThat(it.moveToFirst()).isTrue()
             assertThat(it.getInt(0)).isEqualTo(1003)
         }
+    }
+
+    @Test fun `collections and canonical channel mappings survive writes without altering favourites`() = runTest {
+        database = Room.inMemoryDatabaseBuilder(context, OpenTvDatabase::class.java).build()
+        val dao = database!!.collections()
+        val id = dao.create(UserCollection(name = "F1", createdMillis = 100))
+        dao.add(CollectionEntry(id, "channel", 17L, "sky-f1"))
+        dao.add(CollectionEntry(id, "movie", 18L, "film-42"))
+        dao.add(CollectionEntry(id, "channel", 17L, "sky-f1"))
+        assertThat(dao.observeEntries(id).first()).hasSize(2)
+        dao.rename(id, "Motorsport")
+        assertThat(dao.observeCollections().first().single().name).isEqualTo("Motorsport")
+
+        val aliases = database!!.channelAliases()
+        val mapping = ChannelAliasOverride(17L, "sky-f1", "SkySportsF1.uk", "My F1 channel")
+        aliases.save(mapping)
+        assertThat(aliases.find(17L, "sky-f1")).isEqualTo(mapping)
+        aliases.save(mapping.copy(iptvOrgId = "SkySportsMainEvent.uk"))
+        assertThat(aliases.find(17L, "sky-f1")?.iptvOrgId).isEqualTo("SkySportsMainEvent.uk")
+        dao.delete(id)
+        assertThat(dao.observeCollections().first()).isEmpty()
+        assertThat(dao.observeEntries(id).first()).isEmpty()
+        assertThat(aliases.find(17L, "sky-f1")).isNotNull()
     }
 
     @Test fun `DAO recomputes derived fields after copied metadata changes and persists local source contract`() = runTest {
