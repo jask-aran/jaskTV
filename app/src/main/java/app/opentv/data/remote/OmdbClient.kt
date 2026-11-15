@@ -61,7 +61,7 @@ class OmdbClient(private val http: OkHttpClient, private val settings: AppSettin
         withContext(Dispatchers.IO) {
             val apiKey = settings.omdbApiKey.value.trim()
             if (apiKey.isEmpty()) return@withContext null
-            val key = "${imdbId ?: title.lowercase(Locale.ROOT)}:${year ?: ""}:$movie"
+            val key = "${apiKey.hashCode()}:${imdbId ?: title.lowercase(Locale.ROOT)}:${year ?: ""}:$movie"
             val cached = synchronized(cache) { cache[key] }
             if (cached != null && System.currentTimeMillis() - cached.first < ttl)
                 return@withContext cached.second
@@ -92,7 +92,11 @@ class OmdbClient(private val http: OkHttpClient, private val settings: AppSettin
             } catch (_: Exception) {
                 null
             }
-            synchronized(cache) { cache[key] = System.currentTimeMillis() to scores }
+            // Do not negatively cache temporary quota, network or authentication failures.
+            if (scores != null) synchronized(cache) {
+                if (cache.size >= 256) cache.remove(cache.keys.first())
+                cache[key] = System.currentTimeMillis() to scores
+            }
             scores
         }
 }
