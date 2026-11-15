@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 /** A result is a candidate, not proof that the IPTV stream currently carries the event. */
 class BroadcastDiscovery(context: Context) {
     data class Hit(val channel: Channel, val explanation: String, val level: Level) {
-        enum class Level { GUIDE_LISTING, EVENT_BROADCASTER, BROADCASTER_HINT }
+        enum class Level { GUIDE_LISTING, USER_ALIAS, EVENT_BROADCASTER, BROADCASTER_HINT }
     }
 
     private val graph = ServiceLocator.get(context)
@@ -52,6 +52,37 @@ class BroadcastDiscovery(context: Context) {
             val whenText = if (programme.isLiveAt(now)) "On now (EPG)" else "Scheduled (EPG)"
             found[channel.id] = Hit(channel, "$whenText · ${programme.title}",
                 Hit.Level.GUIDE_LISTING)
+        }
+
+        // Look up exact channel identities independent of sports schedules, so searching
+        // "Sky F1" can find "Sky Sports F1" even if the provider's EPG is empty.
+        val knownIds = runCatching { graph.iptvOrgCatalog.idsFor(query) }
+            .getOrDefault(emptySet())
+        val knownNames = runCatching { graph.iptvOrgCatalog.aliasesFor(query) }
+            .getOrDefault(listOf(query))
+        val userMaps = graph.database.channelAliases().observeAll().first()
+        userMaps.filter { mapping ->
+            mapping.iptvOrgId in knownIds ||
+                (mapping.label.isNotBlank() && mapping.label.contains(query, ignoreCase = true))
+        }.take(60).forEach { mapping ->
+            val channel = graph.database.channels().byProviderKey(mapping.sourceId, mapping.streamId)
+            if (channel != null && !channel.hidden && channel.id !in found) {
+                found[channel.id] = Hit(channel,
+                    "Your channel mapping · ${mapping.iptvOrgId}", Hit.Level.USER_ALIAS)
+            }
+        }
+        if (knownIds.isNotEmpty()) {
+            knownNames.take(12).forEach { alias ->
+                graph.catalogRepository.searchChannels(alias).first().asSequence().filter {
+                    AliasKeys.key(it.shownName) == AliasKeys.key(alias) ||
+                        AliasKeys.key(it.name) == AliasKeys.key(alias)
+                }.take(35).forEach { channel ->
+                    if (channel.id !in found) {
+                        found[channel.id] = Hit(channel,
+                            "Matched channel identity · IPTV-org", Hit.Level.USER_ALIAS)
+                    }
+                }
+            }
         }
 
         // TheSportsDB is advisory. One free event result and two free broadcaster results may
