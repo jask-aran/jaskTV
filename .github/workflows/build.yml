@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**']
   pull_request:
   workflow_dispatch:
 
@@ -27,6 +27,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - uses: android-actions/setup-android@v3
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
@@ -39,7 +41,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: opentv-mobile-debug-apk
+          name: jasktv-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
