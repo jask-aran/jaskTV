@@ -7,6 +7,9 @@ package app.opentv.sync
 
 import app.opentv.core.ServiceLocator
 import app.opentv.data.model.PlaybackPosition
+import app.opentv.data.model.UserCollection
+import app.opentv.data.model.CollectionEntry
+import kotlinx.coroutines.flow.first
 import app.opentv.data.model.Profile
 import app.opentv.data.model.Recording
 import app.opentv.data.model.RecordingStatus
@@ -34,14 +37,16 @@ class SyncEngine(private val graph: ServiceLocator.Graph) {
         val favourites: Int = 0,
         val hidden: Int = 0,
         val recordings: Int = 0,
+        val collections: Int = 0,
     ) {
-        val total: Int get() = positions + favourites + hidden + recordings
+        val total: Int get() = positions + favourites + hidden + recordings + collections
 
         operator fun plus(other: MergeResult): MergeResult = MergeResult(
             positions = positions + other.positions,
             favourites = favourites + other.favourites,
             hidden = hidden + other.hidden,
             recordings = recordings + other.recordings,
+            collections = collections + other.collections,
         )
     }
 
@@ -88,10 +93,34 @@ class SyncEngine(private val graph: ServiceLocator.Graph) {
                     sizeBytes = r.sizeBytes,
                 )
             }
+        // Collection rows carry device-local IDs, so translate members to portable stream
+        // identities before writing a bundle. Local downloads never travel as playable files.
+        val collectionDao = graph.database.collections()
+        val saved = collectionDao.allCollections()
+        val members = collectionDao.allEntries().groupBy { it.collectionId }
+        val portableCollections = saved.mapNotNull { collection ->
+            val owner = names[collection.profileId] ?: return@mapNotNull null
+            val items = members[collection.id].orEmpty().mapNotNull { item ->
+                when (item.kind) {
+                    "channel" -> graph.database.channels().byProviderKey(item.sourceId, item.itemKey)
+                        ?.streamUrl?.let { SyncCollectionMember("channel", it) }
+                    "movie" -> graph.database.movies().byProviderKey(item.sourceId, item.itemKey)
+                        ?.streamUrl?.let { SyncCollectionMember("movie", it) }
+                    "show" -> {
+                        val source = graph.database.sources().byId(item.sourceId)
+                        source?.url?.let { SyncCollectionMember("show", item.itemKey, it) }
+                    }
+                    else -> null // Files downloaded on one device aren't on another.
+                }
+            }
+            SyncCollection(owner, collection.name, collection.createdMillis, items)
+        }
+
         return SyncBundle(
             generatedAtMillis = System.currentTimeMillis(),
             profiles = profiles.map { it.name },
             positions = positions,
+            collections = portableCollections,
             favouriteChannels = graph.catalogRepository.favouriteChannelUrls(),
             hiddenChannels = graph.catalogRepository.hiddenChannelUrls(),
             favouriteMovies = graph.catalogRepository.favouriteMovieUrls(),
@@ -145,6 +174,42 @@ class SyncEngine(private val graph: ServiceLocator.Graph) {
             graph.settings.setHiddenCategories(
                 graph.settings.hiddenCategories.value + bundle.hiddenCategories,
             )
+        }
+
+        // Personal collections: resolve profile by name and all item IDs against this device's
+        // own catalogue. Merge is additive in v1; deleted/renamed entries cannot yet be propagated
+        // reliably because older peer snapshots may resurrect them.
+        var collectionsMerged = 0
+        val collectionDao = graph.database.collections()
+        val sources = graph.database.sources().all()
+        for (remote in bundle.collections.take(100)) {
+            if (remote.profile.isBlank() || remote.name.isBlank() || remote.name.length > 60) continue
+            val profileId = profileIdFor(remote.profile) ?: continue
+            val existing = collectionDao.observeCollections(profileId).first()
+                .firstOrNull { it.name.equals(remote.name, ignoreCase = true) }
+            val id = if (existing != null) existing.id else collectionDao.create(
+                UserCollection(name = remote.name, createdMillis = remote.createdMillis,
+                    profileId = profileId)
+            ).also { collectionsMerged++ }
+            val localMembers = collectionDao.observeEntries(id).first().toHashSet()
+            for (member in remote.members.take(1500)) {
+                val resolved = when (member.kind) {
+                    "channel" -> graph.database.channels().byStreamUrl(member.key)
+                        ?.let { CollectionEntry(id, "channel", it.sourceId, it.streamId) }
+                    "movie" -> graph.database.movies().byStreamUrl(member.key)
+                        ?.let { CollectionEntry(id, "movie", it.sourceId, it.streamId) }
+                    "show" -> sources.firstOrNull { it.url == member.providerUrl }
+                        ?.let { source ->
+                            graph.database.series().byProviderId(source.id, member.key)
+                                ?.let { CollectionEntry(id, "show", it.sourceId, it.seriesId) }
+                        }
+                    else -> null
+                }
+                if (resolved != null && localMembers.add(resolved)) {
+                    collectionDao.add(resolved)
+                    collectionsMerged++
+                }
+            }
         }
 
         // NAS recordings — insert any smb:// recording we don't already have, keyed by its locator.
@@ -207,6 +272,7 @@ class SyncEngine(private val graph: ServiceLocator.Graph) {
             favourites = favourites,
             hidden = hidden,
             recordings = recordings,
+            collections = collectionsMerged,
         )
     }
 
