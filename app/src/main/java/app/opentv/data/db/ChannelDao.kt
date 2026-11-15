@@ -16,6 +16,16 @@ private const val UPSERT_CHUNK = 500
 
 @Dao
 interface ChannelDao {
+    /** A matching guide ID is evidence of a programme listing, not verified stream content. */
+    @Query("""
+        SELECT c.* FROM channels c
+        INNER JOIN sources s ON s.id = c.sourceId AND s.enabled = 1
+        WHERE c.hidden = 0 AND (
+            c.epgOverrideId IN (:ids) OR c.epgChannelId IN (:ids) OR c.matchedEpgId IN (:ids))
+        ORDER BY c.favourite DESC, c.qualityRank DESC LIMIT 300
+    """)
+    suspend fun matchingEpgIds(ids: List<String>): List<Channel>
+
     /** Bounded widget/external-launch read: deliberately excludes stream URLs and source secrets. */
     @Query("""
         SELECT c.id, c.displayName, c.customName, c.groupKey, c.qualityRank,
