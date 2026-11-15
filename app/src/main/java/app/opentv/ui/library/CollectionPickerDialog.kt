@@ -26,9 +26,11 @@ fun CollectionPickerDialog(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val dao = remember(context) { ServiceLocator.get(context).database.collections() }
+    val graph = remember(context) { ServiceLocator.get(context) }
+    val dao = remember(graph) { graph.database.collections() }
+    val profileId by graph.settings.activeProfileId.collectAsState()
     val scope = rememberCoroutineScope()
-    val collections by remember(dao) { dao.observeCollections() }.collectAsState(initial = emptyList())
+    val collections by remember(dao, profileId) { dao.observeCollections(profileId) }.collectAsState(initial = emptyList())
     val entries by remember(dao) { dao.observeAllEntries() }.collectAsState(initial = emptyList())
     var creating by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
@@ -46,7 +48,7 @@ fun CollectionPickerDialog(
                 TextButton(enabled = valid, onClick = {
                     scope.launch {
                         val id = dao.create(UserCollection(name = candidate,
-                            createdMillis = System.currentTimeMillis()))
+                            createdMillis = System.currentTimeMillis(), profileId = profileId))
                         dao.add(CollectionEntry(id, kind, sourceId, itemKey))
                         onDismiss()
                     }
