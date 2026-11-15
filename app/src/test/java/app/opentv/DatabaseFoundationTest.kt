@@ -126,7 +126,7 @@ class DatabaseFoundationTest {
             assertThat(source.localPlaylistFileName).isNull()
             assertThat(source.localPlaylistDisplayName).isNull()
         }
-        assertThat(database!!.openHelper.writableDatabase.version).isEqualTo(16)
+        assertThat(database!!.openHelper.writableDatabase.version).isEqualTo(17)
         // Backfill updates must leave the external-content FTS index searchable.
         database!!.openHelper.writableDatabase.query("SELECT count(*) FROM movies_fts WHERE movies_fts MATCH 'film*'").use {
             assertThat(it.moveToFirst()).isTrue()
@@ -143,7 +143,7 @@ class DatabaseFoundationTest {
         dao.add(CollectionEntry(id, "channel", 17L, "sky-f1"))
         assertThat(dao.observeEntries(id).first()).hasSize(2)
         dao.rename(id, "Motorsport")
-        assertThat(dao.observeCollections().first().single().name).isEqualTo("Motorsport")
+        assertThat(dao.observeCollections(1L).first().single().name).isEqualTo("Motorsport")
 
         val aliases = database!!.channelAliases()
         val mapping = ChannelAliasOverride(17L, "sky-f1", "SkySportsF1.uk", "My F1 channel")
