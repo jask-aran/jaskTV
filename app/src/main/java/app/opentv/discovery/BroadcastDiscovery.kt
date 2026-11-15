@@ -1,0 +1,144 @@
+/*
+ * jaskTV — GPL-3.0-or-later. Derived from OpenTV Mobile.
+ * Live discovery joins local XMLTV listings with advisory external broadcaster metadata.
+ */
+package app.opentv.discovery
+
+import android.content.Context
+import app.opentv.core.ServiceLocator
+import app.opentv.data.model.Channel
+import app.opentv.data.model.Programme
+import app.opentv.data.model.shownName
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
+import java.util.Locale
+import java.util.concurrent.TimeUnit
+
+/** A result is a candidate, not proof that the IPTV stream currently carries the event. */
+class BroadcastDiscovery(context: Context) {
+    data class Hit(val channel: Channel, val explanation: String, val level: Level) {
+        enum class Level { GUIDE_LISTING, EVENT_BROADCASTER, BROADCASTER_HINT }
+    }
+
+    private val graph = ServiceLocator.get(context)
+    private val http = OkHttpClient.Builder().callTimeout(5, TimeUnit.SECONDS).build()
+    // Keep free API usage far below its request quota while re-using results across searches.
+    private val cache = mutableMapOf<String, Pair<Long, List<Pair<String, String>>>>()
+    private val cacheMillis = 15 * 60_000L
+
+    suspend fun lookup(text: String): List<Hit> = withContext(Dispatchers.IO) {
+        val query = text.trim()
+        if (query.length < 2) return@withContext emptyList()
+        val now = System.currentTimeMillis()
+        val programmes = graph.database.programmes()
+            .searchTitle(query, now - 60 * 60_000L, now + 36 * 60 * 60_000L, 150)
+        val listings = programmes.groupBy { it.epgChannelId }
+        val channels = if (listings.isEmpty()) emptyList()
+            else graph.database.channels().matchingEpgIds(listings.keys.toList())
+        val found = linkedMapOf<Long, Hit>()
+        channels.forEach { channel ->
+            val programme = channel.epgCandidates.flatMap { listings[it].orEmpty() }
+                .sortedWith(compareByDescending<Programme> { it.isLiveAt(now) }
+                    .thenBy { it.startUtcMillis })
+                .firstOrNull() ?: return@forEach
+            val whenText = if (programme.isLiveAt(now)) "On now (EPG)" else "Scheduled (EPG)"
+            found[channel.id] = Hit(channel, "$whenText · ${programme.title}",
+                Hit.Level.GUIDE_LISTING)
+        }
+
+        // TheSportsDB is advisory. One free event result and two free broadcaster results may
+        // be returned. An empty response is common, especially for generic sport queries.
+        val external = if (query.length >= 3) runCatching {
+            val key = query.lowercase(Locale.ROOT)
+            val existing = synchronized(cache) { cache[key] }
+            if (existing != null && now - existing.first < cacheMillis) existing.second
+            else sportsDbBroadcasts(query).also { result ->
+                synchronized(cache) { cache[key] = now to result }
+            }
+        }.getOrDefault(emptyList()) else emptyList()
+
+        val broadcasters = if (external.isNotEmpty()) external
+            else broadHints(query).map { it to "" }
+        broadcasters.take(8).forEach { (name, country) ->
+            if (name.length < 3) return@forEach
+            val candidates = graph.catalogRepository.searchChannels(name).first()
+                .filter { matchesBroadcaster(it.shownName, name) || matchesBroadcaster(it.name, name) }
+                .take(30)
+            candidates.forEach { channel ->
+                if (channel.id !in found) {
+                    val explanation = if (external.isNotEmpty()) {
+                        "External event listing · $name${if (country.isNotBlank()) " ($country)" else ""}"
+                    } else "Possible broadcaster · $name"
+                    found[channel.id] = Hit(channel, explanation,
+                        if (external.isNotEmpty()) Hit.Level.EVENT_BROADCASTER
+                        else Hit.Level.BROADCASTER_HINT)
+                }
+            }
+        }
+        found.values.sortedWith(compareBy<Hit> { it.level.ordinal }
+            .thenByDescending { it.channel.favourite }
+            .thenByDescending { it.channel.qualityRank }
+            .thenBy { it.channel.shownName }).take(100)
+    }
+
+    /** Normalised full-name matching avoids suggesting every Sky Sports channel for Sky Sports F1. */
+    private fun matchesBroadcaster(channelName: String, broadcaster: String): Boolean {
+        val normalName = channelName.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
+        val normalBroadcaster = broadcaster.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
+        return normalBroadcaster.length >= 3 && normalName.contains(normalBroadcaster)
+    }
+
+    private fun sportsDbBroadcasts(query: String): List<Pair<String, String>> {
+        val response = request("searchevents.php", "e", query) ?: return emptyList()
+        val events = response.optJSONArray("event") ?: response.optJSONArray("events")
+            ?: return emptyList()
+        val today = LocalDate.now(ZoneOffset.UTC)
+        val event = (0 until events.length()).asSequence().mapNotNull(events::optJSONObject)
+            .firstOrNull { e ->
+                val date = runCatching { LocalDate.parse(e.optString("dateEvent")) }.getOrNull()
+                    ?: return@firstOrNull false
+                ChronoUnit.DAYS.between(today, date) in -1L..7L
+            } ?: return emptyList()
+        val id = event.optString("idEvent").takeIf(String::isNotBlank) ?: return emptyList()
+        val responseTv = request("lookuptv.php", "id", id) ?: return emptyList()
+        // TheSportsDB uses the singular "tvevent" for the array (not "tvevents").
+        val television = responseTv.optJSONArray("tvevent")
+            ?: responseTv.optJSONArray("tvevents")
+            ?: responseTv.optJSONArray("tv") ?: return emptyList()
+        return (0 until television.length()).mapNotNull { index ->
+            val row = television.optJSONObject(index) ?: return@mapNotNull null
+            val name = row.optString("strChannel").ifBlank {
+                row.optString("strTVChannel")
+            }
+            if (name.isBlank()) null else name to row.optString("strCountry")
+        }.distinctBy { it.first.lowercase(Locale.ROOT) }
+    }
+
+    private fun request(endpoint: String, key: String, value: String): JSONObject? {
+        val url = "https://www.thesportsdb.com/api/v1/json/123/$endpoint".toHttpUrl()
+            .newBuilder().addQueryParameter(key, value).build()
+        return http.newCall(Request.Builder().url(url).get().build()).execute().use {
+            response -> if (!response.isSuccessful) null else response.body?.string()?.let(::JSONObject)
+        }
+    }
+
+    /** Explicitly uncertain rights-holder hints, used only when event-specific listings fail. */
+    private fun broadHints(query: String): List<String> {
+        val q = query.lowercase(Locale.ROOT)
+        return when {
+            listOf("f1", "formula 1", "grand prix", "qualifying").any(q::contains) ->
+                listOf("Sky Sports F1", "Fox Sports", "ESPN")
+            listOf("nba", "basketball", "lakers", "warriors", "celtics", "knicks").any(q::contains) ->
+                listOf("NBA TV", "ESPN", "ABC", "NBC", "Sky Sports NBA")
+            else -> emptyList()
+        }
+    }
+}
