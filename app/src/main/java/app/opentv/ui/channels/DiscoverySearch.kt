@@ -38,6 +38,11 @@ internal fun rememberBroadcastDiscovery(
             loading = true
             try {
                 hits = source.lookup(query)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // A missing EPG or external service should never prevent ordinary channel search.
+                hits = emptyList()
             } finally {
                 loading = false
             }
