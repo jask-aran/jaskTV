@@ -125,6 +125,7 @@ class ProfilesViewModel(app: Application) : AndroidViewModel(app) {
         if (id == 1L) return
         viewModelScope.launch {
             graph.profiles.deletePositions(id)
+            graph.database.collections().deleteProfileCollections(id)
             graph.profiles.delete(id)
             if (settings.activeProfileId.value == id) settings.setActiveProfile(1L)
         }
