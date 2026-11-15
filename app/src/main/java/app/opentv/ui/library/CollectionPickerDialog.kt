@@ -32,6 +32,10 @@ fun CollectionPickerDialog(
     val scope = rememberCoroutineScope()
     val collections by remember(dao, profileId) { dao.observeCollections(profileId) }.collectAsState(initial = emptyList())
     val entries by remember(dao) { dao.observeAllEntries() }.collectAsState(initial = emptyList())
+    LaunchedEffect(collections, entries) {
+        kotlinx.coroutines.delay(1_500)
+        app.opentv.sync.CloudSyncWorker.onOpen(context)
+    }
     var creating by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
 
