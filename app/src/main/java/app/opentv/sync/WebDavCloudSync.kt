@@ -17,6 +17,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
+import java.io.InputStream
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
 class WebDavCloudSync(private val context: Context, private val graph: ServiceLocator.Graph) {
@@ -82,7 +84,7 @@ class WebDavCloudSync(private val context: Context, private val graph: ServiceLo
             .header("Depth", "1").build()
         val xml = client.newCall(request).execute().use { response ->
             require(response.code == 207) { "Cannot list sync snapshots (HTTP ${response.code})" }
-            response.body?.source()?.readUtf8(maxBytes) ?: ""
+            response.body?.byteStream()?.use { readLimited(it) } ?: ""
         }
         // Only accept safe, generated file names. Never trust arbitrary href paths from a server.
         val names = Regex("<(?:[A-Za-z0-9]+:)?href\\b[^>]*>([^<]+)</(?:[A-Za-z0-9]+:)?href>",
@@ -98,10 +100,24 @@ class WebDavCloudSync(private val context: Context, private val graph: ServiceLo
         return client.newCall(request).execute().use { response ->
             when (response.code) {
                 404 -> null
-                200 -> response.body?.source()?.readUtf8(maxBytes)
+                200 -> response.body?.byteStream()?.use { readLimited(it) }
                 else -> error("Cannot read sync snapshot (HTTP ${response.code})")
             }
         }
+    }
+
+    private fun readLimited(input: InputStream): String {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        var size = 0L
+        while (true) {
+            val count = input.read(buffer)
+            if (count == -1) break
+            size += count
+            require(size <= maxBytes) { "Remote snapshot exceeds the allowed size" }
+            out.write(buffer, 0, count)
+        }
+        return out.toString("UTF-8")
     }
 
     private fun write(url: HttpUrl, auth: String, encrypted: String) {
