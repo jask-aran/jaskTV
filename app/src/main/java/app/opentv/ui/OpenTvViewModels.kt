@@ -16,6 +16,10 @@ import app.opentv.data.model.PlaybackPosition
 import app.opentv.data.model.Profile
 import app.opentv.pairing.ManagerServer
 import app.opentv.sync.NasSync
+import app.opentv.sync.WebDavCloudSync
+import app.opentv.sync.CloudSyncPrefs
+import app.opentv.sync.CloudSyncConfig
+import app.opentv.sync.CloudSyncWorker
 import app.opentv.sync.SyncBundle
 import app.opentv.sync.SyncClient
 import app.opentv.sync.SyncPosition
@@ -156,6 +160,44 @@ class SyncViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _receiveState = MutableStateFlow<ReceiveState>(ReceiveState.Idle)
     val receiveState: StateFlow<ReceiveState> = _receiveState.asStateFlow()
+
+    // ---- Internet sync: HTTPS WebDAV on user-selected storage -------------------------------
+
+    private val cloudPrefs = CloudSyncPrefs(app)
+    private val internet = WebDavCloudSync(app, graph)
+
+    sealed interface CloudState {
+        data object Idle : CloudState
+        data object Syncing : CloudState
+        data class Done(val message: String) : CloudState
+        data class Failed(val message: String) : CloudState
+    }
+
+    private val _cloudState = MutableStateFlow<CloudState>(CloudState.Idle)
+    val cloudState: StateFlow<CloudState> = _cloudState.asStateFlow()
+
+    fun cloudSettings(): CloudSyncConfig = cloudPrefs.load()
+
+    fun saveCloudSettings(config: CloudSyncConfig): Boolean =
+        runCatching {
+            cloudPrefs.save(config)
+            CloudSyncWorker.schedule(getApplication())
+            if (config.enabled) CloudSyncWorker.onOpen(getApplication())
+        }.isSuccess
+
+    fun syncCloudNow() {
+        if (_cloudState.value is CloudState.Syncing) return
+        viewModelScope.launch {
+            _cloudState.value = CloudState.Syncing
+            _cloudState.value = when (val result = internet.sync()) {
+                is WebDavCloudSync.Result.Success ->
+                    CloudState.Done("Synced ${result.merged} items from ${result.peers} device(s).")
+                is WebDavCloudSync.Result.NotConfigured ->
+                    CloudState.Failed("Configure and enable HTTPS cloud sync first.")
+                is WebDavCloudSync.Result.Failed -> CloudState.Failed(result.message)
+            }
+        }
+    }
 
     // ---- NAS ("cloud") sync ------------------------------------------------------------------
 
