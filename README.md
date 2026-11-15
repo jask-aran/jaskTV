@@ -4,6 +4,8 @@ A minimal IPTV player for Android phones and Android TV, built on OpenTV Mobile.
 
 **Three sections:** Live TV, Movies & Shows, Library. Programme search combines XMLTV listings and advisory external broadcaster hints; Library contains favourite channels, films, series and offline downloads. No subscription is required for the application's basic features.
 
+Internet-wide Library and watch-progress sync is available through optional encrypted HTTPS WebDAV storage (for example Koofr or Nextcloud), with no jaskTV server. Each device can sync without being on the same LAN. Profiles and collections use the existing app sync infrastructure; see [sync limitations](JASKTV.md#internet-syncing-without-a-jasktv-server).
+
 This is a GPL-3.0-or-later fork of OpenTV Mobile. The upstream documentation below remains available for provider support, playback and setup details. See [jaskTV implementation notes](JASKTV.md) and [the current development PR](https://github.com/jask-aran/jaskTV/pull/2).
 
 ---
