@@ -178,6 +178,7 @@ fun MovieDetailScreen(
                 onOpenPerson = onOpenPerson,
             )
         }
+        item(key = "review-scores") { ExternalReviews(movie = m) }
         if (moreLike.isNotEmpty()) {
             item(key = "more") {
                 Spacer(Modifier.height(4.dp))
@@ -353,6 +354,7 @@ fun SeriesDetailScreen(
                 onOpenPerson = onOpenPerson,
             )
         }
+        item(key = "review-scores") { ExternalReviews(series = s) }
 
         if (episodes.isEmpty()) {
             item(key = "eploading") {
