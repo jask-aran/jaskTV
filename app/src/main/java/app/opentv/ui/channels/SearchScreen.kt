@@ -104,10 +104,11 @@ fun SearchScreen(
         return
     }
     var query by remember { mutableStateOf("") }
+    val (discoveryLoading, discoveryHits) = rememberBroadcastDiscovery(query, true)
     val channelResults by viewModel.searchResults.collectAsState()
     val movieResults by vodViewModel.movieResults.collectAsState()
     val seriesResults by vodViewModel.seriesResults.collectAsState()
-    val anyResults = channelResults.isNotEmpty() || movieResults.isNotEmpty() || seriesResults.isNotEmpty()
+    val anyResults = channelResults.isNotEmpty() || movieResults.isNotEmpty() || seriesResults.isNotEmpty() || discoveryHits.isNotEmpty()
 
     LaunchedEffect(query) {
         viewModel.setSearchQuery(query)
@@ -149,8 +150,15 @@ fun SearchScreen(
                 when {
                     query.isBlank() -> Hint(stringResource(R.string.search_start_hint))
                     query.trim().length < 2 -> Hint(stringResource(R.string.common_keep_typing))
+                    !anyResults && discoveryLoading -> Hint("Searching programmes and broadcasters…")
                     !anyResults -> Hint(stringResource(R.string.search_no_results, query))
                     else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (discoveryHits.isNotEmpty()) {
+                            item { SectionHeader("Programme and broadcaster candidates") }
+                            items(discoveryHits, key = { "d${it.channel.id}" }) { hit ->
+                                DiscoveryResultRow(hit, onPlayChannel)
+                            }
+                        }
                         if (channelResults.isNotEmpty()) {
                             item { SectionHeader(stringResource(R.string.common_channels)) }
                             items(channelResults, key = { "c${it.key}" }) { row ->
@@ -201,6 +209,7 @@ private fun PhoneSearchScreen(
     val movieResults by vodViewModel.movieResults.collectAsState()
     val seriesResults by vodViewModel.seriesResults.collectAsState()
     val showChannels = scope == "all" || scope == "channels"
+    val (discoveryLoading, discoveryHits) = rememberBroadcastDiscovery(query, showChannels)
     val showMovies = scope == "all" || scope == "movies"
     val showSeries = scope == "all" || scope == "series"
 
@@ -220,7 +229,7 @@ private fun PhoneSearchScreen(
     val movies = if (tag == null) movieResults else movieResults.filter { tag in movieTags[it.id].orEmpty() }
     val shows = if (tag == null) seriesResults else seriesResults.filter { tag in seriesTags[it.id].orEmpty() }
 
-    val anyResults = (showChannels && channelResults.isNotEmpty()) ||
+    val anyResults = (showChannels && (channelResults.isNotEmpty() || discoveryHits.isNotEmpty())) ||
         (showMovies && movies.isNotEmpty()) || (showSeries && shows.isNotEmpty())
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -306,6 +315,7 @@ private fun PhoneSearchScreen(
                 )
                 query.isBlank() -> Hint(stringResource(R.string.search_start_hint))
                 query.trim().length < 2 -> Hint(stringResource(R.string.common_keep_typing))
+                !anyResults && discoveryLoading -> Hint("Searching programmes and broadcasters…")
                 !anyResults -> Hint(stringResource(R.string.search_no_results, query))
                 else -> LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -314,6 +324,15 @@ private fun PhoneSearchScreen(
                         awaitPointerEventScope { while (true) { awaitPointerEvent(); keyboard?.hide() } }
                     },
                 ) {
+                    if (showChannels && discoveryHits.isNotEmpty()) {
+                        item { SectionHeader("Programme and broadcaster candidates") }
+                        items(discoveryHits, key = { "discovery-${it.channel.id}" }) { hit ->
+                            DiscoveryResultRow(hit) { channel ->
+                                saveSearch()
+                                onPlayChannel(channel)
+                            }
+                        }
+                    }
                     if (showChannels && channelResults.isNotEmpty()) {
                         if (scope == "all") item { SectionHeader(stringResource(R.string.common_channels)) }
                         items(channelResults, key = { "c${it.key}" }) { row ->
