@@ -18,7 +18,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Link
 import app.opentv.ui.channels.ChannelMappingDialog
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.RemoveCircleOutline
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -342,7 +342,7 @@ private fun LibraryRow(
             Icon(Icons.Filled.Folder, contentDescription = "Organise in collections")
         }
         if (onRemove != null) IconButton(onClick = onRemove) {
-            Icon(Icons.Filled.RemoveCircleOutline, contentDescription = "Remove from this view")
+            Icon(Icons.Filled.Close, contentDescription = "Remove from this view")
         }
     }
     HorizontalDivider()
