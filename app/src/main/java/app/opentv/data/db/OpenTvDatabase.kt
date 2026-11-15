@@ -14,6 +14,9 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import app.opentv.data.model.Category
+import app.opentv.data.model.UserCollection
+import app.opentv.data.model.CollectionEntry
+import app.opentv.data.model.ChannelAliasOverride
 import app.opentv.data.model.Channel
 import app.opentv.data.model.EpgChannelAlias
 import app.opentv.data.model.EpgFeed
@@ -77,8 +80,11 @@ class Converters {
         MovieFts::class,
         SeriesFts::class,
         Download::class,
+        UserCollection::class,
+        CollectionEntry::class,
+        ChannelAliasOverride::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -98,6 +104,8 @@ abstract class OpenTvDatabase : RoomDatabase() {
     abstract fun seriesRules(): SeriesRuleDao
     abstract fun reminders(): ReminderDao
     abstract fun downloads(): DownloadDao
+    abstract fun collections(): CollectionDao
+    abstract fun channelAliases(): ChannelAliasDao
 
     companion object {
         /**
@@ -359,6 +367,15 @@ abstract class OpenTvDatabase : RoomDatabase() {
             }
         }
 
+        /** v15 → v16: additive saved collections and manual canonical channel mappings. */
+        internal val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `user_collections` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `createdMillis` INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `collection_entries` (`collectionId` INTEGER NOT NULL, `kind` TEXT NOT NULL, `sourceId` INTEGER NOT NULL, `itemKey` TEXT NOT NULL, PRIMARY KEY(`collectionId`, `kind`, `sourceId`, `itemKey`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `channel_alias_overrides` (`sourceId` INTEGER NOT NULL, `streamId` TEXT NOT NULL, `iptvOrgId` TEXT NOT NULL, `label` TEXT NOT NULL, PRIMARY KEY(`sourceId`, `streamId`))")
+            }
+        }
+
         fun build(context: Context): OpenTvDatabase =
             Room.databaseBuilder(context, OpenTvDatabase::class.java, "opentv.db")
                 // WAL keeps guide writes from blocking guide reads, so a background EPG
@@ -367,7 +384,7 @@ abstract class OpenTvDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
-                    MIGRATION_13_14, MIGRATION_14_15,
+                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
                 )
                 // v1 predates the retained migration chain; all versions >= 2 must migrate.
                 .fallbackToDestructiveMigrationFrom(1)
