@@ -651,7 +651,8 @@ private fun OpenTvApp(isTelevision: Boolean) {
         }
 
         // Sits above the whole nav graph so a found update can prompt from any screen.
-        UpdateGate()
+        // jaskTV: upstream update APKs must not replace custom builds.
+        // Re-enable only after configuring jaskTV-specific signed release updates.
 
         // "About to switch to a recording" banner — shows 30s before an auto-switch fires.
         RecordingSwitchBanner()

@@ -121,14 +121,13 @@ fun MoviesScreen(
     // home rows (recommended, by-genre) on open too — cheap, and covers a library already on disk.
     LaunchedEffect(Unit) {
         if (hasSources) viewModel.ensureVodLoaded()
-        viewModel.loadHomeFeeds()
     }
 
     // Category is a provider-scoped token held by the VM; Home/All mode is navigation-saveable.
     val browseCategory by viewModel.selectedMovieCategory.collectAsState()
-    var browseAll by rememberSaveable { mutableStateOf(false) }
-    BackHandler(browseAll || browseCategory != null) {
-        browseAll = false; viewModel.selectMovieCategory(null)
+    var browseAll by rememberSaveable { mutableStateOf(true) }
+    BackHandler(browseCategory != null) {
+        browseAll = true; viewModel.selectMovieCategory(null)
     }
 
     val hasMovies by viewModel.hasMovies.collectAsState()
@@ -156,7 +155,7 @@ fun MoviesScreen(
             },
             selected = browseCategory,
             homeSelected = browseCategory == null && !browseAll,
-            onSelectHome = { browseAll = false; viewModel.selectMovieCategory(null) },
+            onSelectHome = { browseAll = true; viewModel.selectMovieCategory(null) },
             onSelectCategory = { id -> browseAll = false; viewModel.selectMovieCategory(id) },
             loadCounts = viewModel::movieCategoryCounts,
         )
@@ -229,14 +228,13 @@ fun SeriesScreen(
 
     LaunchedEffect(Unit) {
         if (hasSources) viewModel.ensureVodLoaded()
-        viewModel.loadHomeFeeds()
     }
 
     // Saveable: opening a title and coming back must land in the same category, not the shelves.
     val browseCategory by viewModel.selectedSeriesCategory.collectAsState()
-    var browseAll by rememberSaveable { mutableStateOf(false) }
-    BackHandler(browseAll || browseCategory != null) {
-        browseAll = false; viewModel.selectSeriesCategory(null)
+    var browseAll by rememberSaveable { mutableStateOf(true) }
+    BackHandler(browseCategory != null) {
+        browseAll = true; viewModel.selectSeriesCategory(null)
     }
 
     val hasSeries by viewModel.hasSeries.collectAsState()
@@ -263,7 +261,7 @@ fun SeriesScreen(
             },
             selected = browseCategory,
             homeSelected = browseCategory == null && !browseAll,
-            onSelectHome = { browseAll = false; viewModel.selectSeriesCategory(null) },
+            onSelectHome = { browseAll = true; viewModel.selectSeriesCategory(null) },
             onSelectCategory = { id -> browseAll = false; viewModel.selectSeriesCategory(id) },
             loadCounts = viewModel::seriesCategoryCounts,
         )

@@ -69,8 +69,11 @@ fun AboutScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(20.dp))
 
         Section(stringResource(R.string.about_version)) {
-            Text("OpenTV Mobile ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
+            Text("jaskTV ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(12.dp))
+            Text("Development build: updates are published in the jaskTV repository.",
+                style = MaterialTheme.typography.bodyMedium)
+            /*
             OutlinedButton(
                 enabled = !checking,
                 onClick = {
@@ -95,6 +98,7 @@ fun AboutScreen(onBack: () -> Unit) {
                     }
                 },
             ) { Text(if (checking) stringResource(R.string.about_checking) else stringResource(R.string.about_check_updates)) }
+            */
             // Below the button, not beside it: translated lines are long enough to squeeze it.
             updateLine?.let {
                 Spacer(Modifier.height(8.dp))
@@ -173,11 +177,11 @@ fun AboutScreen(onBack: () -> Unit) {
                 "GNU General Public License v3.0",
                 url = "https://www.gnu.org/licenses/gpl-3.0.html",
             )
-            LinkLine(stringResource(R.string.about_source_code), "github.com/opentv-mobile/opentv-mobile")
-            LinkLine(stringResource(R.string.about_report_bug), "github.com/opentv-mobile/opentv-mobile/issues")
+            LinkLine(stringResource(R.string.about_source_code), "github.com/jask-aran/jaskTV"
+            LinkLine(stringResource(R.string.about_report_bug), "github.com/jask-aran/jaskTV/issues")
             // Credit where it is due: this app is built on OpenTV.
             LinkLine(stringResource(R.string.about_based_on), "github.com/opentvproject/opentv")
-            LinkLine(stringResource(R.string.about_install_page), "github.com/opentv-mobile/opentv-mobile/releases")
+            LinkLine(stringResource(R.string.about_install_page), "github.com/jask-aran/jaskTV/actions")
         }
     }
 }

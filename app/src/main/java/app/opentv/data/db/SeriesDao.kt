@@ -108,6 +108,9 @@ interface SeriesDao {
     @Query("SELECT * FROM series WHERE id = :id")
     suspend fun byId(id: Long): Series?
 
+    @Query("SELECT * FROM series WHERE favourite = 1 ORDER BY name")
+    fun observeFavourites(): Flow<List<Series>>
+
     @Query("UPDATE series SET favourite = :favourite WHERE id = :id")
     suspend fun setFavourite(id: Long, favourite: Boolean)
 
