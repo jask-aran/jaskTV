@@ -1,3 +1,13 @@
+# jaskTV
+
+A minimal IPTV player for Android phones and Android TV, built on OpenTV Mobile.
+
+**Three sections:** Live TV, Movies & Shows, Library. Programme search combines XMLTV listings and advisory external broadcaster hints; Library contains favourite channels, films, series and offline downloads. No subscription is required for the application's basic features.
+
+This is a GPL-3.0-or-later fork of OpenTV Mobile. The upstream documentation below remains available for provider support, playback and setup details. See [jaskTV implementation notes](JASKTV.md) and [the current development PR](https://github.com/jask-aran/jaskTV/pull/2).
+
+---
+
 <p align="center">
   <img src="docs/brand/logo.svg" alt="OpenTV Mobile" width="420">
 </p>
