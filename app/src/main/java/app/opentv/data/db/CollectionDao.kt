@@ -38,6 +38,9 @@ interface CollectionDao {
         deleteCollectionRow(id)
     }
 
+    @Query("SELECT * FROM collection_entries")
+    fun observeAllEntries(): Flow<List<CollectionEntry>>
+
     @Query("SELECT * FROM collection_entries WHERE collectionId = :id")
     fun observeEntries(id: Long): Flow<List<CollectionEntry>>
 
