@@ -49,19 +49,26 @@ internal fun ExternalReviews(movie: Movie? = null, series: Series? = null) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             meta.imdb?.let { rating ->
-                AssistChip(onClick = {}, label = {
-                    Text("IMDb (via OMDb) · %.1f/10".format(rating))
-                })
+                ScorePill("IMDb (via OMDb) · %.1f/10".format(rating))
             }
             meta.rottenTomatoes?.let { rating ->
-                AssistChip(onClick = {}, label = { Text("Rotten Tomatoes · $rating%") })
+                ScorePill("Rotten Tomatoes · $rating%")
             }
             meta.metacritic?.let { rating ->
-                AssistChip(onClick = {}, label = { Text("Metacritic · $rating/100") })
+                ScorePill("Metacritic · $rating/100")
             }
         }
         Text("Source: OMDb API. Scores are separate from the provider/TMDB rating.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun ScorePill(label: String) {
+    Surface(shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant) {
+        Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            style = MaterialTheme.typography.labelMedium)
     }
 }
