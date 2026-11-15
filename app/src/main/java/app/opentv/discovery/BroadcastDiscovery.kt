@@ -67,16 +67,39 @@ class BroadcastDiscovery(context: Context) {
 
         val broadcasters = if (external.isNotEmpty()) external
             else broadHints(query).map { it to "" }
+        val manualOverrides = graph.database.channelAliases().observeAll().first()
         broadcasters.take(8).forEach { (name, country) ->
             if (name.length < 3) return@forEach
-            val candidates = graph.catalogRepository.searchChannels(name).first()
-                .filter { BroadcasterMatcher.matches(it.shownName, name) || BroadcasterMatcher.matches(it.name, name) }
-                .take(30)
-            candidates.forEach { channel ->
+            // IPTV-org supplies canonical names and alt_names, not streams. Search only our own
+            // configured playlist for the aliases, keeping a manual mapping higher priority.
+            val aliasNames = runCatching { graph.iptvOrgCatalog.aliasesFor(name) }
+                .getOrDefault(listOf(name))
+            val canonicalIds = runCatching { graph.iptvOrgCatalog.idsFor(name) }
+                .getOrDefault(emptySet())
+            val candidates = linkedMapOf<Long, Channel>()
+            aliasNames.take(20).forEach { alias ->
+                graph.catalogRepository.searchChannels(alias).first().asSequence()
+                    .filter { channel ->
+                        BroadcasterMatcher.matches(channel.shownName, alias) ||
+                            BroadcasterMatcher.matches(channel.name, alias) ||
+                            AliasKeys.key(channel.shownName) == AliasKeys.key(alias)
+                    }.take(30).forEach { channel -> candidates[channel.id] = channel }
+            }
+            manualOverrides.filter { it.iptvOrgId in canonicalIds }.take(50).forEach { mapping ->
+                graph.database.channels().byProviderKey(mapping.sourceId, mapping.streamId)
+                    ?.takeUnless { it.hidden }?.let { candidates[it.id] = it }
+            }
+            candidates.values.forEach { channel ->
                 if (channel.id !in found) {
-                    val explanation = if (external.isNotEmpty()) {
-                        "External event listing · $name${if (country.isNotBlank()) " ($country)" else ""}"
-                    } else "Possible broadcaster · $name"
+                    val manual = manualOverrides.any { mapping ->
+                        mapping.sourceId == channel.sourceId && mapping.streamId == channel.streamId &&
+                            mapping.iptvOrgId in canonicalIds
+                    }
+                    val explanation = when {
+                        manual -> "Your channel mapping · $name (broadcast unverified)"
+                        external.isNotEmpty() -> "External event listing · $name${if (country.isNotBlank()) " ($country)" else ""}"
+                        else -> "Possible broadcaster · $name"
+                    }
                     found[channel.id] = Hit(channel, explanation,
                         if (external.isNotEmpty()) Hit.Level.EVENT_BROADCASTER
                         else Hit.Level.BROADCASTER_HINT)
