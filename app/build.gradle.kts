@@ -12,11 +12,11 @@ android {
 
     defaultConfig {
         // Its own id so it installs next to upstream OpenTV instead of replacing it.
-        applicationId = "app.opentvmobile"
+        applicationId = "app.jasktv"
         minSdk = 23
         targetSdk = 35
-        versionCode = 101
-        versionName = "1.1.0"
+        versionCode = 1
+        versionName = "0.1.0-alpha.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

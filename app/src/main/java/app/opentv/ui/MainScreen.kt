@@ -522,14 +522,14 @@ private fun RailItem(
 private fun Wordmark(modifier: Modifier = Modifier) {
     Column(modifier) {
         Text(
-            "OpenTV",
+            "jaskTV",
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 1,
         )
         Text(
-            "MOBILE",
+            "LIVE · MOVIES · LIBRARY",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             letterSpacing = 3.sp,
