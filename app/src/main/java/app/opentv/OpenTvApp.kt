@@ -63,6 +63,9 @@ class OpenTvApp : Application(), ImageLoaderFactory {
         app.opentv.core.AppText.init(this)
         app.opentv.widget.RecentWidgetUpdates.start(this, appScope)
         SyncWorker.schedule(this)
+        // Encrypted metadata sync: no daemon. WorkManager runs opportunistically when online.
+        app.opentv.sync.CloudSyncWorker.schedule(this)
+        app.opentv.sync.CloudSyncWorker.onOpen(this)
         appScope.launch(Dispatchers.IO) {
             runCatching {
                 val store = graph.localPlaylistStore
