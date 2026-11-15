@@ -147,6 +147,9 @@ abstract class MovieDao {
     @Query("SELECT * FROM movies WHERE streamUrl = :url LIMIT 1")
     abstract suspend fun byStreamUrl(url: String): Movie?
 
+    @Query("SELECT * FROM movies WHERE sourceId = :sourceId AND streamId = :streamId LIMIT 1")
+    abstract suspend fun byProviderKey(sourceId: Long, streamId: String): Movie?
+
     @Query("UPDATE movies SET favourite = :favourite WHERE id = :id")
     abstract suspend fun setFavourite(id: Long, favourite: Boolean)
 
