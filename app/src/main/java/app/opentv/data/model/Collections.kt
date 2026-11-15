@@ -5,6 +5,7 @@
 package app.opentv.data.model
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.PrimaryKey
 
 @Entity(tableName = "user_collections")
@@ -12,6 +13,7 @@ data class UserCollection(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val createdMillis: Long,
+    @ColumnInfo(defaultValue = "1") val profileId: Long = 1L,
 )
 
 @Entity(tableName = "collection_entries", primaryKeys = ["collectionId", "kind", "sourceId", "itemKey"])
