@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -60,6 +61,7 @@ internal fun DiscoveryResultRow(
     val context = LocalContext.current
     val catalog = remember(context) { ServiceLocator.get(context).catalogRepository }
     val scope = rememberCoroutineScope()
+    var showMapping by remember(hit.channel.id) { mutableStateOf(false) }
     var favourite by remember(hit.channel.id, hit.channel.favourite) {
         mutableStateOf(hit.channel.favourite)
     }
@@ -70,6 +72,9 @@ internal fun DiscoveryResultRow(
             Text(hit.channel.shownName, style = MaterialTheme.typography.bodyLarge)
             Text(hit.explanation, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall)
+        }
+        IconButton(onClick = { showMapping = true }) {
+            Icon(Icons.Filled.Link, contentDescription = "Map channel identity")
         }
         IconButton(onClick = {
             val desired = !favourite
@@ -86,4 +91,5 @@ internal fun DiscoveryResultRow(
                 contentDescription = if (favourite) "Remove favourite" else "Add favourite")
         }
     }
+    if (showMapping) ChannelMappingDialog(hit.channel) { showMapping = false }
 }
