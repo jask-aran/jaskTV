@@ -352,7 +352,6 @@ fun HomeScreen(
             onSelectRecents = viewModel::selectRecents,
             onSelectFavourites = viewModel::selectFavourites,
             onSelectCategory = viewModel::selectCategory,
-            onQuery = viewModel::search,
             onOpenSearch = onSearchLive,
             emptyContent = emptyContent,
             layout = phoneLayout,
