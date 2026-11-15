@@ -118,6 +118,7 @@ fun HomeScreen(
     onPlayChannel: (Channel) -> Unit,
     onAddSource: () -> Unit,
     onRefresh: () -> Unit,
+    onSearchLive: () -> Unit = {},
     onPlayCatchup: (mediaKey: String, url: String, title: String, ua: String) -> Unit = { _, _, _, _ -> },
     viewModel: ChannelsViewModel = viewModel(),
 ) {
@@ -352,6 +353,7 @@ fun HomeScreen(
             onSelectFavourites = viewModel::selectFavourites,
             onSelectCategory = viewModel::selectCategory,
             onQuery = viewModel::search,
+            onOpenSearch = onSearchLive,
             emptyContent = emptyContent,
             layout = phoneLayout,
             onLayout = settings::setPhoneLiveLayout,

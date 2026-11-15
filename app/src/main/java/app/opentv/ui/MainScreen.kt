@@ -81,6 +81,9 @@ import app.opentv.ui.downloads.DownloadsScreen
 import androidx.compose.material.icons.filled.Download
 import app.opentv.ui.vod.MoviesScreen
 import app.opentv.ui.vod.SeriesScreen
+import app.opentv.ui.library.LibraryScreen
+import androidx.compose.material3.FilterChip
+import androidx.compose.material.icons.filled.Star
 
 /**
  * The shell: a slim navigation rail down the left over a content area. The rail sits collapsed as
@@ -90,10 +93,8 @@ import app.opentv.ui.vod.SeriesScreen
  */
 enum class Tab(val labelRes: Int, val icon: ImageVector) {
     LIVE(R.string.nav_live_tv, Icons.Filled.LiveTv),
-    MOVIES(R.string.nav_movies, Icons.Filled.Movie),
-    SHOWS(R.string.nav_shows, Icons.Filled.Tv),
-    RECORDINGS(R.string.nav_recordings, Icons.Filled.FiberManualRecord),
-    DOWNLOADS(R.string.nav_downloads, Icons.Filled.Download),
+    VOD(R.string.nav_media_simple, Icons.Filled.Movie),
+    LIBRARY(R.string.nav_saved_simple, Icons.Filled.Star),
 }
 
 private val RAIL_COLLAPSED = 76.dp
@@ -129,10 +130,8 @@ fun MainScreen(
     val visibleTabs = remember(liveEnabled, moviesEnabled, seriesEnabled) {
         buildList {
             if (liveEnabled) add(Tab.LIVE)
-            if (moviesEnabled) add(Tab.MOVIES)
-            if (seriesEnabled) add(Tab.SHOWS)
-            add(Tab.RECORDINGS)
-            add(Tab.DOWNLOADS)
+            if (moviesEnabled || seriesEnabled) add(Tab.VOD)
+            add(Tab.LIBRARY)
         }
     }
     // The default/home tab is the first visible one — Live TV normally, otherwise the first type
@@ -142,6 +141,11 @@ fun MainScreen(
     // Saveable so it survives leaving for the player or a detail page: Back from an episode used
     // to land on Live TV because this state was rebuilt from scratch when the shell came back.
     var tab by rememberSaveable { mutableStateOf(homeTab) }
+    var vodSection by rememberSaveable { mutableStateOf("Movies") }
+    LaunchedEffect(moviesEnabled, seriesEnabled) {
+        if (!moviesEnabled && seriesEnabled) vodSection = "Shows"
+        else if (!seriesEnabled) vodSection = "Movies"
+    }
 
     // If the selected tab gets hidden (its type toggled off while it's open), drop back to the
     // home tab so the content area never tries to show a tab that's no longer there.
@@ -183,24 +187,41 @@ fun MainScreen(
                 onAddSource = onAddSource,
                 onRefresh = onRefresh,
                 onPlayCatchup = onPlayCatchup,
+                onSearchLive = { onOpenSearch("channels") },
             )
-            Tab.MOVIES -> MoviesScreen(
-                onOpenMovie = onOpenMovie,
-                onResume = onResume,
-                onOpenSearch = { onOpenSearch("movies") },
-                hasSources = hasSources,
-                isSyncing = isSyncing,
+            Tab.VOD -> Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (moviesEnabled) FilterChip(
+                        selected = vodSection == "Movies", onClick = { vodSection = "Movies" },
+                        label = { Text("Movies") },
+                    )
+                    if (seriesEnabled) FilterChip(
+                        selected = vodSection == "Shows", onClick = { vodSection = "Shows" },
+                        label = { Text("Shows") },
+                    )
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when {
+                        vodSection == "Movies" && moviesEnabled -> MoviesScreen(
+                            onOpenMovie = onOpenMovie, onResume = onResume,
+                            onOpenSearch = { onOpenSearch("movies") },
+                            hasSources = hasSources, isSyncing = isSyncing,
+                        )
+                        seriesEnabled -> SeriesScreen(
+                            onOpenSeries = onOpenSeries, onResume = onResume,
+                            onOpenSearch = { onOpenSearch("series") },
+                            hasSources = hasSources, isSyncing = isSyncing,
+                        )
+                    }
+                }
+            }
+            Tab.LIBRARY -> LibraryScreen(
+                onPlayChannel = onPlayChannel, onOpenMovie = onOpenMovie,
+                onOpenSeries = onOpenSeries, onResume = onResume,
             )
-            Tab.SHOWS -> SeriesScreen(
-                onOpenSeries = onOpenSeries,
-                onResume = onResume,
-                onOpenSearch = { onOpenSearch("series") },
-                hasSources = hasSources,
-                isSyncing = isSyncing,
-            )
-            Tab.RECORDINGS -> RecordingsScreen(onPlay = onPlayRecording)
-            // Saved files play through the VOD player under the same media key, so resume works.
-            Tab.DOWNLOADS -> DownloadsScreen(onPlay = onResume)
         }
     }
 
@@ -211,8 +232,7 @@ fun MainScreen(
         val scopedSearch = {
             onOpenSearch(
                 when (tab) {
-                    Tab.MOVIES -> "movies"
-                    Tab.SHOWS -> "series"
+                    Tab.LIVE -> "channels"
                     else -> "all"
                 },
             )

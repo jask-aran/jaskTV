@@ -626,4 +626,6 @@
     <string name="upd_available_body">%1$s %2$s is available. You have %3$s.</string>
     <string name="settings_auto_rotate_title">Rotate with the phone</string>
     <string name="settings_auto_rotate_subtitle">On (default): menus and lists follow Android’s rotation setting. Off: keep phone navigation in portrait. Player rotation is controlled separately.</string>
+    <string name="nav_media_simple">Movies &amp; Shows</string>
+    <string name="nav_saved_simple">Library</string>
 </resources>
