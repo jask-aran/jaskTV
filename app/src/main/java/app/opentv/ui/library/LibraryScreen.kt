@@ -1,6 +1,6 @@
 /*
  * jaskTV — GPL-3.0-or-later. Derived from OpenTV Mobile.
- * Saved items and downloads, without a recommendation feed.
+ * A saved-items library with persistent user-defined collections.
  */
 package app.opentv.ui.library
 
@@ -11,7 +11,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -21,14 +26,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.opentv.core.ServiceLocator
 import app.opentv.data.model.Channel
+import app.opentv.data.model.CollectionEntry
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
+import app.opentv.data.model.UserCollection
 import app.opentv.data.model.shownName
 import app.opentv.data.repo.DownloadRepository
 import app.opentv.ui.downloads.DownloadsScreen
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
-/** A manual collection of saved channels, movies, shows and local videos. */
+private data class SavedRef(val kind: String, val sourceId: Long, val key: String) {
+    fun asEntry(collectionId: Long) = CollectionEntry(collectionId, kind, sourceId, key)
+}
+
 @Composable
 fun LibraryScreen(
     onPlayChannel: (Channel) -> Unit,
@@ -38,101 +49,262 @@ fun LibraryScreen(
 ) {
     val context = LocalContext.current
     val graph = remember(context) { ServiceLocator.get(context) }
-    val channels by remember(graph) { graph.catalogRepository.observeFavouriteChannels() }
+    val dao = remember(graph) { graph.database.collections() }
+    val scope = rememberCoroutineScope()
+    val favourites by remember(graph) { graph.catalogRepository.observeFavouriteChannels() }
         .collectAsState(initial = emptyList())
     val movies by remember(graph) { graph.database.movies().observeFavourites() }
         .collectAsState(initial = emptyList())
-    val series by remember(graph) { graph.database.series().observeFavourites() }
+    val shows by remember(graph) { graph.database.series().observeFavourites() }
         .collectAsState(initial = emptyList())
     val downloads by remember(graph) { graph.downloadRepository.observe() }
         .collectAsState(initial = emptyList())
-    val scope = rememberCoroutineScope()
+    val collections by remember(dao) { dao.observeCollections() }.collectAsState(initial = emptyList())
+    val memberships by remember(dao) { dao.observeAllEntries() }.collectAsState(initial = emptyList())
     var section by rememberSaveable { mutableStateOf("All") }
-    // Keep channel variants collapsed, consistent with the main channel browser.
-    val savedChannels = remember(channels) {
-        channels.distinctBy { it.groupKey.takeIf(String::isNotBlank) ?: "id:${it.id}" }
+    var sort by rememberSaveable { mutableStateOf("Name") }
+    var sorting by remember { mutableStateOf(false) }
+
+    val collectionId = section.removePrefix("collection:").toLongOrNull()
+    val collectionChannels by remember(dao, collectionId) {
+        collectionId?.let { dao.observeChannels(it) } ?: flowOf(emptyList<Channel>())
+    }.collectAsState(initial = emptyList())
+    val collectionMovies by remember(dao, collectionId) {
+        collectionId?.let { dao.observeMovies(it) } ?: flowOf(emptyList<Movie>())
+    }.collectAsState(initial = emptyList())
+    val collectionShows by remember(dao, collectionId) {
+        collectionId?.let { dao.observeSeries(it) } ?: flowOf(emptyList<Series>())
+    }.collectAsState(initial = emptyList())
+
+    val channelsToShow = if (collectionId == null) favourites else collectionChannels
+    val moviesToShow = if (collectionId == null) movies else collectionMovies
+    val showsToShow = if (collectionId == null) shows else collectionShows
+    val entriesHere = if (collectionId == null) emptyList() else memberships.filter { it.collectionId == collectionId }
+    val downloadsHere = downloads.filter {
+        it.state == DownloadRepository.State.DONE && it.fileUri != null &&
+            (collectionId == null || entriesHere.any { entry ->
+                entry.kind == "download" && entry.itemKey == it.download.mediaKey
+            })
     }
-    val availableDownloads = remember(downloads) {
-        downloads.filter { it.state == DownloadRepository.State.DONE && it.fileUri != null }
+    val savedChannels = channelsToShow.distinctBy {
+        "${it.sourceId}:${it.groupKey.takeIf(String::isNotBlank) ?: it.streamId}"
     }
+    val orderedMovies = when (sort) {
+        "Rating" -> moviesToShow.sortedWith(compareByDescending<Movie> { it.rating ?: -1.0 }.thenBy { it.name })
+        "Year" -> moviesToShow.sortedWith(compareByDescending<Movie> { it.year ?: 0 }.thenBy { it.name })
+        else -> moviesToShow.sortedBy { it.name.lowercase() }
+    }
+    val orderedShows = when (sort) {
+        "Rating" -> showsToShow.sortedWith(compareByDescending<Series> { it.rating ?: -1.0 }.thenBy { it.name })
+        "Year" -> showsToShow.sortedWith(compareByDescending<Series> { it.year ?: 0 }.thenBy { it.name })
+        else -> showsToShow.sortedBy { it.name.lowercase() }
+    }
+
+    var editor by remember { mutableStateOf<UserCollection?>(null) }
+    var creating by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf<UserCollection?>(null) }
+    var organize by remember { mutableStateOf<SavedRef?>(null) }
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             listOf("All", "Channels", "Movies", "Shows", "Downloads").forEach { name ->
                 FilterChip(selected = section == name, onClick = { section = name },
                     label = { Text(name) })
             }
+            collections.forEach { collection ->
+                FilterChip(selected = collectionId == collection.id,
+                    onClick = { section = "collection:${collection.id}" },
+                    label = { Text(collection.name, maxLines = 1) },
+                    leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(16.dp)) })
+            }
+            TextButton(onClick = { creating = true }) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Text("Collection")
+            }
         }
-
-        if (section == "Downloads") {
-            // Original transfer queue supports retry, cancellation, storage status and deletion.
-            DownloadsScreen(onPlay = onResume)
-        } else {
-            val empty = (section !in listOf("All", "Channels") || savedChannels.isEmpty()) &&
-                (section !in listOf("All", "Movies") || movies.isEmpty()) &&
-                (section !in listOf("All", "Shows") || series.isEmpty()) &&
-                (section != "All" || availableDownloads.isEmpty())
-            if (empty) {
-                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Text("Nothing saved here yet. Star a channel, movie or show to add it.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+        if (collectionId != null) {
+            val selected = collections.firstOrNull { it.id == collectionId }
+            if (selected != null) Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (section in listOf("All", "Channels") && savedChannels.isNotEmpty()) {
-                    item(key = "head-channels") { Heading("Channels", savedChannels.size) }
-                    items(savedChannels, key = { "c-${it.id}" }) { channel ->
-                        SavedRow(channel.shownName, channel.qualityLabel,
-                            onOpen = { onPlayChannel(channel) },
-                            onRemove = { scope.launch {
-                                // A logical channel can have several quality variants.
-                                channels.filter { candidate ->
-                                    candidate.id == channel.id ||
-                                        (channel.groupKey.isNotBlank() && candidate.groupKey == channel.groupKey)
-                                }.forEach { graph.catalogRepository.setChannelFavourite(it.id, false) }
-                            } })
-                    }
+                Text(selected.name, modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = { editor = selected }) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Rename collection")
                 }
-                if (section in listOf("All", "Movies") && movies.isNotEmpty()) {
-                    item(key = "head-movies") { Heading("Movies", movies.size) }
-                    items(movies, key = { "m-${it.id}" }) { movie ->
-                        SavedRow(movie.name, movie.year?.toString().orEmpty(),
-                            onOpen = { onOpenMovie(movie) },
-                            onRemove = { scope.launch {
-                                graph.catalogRepository.setMovieFavourite(movie.id, false)
-                            } })
-                    }
+                IconButton(onClick = { confirmDelete = selected }) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete collection")
                 }
-                if (section in listOf("All", "Shows") && series.isNotEmpty()) {
-                    item(key = "head-shows") { Heading("Shows", series.size) }
-                    items(series, key = { "s-${it.id}" }) { show ->
-                        SavedRow(show.name, show.year?.toString().orEmpty(),
-                            onOpen = { onOpenSeries(show) },
-                            onRemove = { scope.launch {
-                                graph.database.series().setFavourite(show.id, false)
-                            } })
-                    }
-                }
-                if (section == "All" && availableDownloads.isNotEmpty()) {
-                    item(key = "head-downloads") { Heading("Downloaded", availableDownloads.size) }
-                    items(availableDownloads, key = { "dl-${it.download.id}" }) { item ->
-                        SavedRow(item.download.title, "Available offline",
-                            onOpen = {
-                                item.fileUri?.let { uri ->
-                                    onResume(item.download.mediaKey, uri, item.download.title)
-                                }
-                            })
+            }
+        } else if (section != "Downloads") {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                TextButton(onClick = { sorting = true }) { Text("Sort: $sort") }
+                DropdownMenu(expanded = sorting, onDismissRequest = { sorting = false }) {
+                    listOf("Name", "Rating", "Year").forEach { option ->
+                        DropdownMenuItem(text = { Text(option) }, onClick = {
+                            sort = option
+                            sorting = false
+                        })
                     }
                 }
             }
         }
+
+        if (section == "Downloads") {
+            DownloadsScreen(onPlay = onResume)
+        } else {
+            val showChannels = collectionId != null || section == "All" || section == "Channels"
+            val showMovies = collectionId != null || section == "All" || section == "Movies"
+            val showShows = collectionId != null || section == "All" || section == "Shows"
+            val showDownloads = collectionId != null || section == "All"
+            val isEmpty = (!showChannels || savedChannels.isEmpty()) &&
+                (!showMovies || orderedMovies.isEmpty()) &&
+                (!showShows || orderedShows.isEmpty()) &&
+                (!showDownloads || downloadsHere.isEmpty())
+            if (isEmpty) {
+                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Text("Nothing saved here. Star a title or channel, then add it to a collection.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (showChannels && savedChannels.isNotEmpty()) {
+                    item(key = "head-channels") { Heading("Channels", savedChannels.size) }
+                    items(savedChannels, key = { "channel-${it.id}" }) { channel ->
+                        val ref = SavedRef("channel", channel.sourceId, channel.streamId)
+                        LibraryRow(channel.shownName, channel.qualityLabel, { onPlayChannel(channel) },
+                            onOrganize = { organize = ref },
+                            onRemove = if (collectionId != null) ({ scope.launch {
+                                dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
+                            } }) else ({ scope.launch {
+                                favourites.filter { it.sourceId == channel.sourceId &&
+                                    (it.streamId == channel.streamId ||
+                                        (channel.groupKey.isNotBlank() && it.groupKey == channel.groupKey)) }
+                                    .forEach { graph.catalogRepository.setChannelFavourite(it.id, false) }
+                            } }))
+                    }
+                }
+                if (showMovies && orderedMovies.isNotEmpty()) {
+                    item(key = "head-movies") { Heading("Movies", orderedMovies.size) }
+                    items(orderedMovies, key = { "movie-${it.id}" }) { movie ->
+                        val ref = SavedRef("movie", movie.sourceId, movie.streamId)
+                        LibraryRow(movie.name, listOfNotNull(movie.year?.toString(),
+                                movie.rating?.let { "★ %.1f".format(it) }).joinToString(" · "),
+                            { onOpenMovie(movie) }, onOrganize = { organize = ref },
+                            onRemove = { scope.launch {
+                                if (collectionId != null) dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
+                                else graph.catalogRepository.setMovieFavourite(movie.id, false)
+                            } })
+                    }
+                }
+                if (showShows && orderedShows.isNotEmpty()) {
+                    item(key = "head-shows") { Heading("Shows", orderedShows.size) }
+                    items(orderedShows, key = { "show-${it.id}" }) { show ->
+                        val ref = SavedRef("show", show.sourceId, show.seriesId)
+                        LibraryRow(show.name, listOfNotNull(show.year?.toString(),
+                                show.rating?.let { "★ %.1f".format(it) }).joinToString(" · "),
+                            { onOpenSeries(show) }, onOrganize = { organize = ref },
+                            onRemove = { scope.launch {
+                                if (collectionId != null) dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
+                                else graph.database.series().setFavourite(show.id, false)
+                            } })
+                    }
+                }
+                if (showDownloads && downloadsHere.isNotEmpty()) {
+                    item(key = "head-downloads") { Heading("Downloaded", downloadsHere.size) }
+                    items(downloadsHere, key = { "download-${it.download.mediaKey}" }) { download ->
+                        val ref = SavedRef("download", 0L, download.download.mediaKey)
+                        LibraryRow(download.download.title, "Available offline",
+                            onOpen = { download.fileUri?.let { uri ->
+                                onResume(download.download.mediaKey, uri, download.download.title)
+                            } }, onOrganize = { organize = ref },
+                            onRemove = if (collectionId != null) ({ scope.launch {
+                                dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
+                            } }) else null)
+                    }
+                }
+            }
+        }
+    }
+
+    if (creating || editor != null) {
+        val original = editor
+        var name by remember(creating, original?.id) { mutableStateOf(original?.name.orEmpty()) }
+        val normalized = name.trim()
+        val valid = normalized.isNotBlank() && normalized.length <= 60 &&
+            collections.none { it.id != original?.id && it.name.equals(normalized, ignoreCase = true) }
+        AlertDialog(onDismissRequest = { creating = false; editor = null },
+            title = { Text(if (original == null) "New collection" else "Rename collection") },
+            text = {
+                OutlinedTextField(value = name, onValueChange = { name = it.take(60) },
+                    singleLine = true, label = { Text("Name") })
+            }, confirmButton = {
+                TextButton(enabled = valid, onClick = {
+                    scope.launch {
+                        if (original == null) {
+                            val id = dao.create(UserCollection(name = normalized,
+                                createdMillis = System.currentTimeMillis()))
+                            section = "collection:$id"
+                        } else dao.rename(original.id, normalized)
+                    }
+                    creating = false
+                    editor = null
+                }) { Text("Save") }
+            }, dismissButton = {
+                TextButton(onClick = { creating = false; editor = null }) { Text("Cancel") }
+            })
+    }
+
+    confirmDelete?.let { item ->
+        AlertDialog(onDismissRequest = { confirmDelete = null },
+            title = { Text("Delete ${item.name}?") },
+            text = { Text("This removes the collection, not its channels, movies or downloads.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { dao.delete(item.id) }
+                    if (collectionId == item.id) section = "All"
+                    confirmDelete = null
+                }) { Text("Delete") }
+            }, dismissButton = {
+                TextButton(onClick = { confirmDelete = null }) { Text("Cancel") }
+            })
+    }
+
+    organize?.let { media ->
+        AlertDialog(onDismissRequest = { organize = null },
+            title = { Text("Add to collections") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (collections.isEmpty()) Text("Create a collection to organise this item.")
+                    collections.forEach { collection ->
+                        val contains = memberships.any {
+                            it.collectionId == collection.id && it.kind == media.kind &&
+                                it.sourceId == media.sourceId && it.itemKey == media.key
+                        }
+                        Row(Modifier.fillMaxWidth().clickable {
+                            scope.launch {
+                                if (contains) dao.remove(collection.id, media.kind, media.sourceId, media.key)
+                                else dao.add(media.asEntry(collection.id))
+                            }
+                        }, verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = contains, onCheckedChange = null)
+                            Text(collection.name)
+                        }
+                    }
+                }
+            }, confirmButton = {
+                TextButton(onClick = { organize = null }) { Text("Done") }
+            }, dismissButton = {
+                TextButton(onClick = { organize = null; creating = true }) { Text("New collection") }
+            })
     }
 }
 
@@ -143,15 +315,22 @@ private fun Heading(title: String, count: Int) {
 }
 
 @Composable
-private fun SavedRow(title: String, subtitle: String, onOpen: () -> Unit, onRemove: (() -> Unit)? = null) {
+private fun LibraryRow(
+    title: String, subtitle: String, onOpen: () -> Unit, onOrganize: () -> Unit,
+    onRemove: (() -> Unit)?,
+) {
     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).clickable(onClick = onOpen).padding(vertical = 10.dp)) {
+        Column(Modifier.weight(1f).clickable(onClick = onOpen).padding(vertical = 8.dp)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            if (subtitle.isNotBlank()) Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall)
+            if (subtitle.isNotBlank()) Text(subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        IconButton(onClick = onOrganize) {
+            Icon(Icons.Filled.Folder, contentDescription = "Organise in collections")
         }
         if (onRemove != null) IconButton(onClick = onRemove) {
-            Icon(Icons.Filled.Star, contentDescription = "Remove from library")
+            Icon(Icons.Filled.RemoveCircleOutline, contentDescription = "Remove from this view")
         }
     }
     HorizontalDivider()
