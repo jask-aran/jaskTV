@@ -71,7 +71,9 @@ fun SyncScreen(
         ScreenHeader(stringResource(R.string.settings_sync_title), onBack = onBack)
         Spacer(Modifier.height(8.dp))
         Text(
-            stringResource(R.string.sync_desc),
+            "Sync profiles, Library collections and watching progress between devices. " +
+                "Internet syncing uses your existing cloud storage, with no jaskTV server. " +
+                "Local network and NAS sharing remain optional.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.widthIn(max = 720.dp),
