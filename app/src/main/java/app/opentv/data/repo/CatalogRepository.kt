@@ -225,6 +225,11 @@ class CatalogRepository(
         tmdb.imdbId(title = movie.name, year = movie.year, isMovie = true, tmdbId = movie.tmdbId)
     }
 
+    suspend fun imdbIdFor(series: Series): String? = withContext(Dispatchers.IO) {
+        tmdb.imdbId(title = series.name, year = series.year, isMovie = false,
+            tmdbId = series.tmdbId)
+    }
+
     suspend fun episode(id: Long): Episode? = episodeDao.byId(id)
 
     suspend fun movieByStreamUrl(url: String): Movie? = movieDao.byStreamUrl(url)
