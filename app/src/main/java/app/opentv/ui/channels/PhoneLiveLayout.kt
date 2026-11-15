@@ -42,6 +42,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -88,6 +89,7 @@ fun PhoneLiveLayout(
     onSelectFavourites: () -> Unit,
     onSelectCategory: (String?) -> Unit,
     onQuery: (String) -> Unit,
+    onOpenSearch: () -> Unit,
     emptyContent: @Composable () -> Unit,
     layout: AppSettings.PhoneLiveLayout,
     onLayout: (AppSettings.PhoneLiveLayout) -> Unit,
@@ -101,42 +103,15 @@ fun PhoneLiveLayout(
 
     Column(Modifier.fillMaxSize()) {
       PhoneLiveControls(compact) {
-        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = layout == AppSettings.PhoneLiveLayout.LIST,
-                onClick = { onLayout(AppSettings.PhoneLiveLayout.LIST) },
-                label = { Text(stringResource(R.string.phone_guide_list)) })
-            FilterChip(selected = layout == AppSettings.PhoneLiveLayout.GUIDE,
-                onClick = { onLayout(AppSettings.PhoneLiveLayout.GUIDE) },
-                label = { Text(stringResource(R.string.phone_guide_guide)) })
-        }
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it; onQuery(it) },
-            // Says where the query looks: inside the picked category / favourites, or everywhere.
-            placeholder = {
-                Text(
-                    when {
-                        recentsOnly -> stringResource(R.string.phone_search_in, stringResource(R.string.phone_live_recent))
-                        favouritesOnly -> stringResource(R.string.phone_search_in, stringResource(R.string.guide_favourites))
-                        categoryLabel != null -> stringResource(R.string.phone_search_in, categoryLabel)
-                        else -> stringResource(R.string.phone_search_all)
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            },
-            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-            trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = { query = ""; onQuery("") }) {
-                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.phone_clear))
-                    }
-                }
-            },
-            singleLine = true,
-            modifier = Modifier.then(if (compact) Modifier.width(220.dp) else Modifier.fillMaxWidth())
+        OutlinedButton(
+            onClick = onOpenSearch,
+            modifier = Modifier.then(if (compact) Modifier.width(260.dp) else Modifier.fillMaxWidth())
                 .padding(horizontal = 12.dp, vertical = 4.dp),
-        )
+        ) {
+            Icon(Icons.Filled.Search, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Find channels or programmes")
+        }
         Row(
             Modifier.then(if (compact) Modifier else Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()))
                 .padding(horizontal = 12.dp),
@@ -201,8 +176,7 @@ fun PhoneLiveLayout(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (rows.isEmpty()) {
                 emptyContent()
-            } else if (layout == AppSettings.PhoneLiveLayout.GUIDE) guideContent()
-            else listContent()
+            } else listContent()
         }
     }
 
