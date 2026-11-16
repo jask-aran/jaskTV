@@ -84,8 +84,8 @@ import java.util.Locale
 
 private val Card = Color(0xFF1B1A19)
 private val Rule = Color.White.copy(alpha = .07f)
-private val Dim = Color(0xFFA6A29E)
-private val Ink = Color(0xFFF4F1ED)
+internal val JaskDim = Color(0xFFA6A29E)
+internal val JaskInk = Color(0xFFF4F1ED)
 
 /**
  * The jaskTV settings page (touch): one scrolling page of grouped cards. Account first (who's
@@ -101,10 +101,7 @@ fun JaskSettingsScreen(
     onOpenAddons: () -> Unit,
     onOpenGuide: () -> Unit,
     onOpenWebManager: () -> Unit,
-    onOpenDisplay: () -> Unit,
     onOpenParental: () -> Unit,
-    onOpenSync: () -> Unit,
-    onOpenRecordings: () -> Unit,
     onOpenAbout: () -> Unit,
     onBack: () -> Unit,
     onOpenChannels: () -> Unit = {},
@@ -144,7 +141,7 @@ fun JaskSettingsScreen(
                     verticalAlignment = Alignment.CenterVertically) {
                     app.opentv.ui.JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.common_back), size = 44.dp, onClick = onBack)
                     Spacer(Modifier.width(14.dp))
-                    Text(stringResource(R.string.nav_settings), color = Ink, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.nav_settings), color = JaskInk, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 }
             }
             item {
@@ -153,9 +150,9 @@ fun JaskSettingsScreen(
                         Avatar(active?.name ?: "?", 60.dp)
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(active?.name ?: "", color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                            Text(active?.name ?: "", color = JaskInk, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(stringResource(R.string.jask_profile_local), color = Dim, style = MaterialTheme.typography.bodySmall)
+                            Text(stringResource(R.string.jask_profile_local), color = JaskDim, style = MaterialTheme.typography.bodySmall)
                         }
                         app.opentv.ui.JaskGlassCircle(Icons.Outlined.Edit, stringResource(R.string.profiles_rename), size = 40.dp) { renaming = true }
                     }
@@ -166,32 +163,30 @@ fun JaskSettingsScreen(
                             Column(Modifier.clip(RoundedCornerShape(10.dp)).clickable { profiles.select(p.id) }.padding(4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally) {
                                 Avatar(p.name, 44.dp, selected = p.id == activeId)
-                                Text(p.name, color = if (p.id == activeId) Ink else Dim, style = MaterialTheme.typography.labelMedium,
+                                Text(p.name, color = if (p.id == activeId) JaskInk else JaskDim, style = MaterialTheme.typography.labelMedium,
                                     maxLines = 1, modifier = Modifier.widthIn(max = 64.dp).padding(top = 4.dp))
                             }
                         }
                         Column(Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onOpenProfiles).padding(4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             Box(Modifier.size(44.dp).clip(CircleShape).border(1.dp, Color.White.copy(alpha = .3f), CircleShape), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Outlined.Add, null, tint = Ink)
+                                Icon(Icons.Outlined.Add, null, tint = JaskInk)
                             }
-                            Text(stringResource(R.string.jask_profiles_manage), color = Dim, style = MaterialTheme.typography.labelMedium,
+                            Text(stringResource(R.string.jask_profiles_manage), color = JaskDim, style = MaterialTheme.typography.labelMedium,
                                 modifier = Modifier.padding(top = 4.dp))
                         }
                     }
-                    Divider()
-                    Link(Icons.Outlined.Sync, stringResource(R.string.settings_sync_title), stringResource(R.string.settings_sync_subtitle), onOpenSync)
                 }
             }
             item {
                 Group(stringResource(R.string.jask_browse)) {
                     Toggle(stringResource(R.string.jask_show_unavailable), stringResource(R.string.jask_show_unavailable_hint), everything) { vod.setShowUnavailable(it) }
                     if (sources.size > 1) {
-                        Divider()
+                        JaskDivider()
                         Label(stringResource(R.string.jask_settings_sources_shown))
                         Chips(listOf(null to stringResource(R.string.catalogue_all_sources)) + sources.map { it.id to it.name }, { it == source }) { vod.selectVodSource(it) }
                     }
-                    Divider()
+                    JaskDivider()
                     Label(stringResource(R.string.catalogue_original_language))
                     Chips(listOf<String?>(null).plus(languages).map { it to (it?.let { c -> Locale.forLanguageTag(c).getDisplayLanguage(Locale.getDefault()) } ?: stringResource(R.string.catalogue_all_languages)) },
                         { if (it == null) options.languages.isEmpty() else it in options.languages }) { code ->
@@ -202,7 +197,7 @@ fun JaskSettingsScreen(
                         }))
                     }
                     Toggle(stringResource(R.string.catalogue_unknown), null, options.includeUnknown) { vod.applyMovieOptions(options.copy(includeUnknown = it)) }
-                    Divider()
+                    JaskDivider()
                     Label(stringResource(R.string.jask_settings_all_movies_order))
                     Chips(CatalogueSort.entries.map { it to stringResource(when (it) {
                         CatalogueSort.TITLE -> R.string.catalogue_sort_title
@@ -220,11 +215,11 @@ fun JaskSettingsScreen(
                         "frosted" to stringResource(R.string.jask_glass_frosted), "solid" to stringResource(R.string.jask_glass_solid)),
                         { it == glass }) { settings.setGlassMode(it) }
                     Spacer(Modifier.height(6.dp))
-                    Divider()
+                    JaskDivider()
                     Link(Icons.Outlined.Language, stringResource(R.string.jask_settings_language),
                         OpenTvLanguages.firstOrNull { it.first == language }?.second ?: stringResource(R.string.settings_language_system)) { sheet = "language" }
                     if (wide) {
-                        Divider()
+                        JaskDivider()
                         Label(stringResource(R.string.jask_settings_ui_scale))
                         Chips(listOf("auto" to stringResource(R.string.jask_glass_auto), "1.0" to "100%", "1.15" to "115%",
                             "1.3" to "130%", "1.5" to "150%"), { it == uiScale }) { settings.setUiScale(it) }
@@ -235,28 +230,36 @@ fun JaskSettingsScreen(
             item {
                 Group(stringResource(R.string.settings_section_content)) {
                     Toggle(stringResource(R.string.nav_live_tv), stringResource(R.string.settings_content_live_subtitle), live, settings::setLiveEnabled)
-                    Divider()
+                    JaskDivider()
                     Toggle(stringResource(R.string.nav_movies), stringResource(R.string.settings_content_movies_subtitle), movies, settings::setMoviesEnabled)
-                    Divider()
+                    JaskDivider()
                     Toggle(stringResource(R.string.nav_shows), stringResource(R.string.settings_content_series_subtitle), shows, settings::setSeriesEnabled)
                 }
             }
             item {
                 Group(stringResource(R.string.settings_section_playback)) {
                     Toggle(stringResource(R.string.settings_subtitles_title), stringResource(R.string.settings_subtitles_subtitle), subtitles, settings::setSubtitlesEnabled)
-                    Divider()
+                    JaskDivider()
                     Toggle(stringResource(R.string.settings_resume_title), stringResource(R.string.settings_resume_subtitle), resume, settings::setResumeLastChannel)
-                    Divider()
+                    JaskDivider()
                     Toggle(stringResource(R.string.jask_settings_live_pause), stringResource(R.string.jask_settings_live_pause_hint), livePause, settings::setLivePauseEnabled)
+                    JaskDivider()
+                    SleepTimerRows()
                 }
+            }
+            if (live) item {
+                Group(stringResource(R.string.nav_live_tv)) { LiveLayoutRows(settings) }
+            }
+            item {
+                Group(stringResource(R.string.settings_recording_title)) { RecordingRows(settings) }
             }
             item {
                 Group(stringResource(R.string.jask_settings_sources_guide)) {
                     Link(Icons.Outlined.Dns, stringResource(R.string.settings_providers_title),
                         pluralLabel(sources.size, sources.count { it.enabled }), onOpenProviders)
-                    Divider()
+                    JaskDivider()
                     Link(Icons.Outlined.CalendarViewDay, stringResource(R.string.settings_guide_title), stringResource(R.string.settings_guide_subtitle), onOpenGuide)
-                    Divider()
+                    JaskDivider()
                     Link(Icons.Outlined.LiveTv, stringResource(R.string.common_channels), stringResource(R.string.settings_channels_subtitle), onOpenChannels)
                 }
             }
@@ -264,25 +267,20 @@ fun JaskSettingsScreen(
                 Group(stringResource(R.string.jask_settings_services)) {
                     Link(Icons.Outlined.Movie, stringResource(R.string.jask_tmdb_title),
                         stringResource(if (tmdb.isBlank()) R.string.jask_tmdb_off else R.string.jask_tmdb_on)) { sheet = "tmdb" }
-                    Divider()
+                    JaskDivider()
                     Link(Icons.Outlined.StarOutline, stringResource(R.string.jask_omdb_title),
                         stringResource(if (omdb.isBlank()) R.string.jask_omdb_off else R.string.jask_omdb_on)) { sheet = "omdb" }
-                    Divider()
+                    JaskDivider()
                     Link(Icons.Outlined.Extension, stringResource(R.string.settings_addons_title),
                         if (addons.isEmpty()) stringResource(R.string.settings_addons_subtitle) else "${addons.size} installed", onOpenAddons)
-                    Divider()
+                    JaskDivider()
                     Link(Icons.Outlined.PhoneAndroid, stringResource(R.string.settings_webmanager_title), stringResource(R.string.settings_webmanager_subtitle), onOpenWebManager)
                 }
             }
             item {
                 Group(stringResource(R.string.jask_settings_more)) {
-                    Link(Icons.Outlined.Palette, stringResource(R.string.settings_display_title),
-                        stringResource(R.string.jask_display_more), onOpenDisplay)
-                    Divider()
-                    Link(Icons.Outlined.Storage, stringResource(R.string.settings_recording_title), stringResource(R.string.settings_recording_subtitle), onOpenRecordings)
-                    Divider()
                     Link(Icons.Outlined.Lock, stringResource(R.string.settings_parental_title), stringResource(R.string.settings_parental_subtitle), onOpenParental)
-                    Divider()
+                    JaskDivider()
                     Link(Icons.Outlined.Info, stringResource(R.string.settings_about_title), stringResource(R.string.settings_about_subtitle), onOpenAbout)
                 }
             }
@@ -309,7 +307,7 @@ fun JaskSettingsScreen(
             var name by remember { mutableStateOf(active.name) }
             JaskSheet({ renaming = false }) {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                    Text(stringResource(R.string.profiles_rename_heading), color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.profiles_rename_heading), color = JaskInk, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(name, { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -329,10 +327,10 @@ private fun pluralLabel(total: Int, enabled: Int) = when (total) {
 }
 
 @Composable
-private fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
+internal fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(bottom = 18.dp)) {
         title?.let {
-            Text(it.uppercase(), color = Dim, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold,
+            Text(it.uppercase(), color = JaskDim, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(start = 6.dp, bottom = 7.dp))
         }
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Card), content = content)
@@ -340,19 +338,19 @@ private fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun Divider() = Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(1.dp).background(Rule))
+internal fun JaskDivider() = Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(1.dp).background(Rule))
 
 @Composable
-private fun Label(text: String) = Text(text, color = Dim, style = MaterialTheme.typography.labelLarge,
+internal fun Label(text: String) = Text(text, color = JaskDim, style = MaterialTheme.typography.labelLarge,
     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp))
 
 @Composable
-private fun Toggle(title: String, subtitle: String?, on: Boolean, onChange: (Boolean) -> Unit) {
+internal fun Toggle(title: String, subtitle: String?, on: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().clickable { onChange(!on) }.padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text(title, color = Ink, style = MaterialTheme.typography.bodyLarge)
-            subtitle?.let { Text(it, color = Dim, style = MaterialTheme.typography.bodySmall) }
+            Text(title, color = JaskInk, style = MaterialTheme.typography.bodyLarge)
+            subtitle?.let { Text(it, color = JaskDim, style = MaterialTheme.typography.bodySmall) }
         }
         Spacer(Modifier.width(12.dp))
         JaskGlassSwitch(on)
@@ -360,29 +358,29 @@ private fun Toggle(title: String, subtitle: String?, on: Boolean, onChange: (Boo
 }
 
 @Composable
-private fun Link(icon: ImageVector, title: String, subtitle: String?, onClick: () -> Unit) {
+internal fun Link(icon: ImageVector, title: String, subtitle: String?, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(Color.White.copy(alpha = .08f)), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = Ink, modifier = Modifier.size(19.dp))
+            Icon(icon, null, tint = JaskInk, modifier = Modifier.size(19.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, color = Ink, style = MaterialTheme.typography.bodyLarge)
-            subtitle?.let { Text(it, color = Dim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Text(title, color = JaskInk, style = MaterialTheme.typography.bodyLarge)
+            subtitle?.let { Text(it, color = JaskDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Dim)
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = JaskDim)
     }
 }
 
 @Composable
-private fun <T> Chips(items: List<Pair<T, String>>, selected: (T) -> Boolean, onPick: (T) -> Unit) {
+internal fun <T> Chips(items: List<Pair<T, String>>, selected: (T) -> Boolean, onPick: (T) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items.forEach { (value, label) ->
             val on = selected(value)
-            Text(label, color = if (on) Color(0xFF141312) else Ink, style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) Ink else Color.White.copy(alpha = .08f))
+            Text(label, color = if (on) Color(0xFF141312) else JaskInk, style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) JaskInk else Color.White.copy(alpha = .08f))
                     .clickable { onPick(value) }.padding(horizontal = 14.dp, vertical = 8.dp))
         }
     }
@@ -404,20 +402,20 @@ private fun Avatar(name: String, size: androidx.compose.ui.unit.Dp, selected: Bo
 @Composable
 private fun LanguageRow(name: String, on: Boolean, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(name, color = Ink, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        if (on) Icon(Icons.Filled.Check, null, tint = Ink)
+        Text(name, color = JaskInk, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        if (on) Icon(Icons.Filled.Check, null, tint = JaskInk)
     }
 }
 
 /** Edits one service's API key in place. Keys stay on this device; the field is masked. */
 @Composable
-private fun KeySheet(title: String, note: String, saved: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun KeySheet(title: String, note: String, saved: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
     var field by remember(saved) { mutableStateOf(saved) }
     JaskSheet(onDismiss) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-            Text(title, color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text(title, color = JaskInk, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
-            Text(note, color = Dim, style = MaterialTheme.typography.bodyMedium)
+            Text(note, color = JaskDim, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(field, { field = it.trim() }, singleLine = true, label = { Text(stringResource(R.string.jask_key_label)) },
                 visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())

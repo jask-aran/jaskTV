@@ -692,7 +692,6 @@
     <string tools:ignore="MissingTranslation" name="jask_omdb_note">OMDb supplies IMDb, Rotten Tomatoes and Metacritic scores on title pages. It needs your own OMDb API key, kept on this device.</string>
     <string tools:ignore="MissingTranslation" name="jask_key_label">API key</string>
     <string tools:ignore="MissingTranslation" name="jask_key_remove">Remove</string>
-    <string tools:ignore="MissingTranslation" name="jask_display_more">Theme, Live TV layout, sleep timer</string>
     <string tools:ignore="MissingTranslation" name="jask_profile_local">Profile on this device</string>
     <string tools:ignore="MissingTranslation" name="jask_profiles_manage">Manage</string>
     <string tools:ignore="MissingTranslation" name="jask_settings_sources_shown">Sources shown in Movies and Shows</string>
