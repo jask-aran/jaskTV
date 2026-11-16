@@ -517,8 +517,21 @@ private fun OpenTvApp(isTelevision: Boolean) {
                 )
             }
 
-            browsingDestination(Routes.SETTINGS_HUB) {
-                SettingsHubScreen(
+            browsingDestination(Routes.SETTINGS_HUB, edgeToEdgeOnTouch = true) {
+                if (app.opentv.ui.LocalLayoutClass.current.isTouch) app.opentv.ui.settings.JaskSettingsScreen(
+                    profiles = profilesViewModel, vod = vodViewModel,
+                    onOpenProfiles = { navController.navigate(Routes.PROFILES) },
+                    onOpenProviders = { navController.navigate(Routes.PROVIDERS) },
+                    onOpenAddons = { navController.navigate(Routes.ADDONS) },
+                    onOpenGuide = { navController.navigate(Routes.EPG_SETTINGS) },
+                    onOpenWebManager = { navController.navigate(Routes.WEB_MANAGER) },
+                    onOpenDisplay = { navController.navigate(Routes.APP_SETTINGS) },
+                    onOpenParental = { navController.navigate(Routes.PARENTAL) },
+                    onOpenSync = { navController.navigate(Routes.SYNC) },
+                    onOpenRecordings = { navController.navigate(Routes.REC_SETTINGS) },
+                    onOpenAbout = { navController.navigate(Routes.ABOUT) },
+                    onBack = { navController.popBackStack() },
+                ) else SettingsHubScreen(
                     onOpenProviders = { navController.navigate(Routes.PROVIDERS) },
                     onOpenAddons = { navController.navigate(Routes.ADDONS) },
                     onOpenGuide = { navController.navigate(Routes.EPG_SETTINGS) },

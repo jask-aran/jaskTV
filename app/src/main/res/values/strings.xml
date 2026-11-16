@@ -674,4 +674,15 @@
     <string tools:ignore="MissingTranslation" name="jask_browse">Browse</string>
     <string tools:ignore="MissingTranslation" name="jask_show_unavailable">Show everything</string>
     <string tools:ignore="MissingTranslation" name="jask_show_unavailable_hint">Include titles not on your sources</string>
+    <string tools:ignore="MissingTranslation" name="jask_profile_local">Profile on this device</string>
+    <string tools:ignore="MissingTranslation" name="jask_profiles_manage">Manage</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_sources_shown">Sources shown in Movies and Shows</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_all_movies_order">Order of All movies</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_live_pause">Pause live TV</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_live_pause_hint">Keep a buffer so live channels can be paused and rewound</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_sources_guide">Sources and guide</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_more">More</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_tmdb_missing">Theme, language, guide layout · TMDB key not set</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_no_sources">No sources yet</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_sources_count">%1$d sources · %2$d on</string>
 </resources>
