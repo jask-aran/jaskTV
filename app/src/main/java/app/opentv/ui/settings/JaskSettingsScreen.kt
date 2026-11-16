@@ -245,9 +245,6 @@ fun JaskSettingsScreen(
                     SleepTimerRows()
                 }
             }
-            if (live) item {
-                Group(stringResource(R.string.nav_live_tv)) { LiveLayoutRows(settings) }
-            }
             item {
                 Group(stringResource(R.string.settings_recording_title)) { RecordingRows(settings) }
             }

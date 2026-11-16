@@ -300,10 +300,6 @@ internal fun JaskPosterChip(text: String) {
         maxLines = 1, modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xB3000000)).padding(horizontal = 5.dp, vertical = 2.dp))
 }
 
-@Composable
-internal fun JaskMetadataRow(text: String) {
-    Text(text, color = Color(0xFFB6B1AB), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-}
 
 @Preview
 @Composable

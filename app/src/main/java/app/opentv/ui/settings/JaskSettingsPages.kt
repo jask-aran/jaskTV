@@ -74,7 +74,6 @@ import app.opentv.data.model.Source
 import app.opentv.data.model.SourceKind
 import app.opentv.data.model.StremioAddon
 import app.opentv.data.model.shownName
-import app.opentv.isRunningOnTelevision
 import app.opentv.ui.ChannelsViewModel
 import app.opentv.ui.EpgViewModel
 import app.opentv.ui.JaskGlassCircle
@@ -227,15 +226,6 @@ fun JaskProvidersPage(onAddSource: () -> Unit, onEditSource: (Source) -> Unit, o
 @Composable
 fun JaskSourceForm(viewModel: SourcesViewModel, onFinished: () -> Unit, editingSourceId: Long? = null, onBack: (() -> Unit)? = null) {
     val context = LocalContext.current
-    // On a TV a fresh add offers the phone-pairing QR first: typing a server and password with a
-    // d-pad is the worst part of setup.
-    val isTelevision = remember(context) { isRunningOnTelevision(context) }
-    var usePhone by remember { mutableStateOf(isTelevision && editingSourceId == null) }
-    if (usePhone) {
-        app.opentv.ui.onboarding.PhonePairingScreen(onReceived = { draft -> viewModel.saveAndSync(draft) { onFinished() } },
-            onCancel = { usePhone = false })
-        return
-    }
     val ui by viewModel.ui.collectAsState()
     val existing = remember(editingSourceId, ui.sources) { editingSourceId?.let { id -> ui.sources.firstOrNull { it.id == id } } }
     var kind by remember(existing?.id) { mutableStateOf(existing?.kind ?: SourceKind.XTREAM) }
@@ -341,9 +331,6 @@ fun JaskSourceForm(viewModel: SourcesViewModel, onFinished: () -> Unit, editingS
                     else viewModel.saveAndSync(draft()) { ok -> if (ok) onFinished() }
                 }
                 if (ui.testing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            }
-            if (isTelevision) Row(Modifier.padding(start = 6.dp, top = 12.dp)) {
-                JaskPill(stringResource(R.string.onboarding_use_phone)) { usePhone = true }
             }
             JaskNote(stringResource(R.string.onboarding_privacy_note), modifier = Modifier.padding(top = 12.dp))
         }

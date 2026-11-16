@@ -248,50 +248,7 @@ private fun BrowseControls(content: @Composable () -> Unit) {
     } else Column { content() }
 }
 
-@Composable
-internal fun MoviePosterRow(title: String, movies: List<Movie>, onOpenMovie: (Movie) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        SectionHeader(title)
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            items(movies, key = { it.id }) { movie ->
-                PosterCard(
-                    title = movie.displayTitle,
-                    tagBadge = movie.sourceTag,
-                    posterUrl = movie.posterUrl,
-                    subtitle = movie.year?.toString(),
-                    rating = movie.rating,
-                    onClick = { onOpenMovie(movie) },
-                )
-            }
-        }
-    }
-}
 
-/** A titled horizontal shelf of series poster cards. */
-@Composable
-internal fun SeriesPosterRow(title: String, series: List<Series>, onOpenSeries: (Series) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        SectionHeader(title)
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            items(series, key = { it.id }) { item ->
-                PosterCard(
-                    title = item.displayTitle,
-                    tagBadge = item.sourceTag,
-                    posterUrl = item.posterUrl,
-                    subtitle = item.year?.toString(),
-                    rating = item.rating,
-                    onClick = { onOpenSeries(item) },
-                )
-            }
-        }
-    }
-}
 
 @Composable
 internal fun SectionHeader(title: String) {
@@ -416,98 +373,7 @@ private fun Badge(text: String, modifier: Modifier = Modifier, highlight: Boolea
 
 // ---- Continue watching -------------------------------------------------------------------------
 
-@Composable
-internal fun ContinueWatchingRow(
-    items: List<VodViewModel.ResumeItem>,
-    onResume: (mediaKey: String, url: String, title: String) -> Unit,
-) {
-    val context = LocalContext.current
-    val graph = remember { ServiceLocator.get(context) }
-    val scope = rememberCoroutineScope()
-    // Hidden the instant "Remove" is tapped; the database delete (and the list re-reading it) can
-    // lag behind a running sync, which made the card seem to ignore the tap.
-    var removed by remember { mutableStateOf(emptySet<String>()) }
-    val shown = remember(items, removed) { items.filterNot { it.mediaKey in removed } }
-    if (shown.isEmpty()) return
-    Column(Modifier.fillMaxWidth()) {
-        SectionHeader(stringResource(R.string.vod_continue_watching))
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            items(shown, key = { it.mediaKey }) { item ->
-                ResumeCard(
-                    item,
-                    onClick = { onResume(item.mediaKey, item.streamUrl, item.title) },
-                    // Forgetting the saved position drops it from this row (it's a live query).
-                    onRemove = {
-                        removed = removed + item.mediaKey
-                        scope.launch {
-                            graph.playbackPositions.delete(graph.settings.activeProfileId.value, item.mediaKey)
-                        }
-                    },
-                )
-            }
-        }
-    }
-}
 
-/** A landscape resume thumbnail with a progress fill — a movie or an episode part-way through. */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-@Composable
-private fun ResumeCard(item: VodViewModel.ResumeItem, onClick: () -> Unit, onRemove: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    // Long-press (or long OK on a remote) opens a small menu to take it off Continue Watching.
-    var menu by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "resumeScale")
-    Column(
-        Modifier
-            .width(190.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(8.dp))
-            .combinedClickable(onClick = onClick, onLongClick = { menu = true })
-            .padding(4.dp),
-    ) {
-        androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text(stringResource(R.string.vod_remove_continue)) },
-                leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null) },
-                onClick = { menu = false; onRemove() },
-            )
-        }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(107.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .then(
-                    if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
-                    else Modifier,
-                ),
-        ) {
-            AsyncImage(
-                model = item.posterUrl,
-                contentDescription = item.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-            LinearProgressIndicator(
-                progress = { item.progress },
-                modifier = Modifier.fillMaxWidth().height(4.dp).align(Alignment.BottomStart),
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            item.title,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
 
 // ---- Category chips ----------------------------------------------------------------------------
 
@@ -752,32 +618,7 @@ private fun SearchAffordance(onOpenSearch: () -> Unit) {
     }
 }
 
-@Composable
-private fun EmptyVod(title: String, body: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(title, style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(8.dp))
-            Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
 
-@Composable
-private fun LoadingVod(message: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator()
-            Spacer(Modifier.height(16.dp))
-            Text(message, style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                stringResource(R.string.vod_large_provider_note),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
 
 /** Poster shelf card width; the grid uses an adaptive min size close to this. */
 private val POSTER_WIDTH = 140.dp

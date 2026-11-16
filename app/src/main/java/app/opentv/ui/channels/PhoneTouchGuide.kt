@@ -63,54 +63,6 @@ private fun viewportProgrammes(
     return programmes
 }
 
-/** List now/next stays anchored to the live clock, never to the touch guide's browsed day. */
-@Composable
-@OptIn(ExperimentalFoundationApi::class)
-fun PhoneGuideChannelList(
-    rows: List<ChannelsViewModel.Row>, now: Long, viewModel: PhoneGuideData,
-    onPlay: (ChannelsViewModel.Row) -> Unit, onDetails: (ChannelsViewModel.Row) -> Unit,
-    onFavourite: (ChannelsViewModel.Row) -> Unit,
-) {
-    val state = rememberLazyListState()
-    val liveStart = now / 60_000 * 60_000
-    val programmes = viewportProgrammes(rows, state, PhoneGuideTimeline.Window(liveStart, liveStart + 6 * PhoneGuideTimeline.HOUR), viewModel, nowNext = true)
-    LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
-        items(rows, key = { it.key }) { row ->
-            val list = programmes[row.key].orEmpty()
-            val current = row.copy(now = list.firstOrNull { it.isLiveAt(now) },
-                next = list.firstOrNull { it.startUtcMillis > now }, programmes = list)
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 72.dp)
-                    .combinedClickable(onClick = { onPlay(current) }, onLongClick = { onDetails(current) })
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                coil.compose.AsyncImage(row.primary.logoUrl, contentDescription = null, modifier = Modifier.size(32.dp))
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(row.primary.shownName, style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(current.now?.title ?: stringResource(R.string.guide_no_info),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    current.next?.let {
-                        Text(it.title, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                IconButton(onClick = { onFavourite(current) }, modifier = Modifier.size(40.dp)) {
-                    Icon(if (row.primary.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
-                        contentDescription = stringResource(R.string.guide_favourites), modifier = Modifier.size(20.dp))
-                }
-                IconButton(onClick = { onDetails(current) }, modifier = Modifier.size(40.dp)) {
-                    Icon(Icons.Filled.MoreVert, stringResource(R.string.phone_guide_details), Modifier.size(20.dp))
-                }
-            }
-        }
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

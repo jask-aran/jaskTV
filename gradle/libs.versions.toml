@@ -21,7 +21,6 @@ datastore = "1.1.1"
 documentfile = "1.0.1"
 coil = "2.7.0"
 coil3 = "3.0.4"
-zxing = "3.5.3"
 navigation = "2.8.4"
 junit = "4.13.2"
 truth = "1.4.4"
@@ -87,7 +86,6 @@ coil3-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp
 
 # QR encoding for phone pairing. The core artifact is pure Java with no Android
 # dependency, so the bitmap rendering stays under our control.
-zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 truth = { group = "com.google.truth", name = "truth", version.ref = "truth" }

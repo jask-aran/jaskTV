@@ -230,83 +230,6 @@ fun MovieDetailScreen(
                     .filter(String::isNotBlank).joinToString(" · "))
             }, selected, { selectVersion(it) }) { sourceSheet = false }
         }
-    } else LazyColumn(Modifier.fillMaxSize()) {
-        item(key = "header") {
-            DetailBackdrop(title = m.displayTitle, backdropUrl = m.backdropUrl, posterUrl = m.posterUrl, meta = if (versions.isEmpty()) movieMeta(m) else movieMeta(m).replace("★", "TMDB"), onBack = onBack) {
-                DetailButton(
-                    icon = Icons.Filled.PlayArrow,
-                    label = stringResource(if (resumeExists) R.string.vod_resume else R.string.vod_watch_now),
-                    primary = true,
-                    modifier = Modifier.focusRequester(playFocus),
-                ) { onPlay(m) }
-                DetailButton(
-                    icon = if (m.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
-                    label = stringResource(if (m.favourite) R.string.common_remove_favourite else R.string.common_favourite),
-                ) {
-                    viewModel.toggleMovieFavourite(m)
-                    movie = m.copy(favourite = !m.favourite)
-                }
-                DetailButton(icon = Icons.Filled.Folder, label = "Save to collection") {
-                    showCollectionPicker = true
-                }
-                // Save for offline viewing; the Downloads tab lists it.
-                DownloadControl(mediaKey = "movie:${m.id}", buildDownload = {
-                    Download(
-                        mediaKey = "movie:${m.id}", kind = KIND_MOVIE, title = m.displayTitle,
-                        posterUrl = m.posterUrl, tag = m.sourceTag, sourceUrl = m.streamUrl,
-                        systemId = 0, createdMillis = 0,
-                    )
-                })
-                // Only when the user has add-ons set up — queries them for this film's streams.
-                if (hasAddons) {
-                    DetailButton(
-                        icon = Icons.Filled.Extension,
-                        label = stringResource(R.string.vod_addon_sources),
-                    ) {
-                        addonLoading = true
-                        scope.launch {
-                            addonStreams = viewModel.addonStreams(m)
-                            addonLoading = false
-                        }
-                    }
-                }
-            }
-        }
-        if (versions.size > 1) {
-            item(key = "versions") {
-                val unknownSource = stringResource(R.string.rec_source_unknown)
-                val qualityUnknown = stringResource(R.string.catalogue_quality_unknown)
-                val options = versions.map { version ->
-                    val quality = app.opentv.data.parser.MovieBrowseKey.from(versionNames[version.id].orEmpty(), version.year).qualityLabel
-                    SourceOption(providers.firstOrNull { it.id == version.sourceId }?.name ?: unknownSource,
-                        listOf(if (quality.isBlank()) qualityUnknown else "$quality (inferred)", versionNames[version.id].orEmpty())
-                            .filter(String::isNotBlank).joinToString(" · "))
-                }
-                SourcePicker(options, versions.indexOfFirst { it.id == m.id }) { index ->
-                    val version = versions[index]
-                    movie = version
-                    scope.launch {
-                        resumeExists = viewModel.resumePosition("movie:${version.id}")?.let { !it.isFinished } == true
-                    }
-                }
-            }
-        }
-        item(key = "info") {
-            DetailInfo(
-                plot = m.plot,
-                cast = m.cast,
-                director = m.director,
-                genre = m.genre,
-                onOpenPerson = onOpenPerson,
-            )
-        }
-        item(key = "review-scores") { ExternalReviews(movie = m) }
-        if (moreLike.isNotEmpty()) {
-            item(key = "more") {
-                Spacer(Modifier.height(4.dp))
-                MoviePosterRow(stringResource(R.string.vod_more_like_this), moreLike, onOpenMovie)
-            }
-        }
     }
 
     if (showCollectionPicker) CollectionPickerDialog(
@@ -562,99 +485,6 @@ fun SeriesDetailScreen(
                 viewModel.loadEpisodes(version)
             }) { sourceSheet = false }
         }
-    } else LazyColumn(Modifier.fillMaxSize()) {
-        item(key = "header") {
-            DetailBackdrop(title = s.displayTitle, backdropUrl = s.backdropUrl, posterUrl = s.posterUrl, meta = seriesMeta(s), onBack = onBack) {
-                DetailButton(
-                    icon = if (s.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
-                    label = stringResource(if (s.favourite) R.string.common_remove_favourite else R.string.common_favourite),
-                    primary = true,
-                    modifier = Modifier.focusRequester(favFocus),
-                ) {
-                    viewModel.toggleSeriesFavourite(s)
-                    series = s.copy(favourite = !s.favourite)
-                }
-                DetailButton(icon = Icons.Filled.Folder, label = "Save to collection") {
-                    showCollectionPicker = true
-                }
-            }
-        }
-        if (versions.size > 1) item(key = "versions") {
-            val unknownSource = stringResource(R.string.rec_source_unknown)
-            SourcePicker(versions.map { v -> SourceOption(providers.firstOrNull { it.id == v.sourceId }?.name ?: unknownSource, v.name) },
-                versions.indexOfFirst { it.id == s.id }) { index ->
-                val version = versions[index]
-                series = version
-                viewModel.loadEpisodes(version)
-            }
-        }
-        item(key = "info") {
-            DetailInfo(
-                plot = s.plot,
-                cast = s.cast,
-                director = null,
-                genre = s.genre,
-                onOpenPerson = onOpenPerson,
-            )
-        }
-        item(key = "review-scores") { ExternalReviews(series = s) }
-
-        if (episodes.isEmpty()) {
-            item(key = "eploading") {
-                Text(
-                    stringResource(R.string.vod_loading_episodes),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-                )
-            }
-        } else {
-            seasons.forEach { (season, eps) ->
-                item(key = "season:$season") {
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) { SectionHeader(stringResource(R.string.vod_season, season)) }
-                        // Queue every episode of the season not already saved.
-                        TextButton(
-                            onClick = {
-                                app.opentv.core.NotificationPermission.askIfNeeded(context)
-                                downloadScope.launch {
-                                    val repo = graph.downloadRepository
-                                    // Queue every episode not already saved; they download one by one.
-                                    var first: DownloadRepository.Start? = null
-                                    for (ep in eps) {
-                                        val d = episodeDownload(s, ep)
-                                        if (downloadDao.byKey(d.mediaKey) != null) continue
-                                        val r = repo.enqueue(d)
-                                        if (first == null) first = r
-                                        if (r is DownloadRepository.Start.NoSpace) break
-                                    }
-                                    first?.let {
-                                        Toast.makeText(context, startMessage(context, s.displayTitle, it), Toast.LENGTH_LONG).show()
-                                    }
-                                }
-                            },
-                            modifier = Modifier.padding(end = 16.dp),
-                        ) {
-                            Icon(Icons.Filled.Download, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.dl_season))
-                        }
-                    }
-                }
-                items(eps, key = { it.id }) { ep ->
-                    EpisodeRow(ep, onPlayEpisode, seriesTitle = s.name, trailing = {
-                        DownloadControl(mediaKey = "ep:${ep.id}", buildDownload = { episodeDownload(s, ep) }, compact = true)
-                    })
-                }
-            }
-        }
-
-        if (moreLike.isNotEmpty()) {
-            item(key = "more") {
-                Spacer(Modifier.height(12.dp))
-                SeriesPosterRow(stringResource(R.string.vod_more_like_this), moreLike, onOpenSeries)
-            }
-        }
     }
     if (showCollectionPicker) CollectionPickerDialog(
         kind = "show", sourceId = s.sourceId, itemKey = s.seriesId,
@@ -798,172 +628,12 @@ private fun HeroPosterCard(posterUrl: String?, title: String) {
     }
 }
 
-/**
- * The body under the hero: a genre chip row, the synopsis, and Plex-style **clickable** Cast and
- * Director rows. Tapping a person opens the Person screen ([onOpenPerson]) — everything else in the
- * library featuring them. Each block appears only when the provider gave us something for it.
- *
- * Rows bleed to the screen edge (their own 24dp content padding) rather than sitting inside a padded
- * Column, so a long cast list scrolls cleanly to the edge on a d-pad instead of stopping short.
- */
-@Composable
-private fun DetailInfo(
-    plot: String?,
-    cast: String?,
-    director: String?,
-    genre: String?,
-    onOpenPerson: (String) -> Unit,
-) {
-    val genres = remember(genre) { splitNames(genre, ',', '|', '/') }
-    val castList = remember(cast) { splitNames(cast, ',') }
-    val directors = remember(director) { splitNames(director, ',') }
 
-    Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
-        if (genres.isNotEmpty()) {
-            ChipRow(genres.size, key = { genres[it] }) { GenreChip(genres[it]) }
-            Spacer(Modifier.height(16.dp))
-        }
-        plot?.takeIf { it.isNotBlank() }?.let { LabeledBlock(stringResource(R.string.vod_synopsis), it) }
-        if (castList.isNotEmpty()) {
-            Spacer(Modifier.height(18.dp))
-            SectionLabel(stringResource(R.string.vod_cast))
-            Spacer(Modifier.height(8.dp))
-            ChipRow(castList.size, key = { castList[it] }) {
-                PersonChip(castList[it]) { onOpenPerson(castList[it]) }
-            }
-        }
-        if (directors.isNotEmpty()) {
-            Spacer(Modifier.height(18.dp))
-            SectionLabel(stringResource(R.string.vod_director))
-            Spacer(Modifier.height(8.dp))
-            ChipRow(directors.size, key = { directors[it] }) {
-                PersonChip(directors[it]) { onOpenPerson(directors[it]) }
-            }
-        }
-    }
-}
 
-/** Splits a provider multi-value string (comma/pipe/slash) into trimmed, de-duplicated, non-blank names. */
-private fun splitNames(raw: String?, vararg delimiters: Char): List<String> =
-    raw?.split(*delimiters)
-        ?.map { it.trim() }
-        ?.filter { it.isNotEmpty() }
-        ?.distinct()
-        .orEmpty()
 
-/** A section label ("Cast", "Director") aligned with the page's 24dp gutter. */
-@Composable
-private fun SectionLabel(label: String) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(horizontal = 24.dp),
-    )
-}
 
-@Composable
-private fun LabeledBlock(label: String, value: String) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(4.dp))
-        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
 
-/** A horizontal, edge-bleeding shelf of chips — genres or people. */
-@Composable
-private fun ChipRow(count: Int, key: (Int) -> Any, chip: @Composable (Int) -> Unit) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(count, key = key) { chip(it) }
-    }
-}
 
-/** A static genre pill. */
-@Composable
-private fun GenreChip(label: String) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
-    )
-}
-
-/**
- * A focusable, clickable name chip — a cast member or the director. Focus mirrors the app's cue
- * (primary fill + border), and it is padded to a comfortable d-pad target. Clicking opens the
- * Person screen for that name.
- */
-@Composable
-private fun PersonChip(name: String, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    val container = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-    val content = if (focused) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-    Text(
-        name,
-        style = MaterialTheme.typography.titleSmall,
-        color = content,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(22.dp))
-            .background(container)
-            .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(22.dp))
-                else Modifier,
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-    )
-}
-
-/** A focusable pill button for the hero — Watch/Resume and the favourite toggle. */
-@Composable
-private fun DetailButton(
-    icon: ImageVector,
-    label: String,
-    modifier: Modifier = Modifier,
-    primary: Boolean = false,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val container = when {
-        focused -> MaterialTheme.colorScheme.primary
-        primary -> MaterialTheme.colorScheme.primaryContainer
-        else -> Color.White.copy(alpha = 0.16f)
-    }
-    val content = when {
-        focused -> MaterialTheme.colorScheme.onPrimary
-        primary -> MaterialTheme.colorScheme.onPrimaryContainer
-        else -> Color.White
-    }
-    Row(
-        modifier
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(12.dp))
-            .background(container)
-            .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
-                else Modifier,
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = content)
-        Spacer(Modifier.width(8.dp))
-        Text(label, style = MaterialTheme.typography.titleMedium, color = content)
-    }
-}
 
 /**
  * The phone take on [DetailBackdrop]: art with the title over it, then the actions underneath in
@@ -1034,52 +704,6 @@ private fun PhoneDetailHeader(
     }
 }
 
-/** One episode row: season/episode marker, title, and a focus highlight; plays on click. */
-@Composable
-private fun EpisodeRow(
-    ep: Episode,
-    onPlay: (mediaKey: String, url: String, title: String) -> Unit,
-    seriesTitle: String? = null,
-    trailing: @Composable () -> Unit = {},
-) {
-    val shownTitle = remember(ep.title, seriesTitle) { episodeDisplayTitle(ep.title, seriesTitle) }
-    var focused by remember { mutableStateOf(false) }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 3.dp)
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(8.dp))
-            .background(
-                if (focused) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surface,
-            )
-            .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
-                else Modifier,
-            )
-            .clickable {
-                onPlay("ep:${ep.id}", ep.streamUrl, "S${ep.season}E${ep.episodeNumber} · $shownTitle")
-            }
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "S${ep.season}E${ep.episodeNumber}",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.width(72.dp),
-        )
-        Text(
-            shownTitle,
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        trailing()
-    }
-}
 
 /** The Downloads-tab entry for one episode of [series]. */
 private fun episodeDownload(series: Series, ep: Episode) = Download(
@@ -1101,14 +725,6 @@ private fun LoadingDetail() {
 
 // ---- Meta lines --------------------------------------------------------------------------------
 
-/** "2021  ·  ★ 7.8  ·  1h 52m" — each part dropped when the provider didn't give it. Genre is shown
- *  separately as its own chip row (see [DetailInfo]), so it stays off this line. */
-private fun movieMeta(m: Movie): String = listOfNotNull(
-    m.sourceTag,
-    m.year?.toString(),
-    m.rating?.takeIf { it > 0.0 }?.let { "★ ${formatRating(it)}" },
-    m.durationSeconds?.takeIf { it > 0 }?.let { formatRuntime(it) },
-).joinToString("  ·  ")
 
 /** "2021  ·  ★ 8.1" — series carry no runtime; genre is its own chip row. */
 private fun seriesMeta(s: Series): String = listOfNotNull(
@@ -1127,26 +743,6 @@ private fun formatRuntime(seconds: Int): String {
 
 internal data class SourceOption(val provider: String, val detail: String)
 
-/** One compact row naming the playing source; tapping lists the other provider versions. */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-@Composable
-internal fun SourcePicker(options: List<SourceOption>, selected: Int, onSelect: (Int) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    val current = options.getOrNull(selected) ?: options.firstOrNull() ?: return
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
-        .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-        .background(MaterialTheme.colorScheme.surfaceVariant)
-        .clickable { open = true }.padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text("Source · ${current.provider}", style = MaterialTheme.typography.labelLarge)
-            if (current.detail.isNotBlank()) Text(current.detail, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-        }
-        Text("${options.size} sources", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    if (open) SourceSheet(options, selected, onSelect) { open = false }
-}
 
 /** Bottom sheet listing every provider version; picking one closes it. */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)

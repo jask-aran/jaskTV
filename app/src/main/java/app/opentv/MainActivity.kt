@@ -74,7 +74,6 @@ import app.opentv.ui.MainScreen
 import app.opentv.ui.browsingDestination
 import app.opentv.ui.ProfilesViewModel
 import app.opentv.ui.SourcesViewModel
-import app.opentv.ui.channels.SearchScreen
 import app.opentv.ui.VodViewModel
 import app.opentv.ui.player.PlayerScreen
 import app.opentv.ui.theme.OpenTvTheme
@@ -282,8 +281,6 @@ object Routes {
     const val ADD_SOURCE = "add-source"
     const val PLAYER = "player/{channelId}"
     /** [scope]: all | movies | series — which results the phone search starts filtered to. */
-    const val SEARCH = "search?scope={scope}"
-    fun search(scope: String = "all") = "search?scope=$scope"
     const val EPG_SETTINGS = "epg-settings"
     const val SETTINGS_HUB = "settings"
     const val PROVIDERS = "providers"
@@ -439,7 +436,6 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     },
                     onAddSource = { navController.navigate(Routes.ADD_SOURCE) },
                     onRefresh = sourcesViewModel::refreshAll,
-                    onOpenSearch = { scope -> navController.navigate(Routes.search(scope)) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS_HUB) },
                     onOpenProfiles = { navController.navigate(Routes.PROFILES) },
                     onPlayRecording = { rec ->
@@ -480,27 +476,6 @@ private fun OpenTvApp(isTelevision: Boolean) {
 
             browsingDestination(Routes.PROFILES) {
                 app.opentv.ui.settings.JaskProfilesPage(onBack = { navController.popBackStack() }, viewModel = profilesViewModel)
-            }
-
-            browsingDestination(Routes.SEARCH) { entry ->
-                SearchScreen(
-                    vodViewModel = vodViewModel,
-                    initialScope = entry.arguments?.getString("scope") ?: "all",
-                    onOpenMovie = { movie -> navController.navigate(Routes.movieDetail(movie.id)) },
-                    onPlayChannel = { channel -> navController.navigate(Routes.player(channel.id)) },
-                    onPlayMovie = { movie ->
-                        navController.navigate(
-                            Routes.vodPlayer(
-                                key = "movie:${movie.id}",
-                                url = movie.streamUrl,
-                                title = movie.displayTitle,
-                                ua = "OpenTV/0.1 (Android)",
-                            ),
-                        )
-                    },
-                    onOpenSeries = { series -> navController.navigate(Routes.seriesDetail(series.id)) },
-                    onBack = { navController.popBackStack() },
-                )
             }
 
             browsingDestination(Routes.SETTINGS_HUB, edgeToEdgeOnTouch = true) {

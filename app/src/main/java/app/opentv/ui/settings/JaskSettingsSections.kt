@@ -84,28 +84,6 @@ internal fun SleepTimerRows() {
         { if (it == 0) deadline == null else false }) { if (it == 0) SleepTimer.clear() else SleepTimer.armMinutes(it) }
 }
 
-/** Live TV layout: list or guide on phones; guide grid or list, plus previews, on wide screens. */
-@Composable
-internal fun LiveLayoutRows(settings: AppSettings) {
-    if (LocalLayoutClass.current == LayoutClass.PHONE) {
-        val layout by settings.phoneLiveLayout.collectAsState()
-        Label(stringResource(R.string.phone_guide_layout))
-        Chips(listOf(AppSettings.PhoneLiveLayout.LIST to stringResource(R.string.phone_guide_list),
-            AppSettings.PhoneLiveLayout.GUIDE to stringResource(R.string.phone_guide_guide)), { it == layout }) { settings.setPhoneLiveLayout(it) }
-    } else {
-        val layout by settings.channelLayout.collectAsState()
-        val video by settings.guidePreviewVideo.collectAsState()
-        val sound by settings.guidePreviewSound.collectAsState()
-        Label(stringResource(R.string.settings_channel_layout_title))
-        Chips(listOf(AppSettings.ChannelLayout.GRID to stringResource(R.string.settings_channel_layout_grid),
-            AppSettings.ChannelLayout.LIST to stringResource(R.string.settings_channel_layout_list)), { it == layout }) { settings.setChannelLayout(it) }
-        JaskDivider()
-        Toggle(stringResource(R.string.settings_live_preview_title), stringResource(R.string.settings_live_preview_subtitle), video, settings::setGuidePreviewVideo)
-        JaskDivider()
-        Toggle(stringResource(R.string.settings_preview_sound_title), stringResource(R.string.settings_preview_sound_subtitle), sound, settings::setGuidePreviewSound)
-    }
-}
-
 /** Recordings: background permission, start-early/end-late, auto-switch, and where files go. */
 @Composable
 internal fun RecordingRows(settings: AppSettings) {
