@@ -1,5 +1,6 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.FileOutputStream
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -48,3 +49,29 @@ compose.desktop {
         }
     }
 }
+
+/**
+ * Engine-level checks with no UI: load, render, pause, seek, volume, tracks.
+ *
+ *     gradlew :desktop:smoke -PsmokeUrl=C:/path/sample.mp4
+ *
+ * Exits non-zero if any check fails, so it can gate a build script.
+ */
+tasks.register<JavaExec>("smoke") {
+    group = "verification"
+    description = "Runs the libmpv engine against -PsmokeUrl without the Compose UI."
+    dependsOn(tasks.named("classes"))
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("app.opentv.desktop.mpv.MpvSmokeKt")
+    systemProperty("smoke.url", providers.gradleProperty("smokeUrl").getOrElse(""))
+    // Gradle and Windows shells both like to swallow a child process's console output, which is
+    // exactly what a smoke run is for. Write the transcript to a file as well.
+    val transcript = layout.buildDirectory.file("smoke.log").get().asFile
+    doFirst {
+        transcript.parentFile.mkdirs()
+        transcript.writeText("")
+    }
+    standardOutput = FileOutputStream(transcript, true)
+    errorOutput = FileOutputStream(transcript, true)
+}
+
