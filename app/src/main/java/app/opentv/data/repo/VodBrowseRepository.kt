@@ -58,7 +58,7 @@ class VodBrowseRepository(private val movies: MovieDao, private val series: Seri
 }
 
 /** Provisional provider grouping, not a validated canonical TV identity. Unknown IDs stay separate. */
-data class SeriesBrowseGroup(@Embedded val primary: app.opentv.data.model.Series, val groupKey: String, val variantCount: Int)
+data class SeriesBrowseGroup(@Embedded val primary: app.opentv.data.model.Series, val groupKey: String, val variantCount: Int, val bestQuality: Int = 0)
 
 fun app.opentv.data.model.Series.providerBrowseKey(): String = tmdbId?.trim()?.toIntOrNull()?.takeIf { it > 0 }
     ?.let { "tv-hint:$it" } ?: "provider:$sourceId:$seriesId"

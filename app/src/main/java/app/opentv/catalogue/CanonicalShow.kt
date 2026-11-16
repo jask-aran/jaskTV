@@ -47,6 +47,8 @@ data class CanonicalShow(
     val network: String? = null,
     /** TMDB status: "Returning Series", "Ended", "Canceled", "In Production"…; null until detailed. */
     val status: String? = null,
+    /** TMDB logo for [network] (w154 PNG); "" when TMDB has none, null until detailed. */
+    val networkLogo: String? = null,
 ) {
     /** "Running" / "Ended" / "Cancelled" for chips; null when unknown. */
     val statusLabel: String? get() = when (status) {
@@ -76,7 +78,7 @@ interface CanonicalShowDao {
     @Upsert suspend fun putAll(shows: List<CanonicalShow>)
 
     /** Validated rows filled from a TMDB list entry, still missing network/status. */
-    @Query("SELECT * FROM canonical_shows WHERE validated = 1 AND status IS NULL LIMIT :limit")
+    @Query("SELECT * FROM canonical_shows WHERE validated = 1 AND (status IS NULL OR networkLogo IS NULL) LIMIT :limit")
     suspend fun needsDetail(limit: Int): List<CanonicalShow>
 
     @Query("SELECT * FROM canonical_shows WHERE tmdbId IN (:ids)")
@@ -133,18 +135,20 @@ class CanonicalShowResolver(private val http: OkHttpClient, private val settings
             text("poster_path")?.let { "https://image.tmdb.org/t/p/w500$it" },
             text("backdrop_path")?.let { "https://image.tmdb.org/t/p/w1280$it" },
             text("overview"), genres(o), o["vote_average"]?.jsonPrimitive?.doubleOrNull?.takeIf { it > 0 },
-            o["number_of_seasons"]?.jsonPrimitive?.intOrNull, System.currentTimeMillis(), network(o), text("status"))
+            o["number_of_seasons"]?.jsonPrimitive?.intOrNull, System.currentTimeMillis(), network(o), text("status"), networkLogo(o))
     }
 
     /** Adds network, status, genres and season count to a row validated from a TMDB list entry. */
     suspend fun detail(show: CanonicalShow): CanonicalShow {
-        val o = fetch(show.tmdbId) ?: return show.copy(status = "Unknown")
-        return show.copy(network = network(o), status = o["status"]?.jsonPrimitive?.contentOrNull ?: "Unknown",
+        val o = fetch(show.tmdbId) ?: return show.copy(status = show.status ?: "Unknown", networkLogo = "")
+        return show.copy(network = network(o), status = o["status"]?.jsonPrimitive?.contentOrNull ?: "Unknown", networkLogo = networkLogo(o),
             genres = show.genres ?: genres(o), seasonCount = o["number_of_seasons"]?.jsonPrimitive?.intOrNull ?: show.seasonCount)
     }
 
     private fun genres(o: JsonObject) = o["genres"]?.jsonArray?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull }
         ?.joinToString(", ")?.takeIf(String::isNotBlank)
+    private fun networkLogo(o: JsonObject) = o["networks"]?.jsonArray?.firstOrNull()?.jsonObject?.get("logo_path")?.jsonPrimitive?.contentOrNull
+        ?.let { "https://image.tmdb.org/t/p/w154$it" } ?: ""
     private fun network(o: JsonObject) = o["networks"]?.jsonArray?.firstOrNull()?.jsonObject?.get("name")?.jsonPrimitive?.contentOrNull
 
     private fun rejected(id: Int) = CanonicalShow(id, false, null, null, null, null, null, null, null, null, null, null, System.currentTimeMillis())

@@ -66,8 +66,8 @@ internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, onOpen: (
         }
         when (section.style) {
             HomeStyle.POSTERS -> items(section.items, key = { "home-${section.key}-${it.key}" }) { title ->
-                val facts = listOfNotNull(title.network, title.status).ifEmpty { listOfNotNull(rating(title.rating), title.year?.toString().takeIf { title.rank == null }) }
-                JaskPosterCard(title.title, title.poster, listOfNotNull(title.rank?.let { "#$it" }) + facts) { onOpen(title) }
+                JaskPosterCard(title.title, title.poster, PosterFacts(rank = title.rank, rating = title.rating, status = title.status,
+                    quality = title.quality, networkLogo = title.networkLogo, network = title.network)) { onOpen(title) }
             }
             HomeStyle.WIDE -> {
                 val perRow = if (columns <= 3) 2 else 3

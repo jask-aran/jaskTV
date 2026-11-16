@@ -30,7 +30,16 @@ abstract class CanonicalMovieDao {
                         ON present.sourceId = snap.sourceId AND present.generation = snap.generation
                         WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
                   AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
-                  AND (:sourceId IS NULL OR m.sourceId = :sourceId)) AS versionCount
+                  AND (:sourceId IS NULL OR m.sourceId = :sourceId)) AS versionCount,
+            (SELECT MAX(m.browseQualityRank) FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
+                WHERE l.tmdbId = c.tmdbId
+                  AND EXISTS (SELECT 1 FROM sources provider WHERE provider.id = m.sourceId AND provider.enabled = 1)
+                  AND (NOT EXISTS (SELECT 1 FROM movie_inventory_snapshots snap WHERE snap.sourceId = m.sourceId)
+                    OR EXISTS (SELECT 1 FROM movie_inventory_snapshots snap JOIN movie_inventory_assets present
+                        ON present.sourceId = snap.sourceId AND present.generation = snap.generation
+                        WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
+                  AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
+                  AND (:sourceId IS NULL OR m.sourceId = :sourceId)) AS bestQuality
         FROM canonical_movies c
         WHERE EXISTS (SELECT 1 FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
                 WHERE l.tmdbId = c.tmdbId
@@ -66,7 +75,16 @@ abstract class CanonicalMovieDao {
                         ON present.sourceId = snap.sourceId AND present.generation = snap.generation
                         WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
                   AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
-                  AND (:sourceId IS NULL OR m.sourceId = :sourceId)) AS versionCount
+                  AND (:sourceId IS NULL OR m.sourceId = :sourceId)) AS versionCount,
+            (SELECT MAX(m.browseQualityRank) FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
+                WHERE l.tmdbId = c.tmdbId
+                  AND EXISTS (SELECT 1 FROM sources provider WHERE provider.id = m.sourceId AND provider.enabled = 1)
+                  AND (NOT EXISTS (SELECT 1 FROM movie_inventory_snapshots snap WHERE snap.sourceId = m.sourceId)
+                    OR EXISTS (SELECT 1 FROM movie_inventory_snapshots snap JOIN movie_inventory_assets present
+                        ON present.sourceId = snap.sourceId AND present.generation = snap.generation
+                        WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
+                  AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
+                  AND (:sourceId IS NULL OR m.sourceId = :sourceId)) AS bestQuality
         FROM canonical_movies c
         WHERE EXISTS (SELECT 1 FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
                 WHERE l.tmdbId = c.tmdbId
@@ -88,7 +106,7 @@ abstract class CanonicalMovieDao {
         else browseRanked(sourceId, query, languages, includeUnknown, sort)
 
     @Query("""
-        SELECT c.*, MIN(m.id) AS movieId, COUNT(*) AS versionCount
+        SELECT c.*, MIN(m.id) AS movieId, COUNT(*) AS versionCount, MAX(m.browseQualityRank) AS bestQuality
         FROM canonical_movies c
         JOIN movie_identity_matches l ON l.tmdbId = c.tmdbId
         JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
@@ -135,7 +153,9 @@ abstract class CanonicalMovieDao {
                         ON present.sourceId = snap.sourceId AND present.generation = snap.generation
                         WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
                   AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))) AS movieId,
-            1 AS versionCount
+            1 AS versionCount,
+            (SELECT MAX(m.browseQualityRank) FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
+                WHERE l.tmdbId = c.tmdbId) AS bestQuality
         FROM canonical_movies c WHERE c.tmdbId IN (:ids)) WHERE movieId IS NOT NULL""")
     abstract suspend fun availableByIds(ids: List<Int>): List<CanonicalMovieCard>
 

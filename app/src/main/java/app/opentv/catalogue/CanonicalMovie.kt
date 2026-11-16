@@ -41,6 +41,8 @@ data class CanonicalMovieCard(
     @Embedded val title: CanonicalMovie,
     val movieId: Long,
     val versionCount: Int,
+    /** Highest inferred quality rank among versions (500 8K, 400 4K, 300 FHD, 200 HD, 100 SD, 0 unknown). */
+    val bestQuality: Int,
 )
 
 enum class CatalogueSort { TITLE, YEAR, RATING, ADDED }

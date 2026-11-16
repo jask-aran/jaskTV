@@ -87,4 +87,4 @@ class TmdbRankings(private val http: OkHttpClient, private val settings: AppSett
 }
 
 /** A provider show group for one TMDB hint, with every provider name (to check the hint). */
-data class HintGroup(@Embedded val primary: Series, val groupKey: String, val variantCount: Int, val names: String?)
+data class HintGroup(@Embedded val primary: Series, val groupKey: String, val variantCount: Int, val names: String?, val bestQuality: Int)

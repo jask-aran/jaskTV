@@ -219,7 +219,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     data class HomeTitle(val key: String, val title: String, val poster: String?, val backdrop: String?, val year: Int?,
         val rating: Double?, val language: String?, val overview: String?, val rank: Int? = null,
         val movieId: Long? = null, val groupKey: String? = null, val variantCount: Int = 1,
-        val network: String? = null, val status: String? = null)
+        val network: String? = null, val status: String? = null, val networkLogo: String? = null, val quality: Int = 0)
     enum class HomeStyle { POSTERS, WIDE }
     data class HomeSection(val key: String, val title: String, val style: HomeStyle, val items: List<HomeTitle>)
     data class CatalogueHome(val featured: List<HomeTitle>, val sections: List<HomeSection>)
@@ -258,7 +258,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         val local = ids.chunked(500).flatMap { canonical.availableByIds(it) }.associate { card ->
             val t = card.title
             t.tmdbId to HomeTitle("movie:${t.tmdbId}", t.title, t.posterUrl, t.backdropUrl, t.year, t.rating, t.originalLanguage,
-                t.synopsis, movieId = card.movieId)
+                t.synopsis, movieId = card.movieId, quality = card.bestQuality)
         }
         return arrange(lists, local, "New releases", "All movies")
     }
@@ -283,7 +283,8 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
             if (!show.validated) return@mapNotNull null
             id to HomeTitle("show:$id", show.title ?: item.title, show.posterUrl ?: item.poster, show.backdropUrl ?: item.backdrop,
                 show.year, show.rating ?: item.rating, show.originalLanguage, show.synopsis ?: item.overview,
-                groupKey = group.groupKey, variantCount = group.variantCount, network = show.network, status = show.statusLabel)
+                groupKey = group.groupKey, variantCount = group.variantCount, network = show.network, status = show.statusLabel,
+                networkLogo = show.networkLogo, quality = group.bestQuality)
         }.toMap()
         if (checked.isNotEmpty()) runCatching { canonicalShows.putAll(checked) }
         return arrange(lists, local, "Airing now", "All shows")

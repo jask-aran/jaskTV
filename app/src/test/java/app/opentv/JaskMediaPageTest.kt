@@ -69,4 +69,16 @@ class JaskMediaPageTest {
         assertTrue(created.endsWith("`checkedMillis` INTEGER NOT NULL, `network` TEXT, `status` TEXT, PRIMARY KEY(`tmdbId`))"))
         assertEquals(listOf("ALTER TABLE `canonical_shows` ADD COLUMN `network` TEXT", "ALTER TABLE `canonical_shows` ADD COLUMN `status` TEXT"), statements)
     }
+
+    @Test fun migration23AddsNetworkLogo() {
+        val statements = mutableListOf<String>()
+        val db = java.lang.reflect.Proxy.newProxyInstance(javaClass.classLoader, arrayOf(androidx.sqlite.db.SupportSQLiteDatabase::class.java)) { _, method, args ->
+            if (method.name == "execSQL") statements += args[0] as String; null
+        } as androidx.sqlite.db.SupportSQLiteDatabase
+        OpenTvDatabase.MIGRATION_22_23.migrate(db)
+        val schema = java.io.File("schemas/app.opentv.data.db.OpenTvDatabase/23.json").readText()
+        val created = Regex(""""tableName": "canonical_shows",\s*"createSql": "([^"]+)"""").find(schema)!!.groupValues[1]
+        assertTrue(created.endsWith("`network` TEXT, `status` TEXT, `networkLogo` TEXT, PRIMARY KEY(`tmdbId`))"))
+        assertEquals(listOf("ALTER TABLE `canonical_shows` ADD COLUMN `networkLogo` TEXT"), statements)
+    }
 }

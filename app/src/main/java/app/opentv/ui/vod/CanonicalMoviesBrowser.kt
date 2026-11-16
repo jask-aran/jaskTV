@@ -8,6 +8,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,11 +73,7 @@ private fun CanonicalMoviesContent(vm: VodViewModel, onOpen: (Movie) -> Unit,
         } else null
         PagedVodGrid(vm.canonicalMoviePages.collectAsLazyPagingItems(), "$source/$query/$options", { it.title.tmdbId }, if (query.isNotBlank()) stringResource(R.string.jask_no_matches, query.trim()) else stringResource(if (vm.metadataConfigured) R.string.vod_paging_empty else R.string.catalogue_empty),
             header = header) { card ->
-            JaskPosterCard(card.title.title, card.title.posterUrl,
-                // TMDB rating, release year and original language (ISO code), drawn on the poster.
-                listOfNotNull(card.title.rating?.takeIf { it > 0 }?.let { "★ " + String.format(Locale.getDefault(), "%.1f", it) },
-                    listOfNotNull(card.title.year?.toString(), card.title.originalLanguage?.uppercase(Locale.ROOT))
-                        .joinToString(" · ").ifBlank { null })) {
+            JaskPosterCard(card.title.title, card.title.posterUrl, PosterFacts(rating = card.title.rating, quality = card.bestQuality)) {
                 scope.launch { vm.defaultMovieVersion(vm.canonicalVersions(card.movieId))?.let(onOpen) }
             }
         }
@@ -152,17 +151,77 @@ private fun FilterOption(label: String, selected: Boolean, onClick: () -> Unit) 
     }
 }
 
+/**
+ * What a poster shows on its art, as badges and icons rather than text rows:
+ * rank (corner tab), best available quality (top right), rating and Running/Ended (bottom left),
+ * network logo (bottom right). [noSource] replaces the quality badge with a warning.
+ */
+internal data class PosterFacts(
+    val rank: Int? = null, val rating: Double? = null, val status: String? = null, val quality: Int = 0,
+    val networkLogo: String? = null, val network: String? = null, val noSource: Boolean = false,
+    val extra: List<String> = emptyList(),
+)
+
+/** "4K" / "HD" / "SD" from an inferred quality rank; null when unknown. */
+internal fun qualityBadge(rank: Int): String? = when {
+    rank >= 500 -> "8K"
+    rank >= 400 -> "4K"
+    rank >= 200 -> "HD"
+    rank >= 100 -> "SD"
+    else -> null
+}
+
 @Composable
-internal fun JaskPosterCard(title: String, poster: String?, chips: List<String>, onClick: () -> Unit) {
+internal fun JaskPosterCard(title: String, poster: String?, chips: List<String>, onClick: () -> Unit) =
+    JaskPosterCard(title, poster, PosterFacts(extra = chips), onClick)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun JaskPosterCard(title: String, poster: String?, facts: PosterFacts, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(8.dp)
     Column(Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }.clickable(onClick = onClick).padding(2.dp)) {
         Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(shape).background(Color(0xFF282522))
             .then(if (focused) Modifier.border(3.dp, JaskAccent, shape) else Modifier)) {
             AsyncImage(poster, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            @OptIn(ExperimentalLayoutApi::class)
-            if (chips.isNotEmpty()) FlowRow(Modifier.align(androidx.compose.ui.Alignment.BottomStart).padding(5.dp),
-                horizontalArrangement = Arrangement.spacedBy(3.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) { chips.forEach { JaskPosterChip(it) } }
+            facts.rank?.let { rank ->
+                Text("$rank", color = Color.Black, fontWeight = androidx.compose.ui.text.font.FontWeight.Black,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 18.sp),
+                    modifier = Modifier.align(androidx.compose.ui.Alignment.TopStart)
+                        .clip(RoundedCornerShape(bottomEnd = 9.dp)).background(Color(0xFFF4F4F4)).padding(horizontal = 8.dp, vertical = 3.dp))
+            }
+            if (facts.noSource) Icon(Icons.Outlined.ErrorOutline, "No source", tint = Color(0xFFFFB4A9),
+                modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(5.dp).size(18.dp)
+                    .background(Color(0xB3000000), RoundedCornerShape(50)).padding(1.dp))
+            else qualityBadge(facts.quality)?.let { q ->
+                Text(q, color = Color.White, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 10.sp, letterSpacing = 0.4.sp),
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(5.dp)
+                        .background(Color(0x99000000), RoundedCornerShape(3.dp))
+                        .border(1.dp, Color.White.copy(alpha = .75f), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp, vertical = 1.dp))
+            }
+            Row(Modifier.align(androidx.compose.ui.Alignment.BottomStart).fillMaxWidth().padding(5.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.Bottom) {
+                FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    facts.rating?.takeIf { it > 0 }?.let { r ->
+                        Row(Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xB3000000)).padding(horizontal = 4.dp, vertical = 2.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Star, null, tint = Color(0xFFF5C518), modifier = Modifier.size(10.dp))
+                            Spacer(Modifier.width(2.dp))
+                            Text(String.format(Locale.getDefault(), "%.1f", r), color = Color(0xFFF2F2F2),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp))
+                        }
+                    }
+                    facts.status?.let { JaskPosterChip(it) }
+                    facts.extra.forEach { JaskPosterChip(it) }
+                }
+                if (!facts.networkLogo.isNullOrBlank()) {
+                    Box(Modifier.padding(start = 3.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xE6F4F4F4)).padding(horizontal = 4.dp, vertical = 3.dp)) {
+                        AsyncImage(facts.networkLogo, facts.network, contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(12.dp).widthIn(max = 38.dp))
+                    }
+                } else facts.network?.let { JaskPosterChip(it) }
+            }
         }
         Text(title, color = Color(0xFFF6F3EF), style = MaterialTheme.typography.labelLarge,
             maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))

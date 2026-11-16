@@ -120,11 +120,9 @@ internal fun PagedSeriesGrid(items: LazyPagingItems<app.opentv.ui.VodViewModel.S
     val scope = rememberCoroutineScope()
     PagedVodGrid(items, filterKey, { it.group.groupKey }, emptyText, header) { card ->
         val group = card.group
-        // Network and running/ended when TMDB has confirmed the show; year and source count otherwise.
-        val chips = listOfNotNull(card.show?.network, card.show?.statusLabel).ifEmpty {
-            listOfNotNull(group.primary.year?.toString(), if (group.variantCount > 1) "${group.variantCount} sources" else null)
-        }
-        JaskPosterCard(cleanShowTitle(group.primary.name), group.primary.posterUrl, chips) {
+        val show = card.show
+        JaskPosterCard(cleanShowTitle(group.primary.name), group.primary.posterUrl, PosterFacts(rating = show?.rating ?: group.primary.rating,
+            status = show?.statusLabel, quality = group.bestQuality, networkLogo = show?.networkLogo, network = show?.network)) {
             if (group.variantCount > 1) scope.launch { onOpen(pickDefault(loadVariants(group.groupKey)) ?: group.primary) }
             else onOpen(group.primary)
         }

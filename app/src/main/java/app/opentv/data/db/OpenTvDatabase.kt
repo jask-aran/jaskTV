@@ -90,7 +90,7 @@ class Converters {
         CollectionEntry::class,
         ChannelAliasOverride::class,
     ],
-    version = 22,
+    version = 23,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -432,6 +432,13 @@ abstract class OpenTvDatabase : RoomDatabase() {
             }
         }
 
+        /** Additive: TMDB network logo for canonical shows (rows re-detailed once by CanonicalShowWorker). */
+        internal val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `canonical_shows` ADD COLUMN `networkLogo` TEXT")
+            }
+        }
+
         fun build(context: Context): OpenTvDatabase =
             Room.databaseBuilder(context, OpenTvDatabase::class.java, "opentv.db")
                 // WAL keeps guide writes from blocking guide reads, so a background EPG
@@ -440,7 +447,7 @@ abstract class OpenTvDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
-                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
+                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23,
                 )
                 // v1 predates the retained migration chain; all versions >= 2 must migrate.
                 .fallbackToDestructiveMigrationFrom(1)
