@@ -116,6 +116,7 @@ internal fun JaskLibrary(
         }
     }
     val watched = activity.watched.filter { matches(it.searchText) }
+    app.opentv.ui.JaskAmbientFrom(activity.continueWatching.firstOrNull()?.let { it.wideArt ?: it.poster } ?: watchlist.firstOrNull()?.poster)
 
     fun open(item: LibraryViewModel.Activity) = scope.launch {
         item.movieId?.let { id -> vm.movieRow(id)?.let(onOpenMovie) }
@@ -239,9 +240,8 @@ internal fun ContinueCard(item: LibraryViewModel.Activity, onOpen: () -> Unit, o
     val removeLabel = stringResource(R.string.jask_remove_from_continue)
     Row(Modifier.fillMaxWidth().height(104.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E1C1B))
         .combinedClickable(onClick = onOpen, onLongClick = { menu = true })) {
-        Box(Modifier.fillMaxHeight().aspectRatio(2f / 3f).background(Color(0xFF282522))) {
-            AsyncImage(item.poster ?: item.wideArt, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        }
+        app.opentv.ui.vod.PosterArt(item.poster ?: item.wideArt, item.facts.copy(rating = null, status = null, network = null),
+            Modifier.fillMaxHeight().aspectRatio(2f / 3f), androidx.compose.ui.graphics.RectangleShape, compact = true, inset = true)
         Box(Modifier.fillMaxHeight().aspectRatio(1.3f).background(Color(0xFF282522))) {
             AsyncImage(item.wideArt ?: item.poster, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             when {
@@ -260,7 +260,8 @@ internal fun ContinueCard(item: LibraryViewModel.Activity, onOpen: () -> Unit, o
                     color = Color(0xFFD6D6D6), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(4.dp))
-            if (item.chips.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (item.facts.noSource) app.opentv.ui.vod.UnavailableMark()
+            else if (item.chips.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 // Shows: one "Network · Running" chip; movies: rating and year · language.
                 (if (item.episodeCode != null) listOf(item.chips.joinToString(" · ")) else item.chips.take(2)).forEach { JaskPosterChip(it) }
             }
@@ -297,16 +298,16 @@ private fun BoxScope.Badge(text: String, background: Color, color: Color) {
 @Composable
 private fun WatchRow(entry: LibraryViewModel.WatchItem, onOpen: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(126.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E1C1B)).clickable(onClick = onOpen)) {
-        Box(Modifier.fillMaxHeight().aspectRatio(2f / 3f).background(Color(0xFF282522))) {
-            AsyncImage(entry.poster, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        }
+        app.opentv.ui.vod.PosterArt(entry.poster, entry.facts.copy(rating = null, status = null, network = null),
+            Modifier.fillMaxHeight().aspectRatio(2f / 3f), androidx.compose.ui.graphics.RectangleShape, compact = true, inset = true)
         Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 9.dp)) {
             Text(entry.title, color = Color(0xFFF6F3EF), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 (listOf(if (entry.movie != null) "Movie" else "TV") + entry.chips.take(2)).forEach { JaskPosterChip(it) }
             }
+            if (entry.facts.noSource) { Spacer(Modifier.height(5.dp)); app.opentv.ui.vod.UnavailableMark() }
             entry.overview?.takeIf(String::isNotBlank)?.let {
                 Spacer(Modifier.height(6.dp))
                 Text(it, color = Color(0xFFB0B0B0), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)

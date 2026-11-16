@@ -1,6 +1,12 @@
 package app.opentv.ui.vod
 
 import androidx.compose.foundation.background
+import kotlinx.coroutines.launch
+import app.opentv.R
+import androidx.compose.ui.res.stringResource
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.border
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.clickable
@@ -68,8 +74,7 @@ internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, onOpen: (
         }
         when (section.style) {
             HomeStyle.POSTERS -> items(section.items, key = { "home-${section.key}-${it.key}" }) { title ->
-                JaskPosterCard(title.title, title.poster, PosterFacts(rank = title.rank, rating = title.rating, status = title.status,
-                    quality = title.quality, networkLogo = title.networkLogo, network = title.network)) { onOpen(title) }
+                JaskPosterCard(title.title, title.poster, title.facts()) { onOpen(title) }
             }
             HomeStyle.WIDE -> {
                 val perRow = if (columns <= 3) 2 else 3
@@ -91,6 +96,7 @@ internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, onOpen: (
 internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: String? = null, onOpen: (HomeTitle) -> Unit) {
     val wide = LocalLayoutClass.current != LayoutClass.PHONE
     val pager = rememberPagerState { titles.size }
+    app.opentv.ui.JaskAmbientFrom(titles.getOrNull(pager.settledPage)?.let { it.backdrop ?: it.poster })
     LaunchedEffect(pager.settledPage, titles.size) {
         delay(14_000)
         if (!pager.isScrollInProgress && titles.size > 1)
@@ -100,17 +106,25 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
         HorizontalPager(pager, Modifier.fillMaxSize(), key = { titles[it].key }) { page ->
             val t = titles[page]
             Box(Modifier.fillMaxSize().clickable { onOpen(t) }) {
+                // The art itself fades out at the bottom into the shell's ambient page colour.
                 AsyncImage(t.backdrop?.replace("/t/p/w1280/", "/t/p/original/"), null, contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
+                    alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize()
+                        .graphicsLayer(compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen)
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(Brush.verticalGradient(0.55f to Color.Black, 1f to Color.Transparent),
+                                blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                        })
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                     0f to Color.Black.copy(alpha = 0.55f), 0.2f to Color.Transparent, 0.5f to Color.Transparent,
-                    0.68f to JaskPageCanvas.copy(alpha = 0.45f), 0.82f to JaskPageCanvas.copy(alpha = 0.82f), 0.93f to JaskPageCanvas.copy(alpha = 0.97f), 1f to JaskPageCanvas)))
+                    0.62f to Color.Black.copy(alpha = 0.18f), 0.8f to Color.Black.copy(alpha = 0.3f), 1f to Color.Transparent)))
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(t.title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(6.dp))
-                    Text(listOfNotNull(caption ?: t.rank?.let { "#$it this week" }, t.year?.toString(), t.network, t.status, rating(t.rating)).joinToString("  ·  "),
+                    Text(listOfNotNull(caption ?: t.rank?.let { "#$it this week" }, t.year?.toString(), t.network, t.status, rating(t.rating),
+                        stringResource(R.string.jask_not_on_sources).takeIf { !t.available }).joinToString("  ·  "),
                         color = Color(0xFFDADADA), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     t.overview?.let {
                         Spacer(Modifier.height(8.dp))
@@ -133,8 +147,10 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
 @Composable
 private fun JaskWideCard(t: HomeTitle, modifier: Modifier, onClick: () -> Unit) {
     Box(modifier.aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF282522)).clickable(onClick = onClick)) {
-        AsyncImage(t.backdrop ?: t.poster, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        AsyncImage(t.backdrop ?: t.poster, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+            colorFilter = if (t.available) null else UnavailableArt, alpha = if (t.available) 1f else .7f)
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.8f))))
+        if (!t.available) UnavailableMark(Modifier.align(Alignment.TopEnd).padding(6.dp))
         Column(Modifier.align(Alignment.BottomStart).padding(8.dp)) {
             Text(t.title, color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -158,6 +174,7 @@ internal fun JaskSearchResults(hits: List<HomeTitle>?, emptyText: String, onOpen
             Text(emptyText, color = Color(0xFFBDBDBD), style = MaterialTheme.typography.bodyLarge)
         }
         else -> {
+            app.opentv.ui.JaskAmbientFrom(hits.first().let { it.backdrop ?: it.poster })
             val phone = LocalLayoutClass.current == LayoutClass.PHONE
             androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                 columns = if (phone) androidx.compose.foundation.lazy.grid.GridCells.Fixed(3) else androidx.compose.foundation.lazy.grid.GridCells.Adaptive(120.dp),
@@ -175,8 +192,7 @@ internal fun JaskSearchResults(hits: List<HomeTitle>?, emptyText: String, onOpen
                             color = Color(0xFFF4F4F4), modifier = Modifier.padding(top = 8.dp))
                     }
                     items(hits.drop(10), key = { "grid-" + it.key }) { t ->
-                        JaskPosterCard(t.title, t.poster, PosterFacts(rating = t.rating, status = t.status, quality = t.quality,
-                            networkLogo = t.networkLogo, network = t.network)) { onOpen(t) }
+                        JaskPosterCard(t.title, t.poster, t.facts().copy(rank = null)) { onOpen(t) }
                     }
                 }
             }
@@ -218,6 +234,57 @@ private fun JaskHitRow(t: HomeTitle, onClick: () -> Unit) {
                 Spacer(Modifier.height(6.dp))
                 Text(it, color = Color(0xFFB0B0B0), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
+        }
+    }
+}
+
+
+/** Card badges for a home/search title, the same everywhere a [HomeTitle] is drawn. */
+internal fun HomeTitle.facts() = PosterFacts(rank = rank, rating = rating, status = status, quality = quality,
+    networkLogo = networkLogo, network = network, noSource = !available)
+
+/** Small frosted "not on your sources" mark for wide art and rows. */
+@Composable
+internal fun UnavailableMark(modifier: Modifier = Modifier) {
+    Row(modifier.clip(RoundedCornerShape(50)).background(Color(0x99000000)).padding(horizontal = 7.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Icon(androidx.compose.material.icons.Icons.Outlined.CloudOff, null, tint = Color(0xFFFFC7BD), modifier = Modifier.size(12.dp))
+        Text(stringResource(R.string.jask_not_on_sources), color = Color(0xFFF2F2F2), style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+/**
+ * Opens a home/search title: available ones through [open] (the media page); unavailable ones
+ * show a frosted preview sheet instead, since there is nothing to play or pick a source from.
+ */
+@Composable
+internal fun rememberHomeOpener(open: suspend (HomeTitle) -> Unit): (HomeTitle) -> Unit {
+    var preview by remember { mutableStateOf<HomeTitle?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    preview?.let { UnavailableSheet(it) { preview = null } }
+    return { t -> if (!t.available) preview = t else scope.launch { open(t) } }
+}
+
+@Composable
+private fun UnavailableSheet(t: HomeTitle, onDismiss: () -> Unit) {
+    app.opentv.ui.JaskSheet(onDismiss) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+            AsyncImage(t.poster, null, contentScale = ContentScale.Crop,
+                modifier = Modifier.width(96.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF282522)))
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(t.title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(listOfNotNull(t.year?.toString(), rating(t.rating)).joinToString("  ·  "), color = Color(0xFFCFCFCF),
+                    style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(8.dp))
+                UnavailableMark()
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.jask_not_on_sources_body), color = Color(0xFFBDBDBD), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        t.overview?.takeIf(String::isNotBlank)?.let {
+            Text(it, color = Color(0xFFD6D6D6), style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
         }
     }
 }

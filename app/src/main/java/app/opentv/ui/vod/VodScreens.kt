@@ -153,39 +153,20 @@ fun SeriesScreen(
     val query by viewModel.browseQuery.collectAsState()
     LaunchedEffect(hasSources) { if (hasSources) viewModel.ensureVodLoaded() }
     if (app.opentv.ui.LocalJaskTouchShell.current) {
-        var filters by remember { mutableStateOf(false) }
-        val request = app.opentv.ui.LocalJaskFilterRequest.current
-        LaunchedEffect(request) { if (request > 0) filters = true }
+        // Source and availability scope live in the account popover; there is no filter sheet here.
         val home by viewModel.showHome.collectAsState()
-        val homeScope = rememberCoroutineScope()
         val hits by viewModel.showSearch.collectAsState()
+        val openTitle = rememberHomeOpener { title -> viewModel.openHomeShow(title)?.let(onOpenSeries) }
         if (query.isNotBlank()) {
-            JaskSearchResults(hits, stringResource(R.string.jask_no_matches, query.trim())) { title ->
-                homeScope.launch { viewModel.openHomeShow(title)?.let(onOpenSeries) }
-            }
-            if (filters) JaskFilterSheet(onDismiss = { filters = false }, onApply = { filters = false },
-                onReset = { viewModel.selectVodSource(null); viewModel.selectSeriesCategory(null) }) {
-                LazyColumn(Modifier.heightIn(max = 440.dp)) {
-                    item { TextButton(onClick = { viewModel.selectVodSource(null) }) { Text(stringResource(R.string.catalogue_all_sources)) } }
-                    items(sources, key = { it.id }) { provider -> TextButton(onClick = { viewModel.selectVodSource(provider.id) }) { Text(provider.name) } }
-                }
-            }
+            JaskSearchResults(hits, stringResource(R.string.jask_no_matches, query.trim()), openTitle)
             return
         }
         val h = home
-        val header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(Int) -> Unit)? = if (h != null && query.isBlank()) { columns ->
-            jaskHome(h, columns) { title -> homeScope.launch { viewModel.openHomeShow(title)?.let(onOpenSeries) } }
+        val header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(Int) -> Unit)? = if (h != null) { columns ->
+            jaskHome(h, columns, openTitle)
         } else null
         PagedSeriesGrid(viewModel.seriesPages.collectAsLazyPagingItems(), "$source/$category/$query", onOpenSeries, viewModel::seriesBrowseVariants, pickDefault = viewModel::defaultSeriesVersion,
-            emptyText = if (query.isNotBlank()) stringResource(R.string.jask_no_matches, query.trim()) else null,
-            header = header)
-        if (filters) JaskFilterSheet(onDismiss = { filters = false }, onApply = { filters = false },
-            onReset = { viewModel.selectVodSource(null); viewModel.selectSeriesCategory(null) }) {
-            LazyColumn(Modifier.heightIn(max = 440.dp)) {
-                item { TextButton(onClick = { viewModel.selectVodSource(null) }) { Text(stringResource(R.string.catalogue_all_sources)) } }
-                items(sources, key = { it.id }) { provider -> TextButton(onClick = { viewModel.selectVodSource(provider.id) }) { Text(provider.name) } }
-            }
-        }
+            emptyText = null, header = header)
         return
     }
     BackHandler(category != null) { viewModel.selectSeriesCategory(null) }

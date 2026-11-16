@@ -90,6 +90,12 @@ import app.opentv.ui.library.LibraryScreen
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.outlined.LiveTv
+import androidx.compose.material.icons.outlined.Inventory2
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.CalendarViewDay
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.filled.MoreVert
@@ -155,23 +161,19 @@ fun MainScreen(
             BackHandler(query.isNotEmpty()) { setQuery("") }
             BackHandler(query.isEmpty() && destination != JaskDestination.MOVIES) { destination = JaskDestination.MOVIES }
             val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+            val sources by vodViewModel.sources.collectAsState()
+            val vodSource by vodViewModel.selectedVodSource.collectAsState()
+            val showUnavailable by vodViewModel.showUnavailable.collectAsState()
             CompositionLocalProvider(LocalJaskFilterRequest provides filterRequest) {
                 JaskChromeFrame(destination, { if (it != destination) clearQueries(); focusManager.clearFocus()
                         destination = it; showInventory = false; filterRequest = 0 },
                     query = query, onQuery = setQuery, onFilter = { filterRequest++ },
-                    accountMenu = listOf(
-                        JaskMenuItem(activeProfileName) { onOpenProfiles() },
-                        JaskMenuItem(stringResource(R.string.nav_settings)) { onOpenSettings() },
-                        JaskMenuItem(stringResource(R.string.jask_guide_sources)) { onOpenGuide() },
-                        JaskMenuItem(stringResource(R.string.jask_sources)) { onAddSource() },
-                        JaskMenuItem(stringResource(R.string.phone_refresh), enabled = !isSyncing) {
-                            if (destination == JaskDestination.MOVIES || destination == JaskDestination.SHOWS) vodViewModel.refreshVod() else onRefresh()
-                        },
-                        JaskMenuItem(stringResource(R.string.jask_inventory)) { showInventory = true; destination = JaskDestination.SHOWS },
-                    ),
-                    // Library has no filters (they're inline); its header button opens Downloads.
-                    filterIcon = if (destination == JaskDestination.LIBRARY) androidx.compose.material.icons.Icons.Filled.DownloadForOffline
-                        else androidx.compose.material.icons.Icons.Filled.Tune,
+                    accountMenu = accountMenu(activeProfileName, vodViewModel, sources, vodSource, showUnavailable, isSyncing,
+                        onOpenProfiles = onOpenProfiles, onOpenSettings = onOpenSettings, onOpenGuide = onOpenGuide, onAddSource = onAddSource,
+                        onRefresh = { if (destination == JaskDestination.MOVIES || destination == JaskDestination.SHOWS) vodViewModel.refreshVod() else onRefresh() },
+                        onInventory = { showInventory = true; destination = JaskDestination.SHOWS }),
+                    // Browsing scope lives in the account popover; only Library has a header button (Downloads).
+                    filterIcon = if (destination == JaskDestination.LIBRARY) androidx.compose.material.icons.Icons.Filled.DownloadForOffline else null,
                     filterLabel = if (destination == JaskDestination.LIBRARY) stringResource(R.string.jask_library_downloads) else null) {
                     when (destination) {
                         JaskDestination.MOVIES -> MoviesScreen(onOpenMovie, onResume, {},
@@ -647,4 +649,31 @@ private fun Wordmark(modifier: Modifier = Modifier) {
             modifier = Modifier.padding(start = 2.dp),
         )
     }
+}
+
+
+/**
+ * The account popover: who's watching, what Movies and Shows include (sources, and whether titles
+ * not on any source are listed), then settings and source management.
+ */
+@Composable
+private fun accountMenu(
+    profileName: String, vm: VodViewModel, sources: List<app.opentv.data.model.Source>, selected: Long?, showUnavailable: Boolean,
+    isSyncing: Boolean, onOpenProfiles: () -> Unit, onOpenSettings: () -> Unit, onOpenGuide: () -> Unit, onAddSource: () -> Unit,
+    onRefresh: () -> Unit, onInventory: () -> Unit,
+): List<JaskMenuItem> = buildList {
+    val icons = androidx.compose.material.icons.Icons.Outlined
+    add(JaskMenuItem(profileName, icon = icons.AccountCircle, subtitle = stringResource(R.string.jask_switch_profile), onClick = onOpenProfiles))
+    add(JaskMenuItem(stringResource(R.string.jask_browse), header = true, divider = true))
+    add(JaskMenuItem(stringResource(R.string.jask_show_unavailable), subtitle = stringResource(R.string.jask_show_unavailable_hint),
+        toggle = showUnavailable, keepOpen = true) { vm.setShowUnavailable(!showUnavailable) })
+    if (sources.size > 1) {
+        add(JaskMenuItem(stringResource(R.string.catalogue_all_sources), checked = selected == null, keepOpen = true) { vm.selectVodSource(null) })
+        sources.forEach { source -> add(JaskMenuItem(source.name, checked = selected == source.id, keepOpen = true) { vm.selectVodSource(source.id) }) }
+    }
+    add(JaskMenuItem(stringResource(R.string.nav_settings), icon = icons.Settings, divider = true, onClick = onOpenSettings))
+    add(JaskMenuItem(stringResource(R.string.jask_sources), icon = icons.Dns, onClick = onAddSource))
+    add(JaskMenuItem(stringResource(R.string.jask_guide_sources), icon = icons.CalendarViewDay, onClick = onOpenGuide))
+    add(JaskMenuItem(stringResource(R.string.phone_refresh), icon = icons.Refresh, enabled = !isSyncing, onClick = onRefresh))
+    add(JaskMenuItem(stringResource(R.string.jask_inventory), icon = icons.Inventory2, onClick = onInventory))
 }

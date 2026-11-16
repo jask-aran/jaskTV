@@ -81,7 +81,8 @@ import app.opentv.data.model.Reminder
 import app.opentv.data.model.shownName
 import app.opentv.reminders.ReminderScheduler
 import app.opentv.player.PlaybackQueue
-import app.opentv.player.PlayerController
+import app.opentv.player.PlaybackRequest
+import app.opentv.player.PlayerEngineConfig
 import app.opentv.ui.ChannelsViewModel
 import app.opentv.ui.LayoutClass
 import app.opentv.ui.LocalLayoutClass
@@ -124,7 +125,7 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val graph = remember { ServiceLocator.get(context) }
-    val isPhone = LocalLayoutClass.current == LayoutClass.PHONE
+    val isPhone = LocalLayoutClass.current.isTouch
     LaunchedEffect(isPhone) { viewModel.setCompactGuide(isPhone) }
     // Phones open Live on the channels you actually watch (once per screen; a tap elsewhere sticks).
     var openedOnRecents by rememberSaveable { mutableStateOf(false) }
@@ -132,6 +133,12 @@ fun HomeScreen(
         if (isPhone && !openedOnRecents && graph.settings.recentChannels.value.isNotEmpty()) viewModel.selectRecents()
         openedOnRecents = true
     }
+    var inlineQuery by rememberSaveable { mutableStateOf("") }
+    val inlineChannels by viewModel.searchResults.collectAsState()
+    LaunchedEffect(inlineQuery) { if (isPhone) viewModel.setSearchQuery(inlineQuery) }
+    val hiddenIds by viewModel.hiddenCategoryIds.collectAsState()
+    val (discovering, rawDiscoveries) = rememberBroadcastDiscovery(inlineQuery, isPhone)
+    val discoveries = rawDiscoveries.filter { it.channel.categoryId !in hiddenIds }
     val settings = remember { graph.settings }
     val previewEnabled by settings.guidePreviewVideo.collectAsState()
     val channelLayout by settings.channelLayout.collectAsState()
@@ -229,8 +236,10 @@ fun HomeScreen(
     // once — the thing that used to lock up cheap sticks.
     val previewScope = remember(isPhone) { CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) }
     val previewController = remember(isPhone) {
-        if (isPhone) null else PlayerController(context, previewScope, graph.httpClient, subtitlesEnabled = false, preview = true)
-            .also { it.player.volume = 0f }
+        if (isPhone) null else graph.playerEngines.create(
+            previewScope,
+            PlayerEngineConfig(subtitlesEnabled = false, preview = true),
+        ).also { it.setVolume(0f) }
     }
     DisposableEffect(previewController) {
         onDispose {
@@ -244,8 +253,11 @@ fun HomeScreen(
     // live is funnelled through [requestLive]: with a recording active it asks first.
     var pendingLiveChannel by remember { mutableStateOf<Channel?>(null) }
     fun startLive(channel: Channel) {
-        PlaybackQueue.items = rows.map {
-            PlaybackQueue.Item(it.primary.id, it.primary.shownName, it.primary.logoUrl, it.primary.number)
+        val channels = if (isPhone && inlineQuery.isNotBlank())
+            (inlineChannels.map { it.primary } + discoveries.map { it.channel } + channel).distinctBy { it.id }
+            else rows.map { it.primary }
+        PlaybackQueue.items = channels.map {
+            PlaybackQueue.Item(it.id, it.shownName, it.logoUrl, it.number)
         }
         previewController?.stop()
         onPlayChannel(channel)
@@ -285,7 +297,7 @@ fun HomeScreen(
 
     // Preview audio follows the setting; muted by default so browsing stays quiet.
     LaunchedEffect(previewSound) {
-        previewController?.player?.volume = if (previewSound) 1f else 0f
+        previewController?.setVolume(if (previewSound) 1f else 0f)
     }
 
     // Tune the preview to the highlighted channel, so it follows the d-pad as you browse — the
@@ -302,7 +314,7 @@ fun HomeScreen(
         val channel = row.primary
         val source = graph.sourceRepository.byId(channel.sourceId)
         previewController?.play(
-            PlayerController.Request(
+            PlaybackRequest(
                 url = channel.streamUrl,
                 title = channel.shownName,
                 userAgent = source?.userAgent ?: "OpenTV/0.1 (Android)",
@@ -352,7 +364,37 @@ fun HomeScreen(
             onSelectRecents = viewModel::selectRecents,
             onSelectFavourites = viewModel::selectFavourites,
             onSelectCategory = viewModel::selectCategory,
-            onOpenSearch = onSearchLive,
+            query = inlineQuery,
+            onQuery = { inlineQuery = it },
+            searchContent = {
+                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp)) {
+                    if (discovering) item(key = "loading") {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                    items(discoveries, key = { "discovery:${it.channel.id}" }) { hit ->
+                        DiscoveryResultRow(hit, ::requestLive)
+                    }
+                    val discoveredIds = discoveries.map { it.channel.id }.toSet()
+                    items(inlineChannels.filter { it.primary.id !in discoveredIds }, key = { it.key }) { row ->
+                        androidx.compose.material3.ListItem(
+                            headlineContent = { Text(row.primary.shownName, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis) },
+                            leadingContent = { AsyncImage(row.primary.logoUrl, null, Modifier.size(40.dp)) },
+                            trailingContent = {
+                                IconButton(onClick = { viewModel.toggleFavourite(row) }) {
+                                    Icon(if (row.primary.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                                        stringResource(R.string.guide_favourites))
+                                }
+                            },
+                            modifier = Modifier.clickable { requestLive(row.primary) },
+                        )
+                    }
+                    if (!discovering && discoveries.isEmpty() && inlineChannels.isEmpty()) item(key = "empty") {
+                        Text(stringResource(R.string.search_no_results, inlineQuery),
+                            Modifier.padding(vertical = 24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
             emptyContent = emptyContent,
             layout = phoneLayout,
             onLayout = settings::setPhoneLiveLayout,
@@ -487,7 +529,7 @@ fun HomeScreen(
                     onWatch = { highlightedRow?.let { goFullscreen(it.primary) } },
                     onRefresh = onRefresh,
                     onAddSource = onAddSource,
-                    previewPlayer = if (previewEnabled && !recordingActive) previewController?.player else null,
+                    previewPlayer = if (previewEnabled && !recordingActive) previewController else null,
                     isRecording = highlightedRow?.primary?.id?.let { id ->
                         activeRecordings.any { it.channelId == id }
                     } == true,

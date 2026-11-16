@@ -54,6 +54,9 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isMinifyEnabled = false
+            // `-PjaskPerf`: same package/signature/data, but non-debuggable so ART optimises it.
+            // For on-device scroll measurements only; debuggable builds overstate Compose jank.
+            if (providers.gradleProperty("jaskPerf").isPresent) isDebuggable = false
         }
     }
 

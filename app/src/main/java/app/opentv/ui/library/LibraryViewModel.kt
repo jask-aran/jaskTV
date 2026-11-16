@@ -59,6 +59,8 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         val movieId: Long?,
         val seriesRowId: Long?,
         val updatedAt: Long,
+        /** Poster badges, the same marks as the Movies/Shows grids. */
+        val facts: app.opentv.ui.vod.PosterFacts = app.opentv.ui.vod.PosterFacts(),
     ) {
         val isMovie get() = movieId != null
         /** Search text: title and episode. */
@@ -68,7 +70,8 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     data class LibraryActivity(val continueWatching: List<Activity> = emptyList(), val watched: List<Activity> = emptyList())
 
     data class WatchItem(val key: String, val movie: Movie?, val series: Series?, val title: String, val poster: String?,
-        val year: Int?, val rating: Double?, val language: String?, val overview: String?, val chips: List<String>)
+        val year: Int?, val rating: Double?, val language: String?, val overview: String?, val chips: List<String>,
+        val facts: app.opentv.ui.vod.PosterFacts = app.opentv.ui.vod.PosterFacts())
 
     val activity: StateFlow<LibraryActivity> = profile
         .flatMapLatest { pid -> combine(db.positions().observeRecent(pid, 150), refreshed) { positions, _ -> positions } }
@@ -80,17 +83,19 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         combine(db.movies().observeFavourites(), db.series().observeFavourites(),
             collections.observeAllCollectedMovies(pid), collections.observeAllCollectedShows(pid)) { fm, fs, cm, cs -> (fm + cm) to (fs + cs) }
     }.mapLatest { (movies, shows) ->
+        val enabled = enabledSources()
         val movieItems = movies.map { raw ->
             val title = canonicalMovie(raw)
             val m = title?.let(raw::withCanonical) ?: raw
             WatchItem(title?.let { "tmdb:${it.tmdbId}" } ?: "m:${raw.sourceId}:${raw.streamId}", raw, null, title?.title ?: cleanShowTitle(raw.name),
-                m.posterUrl, m.year, m.rating, title?.originalLanguage, m.plot, movieChips(m.rating, m.year, title?.originalLanguage, m.durationSeconds))
+                m.posterUrl, m.year, m.rating, title?.originalLanguage, m.plot, movieChips(m.rating, m.year, title?.originalLanguage, m.durationSeconds),
+                movieFacts(raw, m.rating, enabled))
         }
         val showItems = shows.map { raw ->
             val show = canonicalShow(raw)
             val s = show?.let(raw::withCanonical) ?: raw
             WatchItem(raw.tmdbHint()?.let { "tv:$it" } ?: "s:${raw.sourceId}:${raw.seriesId}", null, raw, cleanShowTitle(s.name),
-                s.posterUrl, s.year, s.rating, show?.originalLanguage, s.plot, showChips(show, s))
+                s.posterUrl, s.year, s.rating, show?.originalLanguage, s.plot, showChips(show, s), showFacts(raw, show, s.rating, enabled))
         }
         (movieItems + showItems).distinctBy { it.key }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -120,6 +125,17 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun canonicalShow(raw: Series): CanonicalShow? = raw.tmdbHint()?.let { db.canonicalShows().validated(it) }
 
+    private suspend fun enabledSources() = db.sources().enabled().map { it.id }.toSet()
+
+    private fun quality(name: String) = app.opentv.data.parser.MovieBrowseKey.from(name, null).qualityRank
+
+    private fun movieFacts(raw: Movie, rating: Double?, enabled: Set<Long>) =
+        app.opentv.ui.vod.PosterFacts(rating = rating, quality = quality(raw.name), noSource = raw.sourceId !in enabled)
+
+    private fun showFacts(raw: Series?, show: CanonicalShow?, rating: Double?, enabled: Set<Long>) =
+        app.opentv.ui.vod.PosterFacts(rating = rating, status = show?.statusLabel, quality = raw?.let { quality(it.name) } ?: 0,
+            networkLogo = show?.networkLogo, network = show?.network, noSource = raw == null || raw.sourceId !in enabled)
+
     private fun movieChips(rating: Double?, year: Int?, language: String?, seconds: Int?) = listOfNotNull(
         rating?.takeIf { it > 0 }?.let { "★ " + String.format(Locale.getDefault(), "%.1f", it) },
         listOfNotNull(year?.toString(), language?.uppercase(Locale.ROOT)).joinToString(" · ").ifBlank { null },
@@ -140,6 +156,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         val seenShows = HashSet<String>()
         val byKey = positions.associateBy { it.mediaKey }
         caughtUp.clear()
+        val enabled = enabledSources()
         for (pos in positions) { // newest first
             val (kind, id) = pos.mediaKey.split(":", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1].toLongOrNull() } ?: continue
             id ?: continue
@@ -151,7 +168,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     val entry = Activity(pos.mediaKey, title?.title ?: cleanShowTitle(raw.name), null, null,
                         movieChips(m.rating, m.year, title?.originalLanguage, null), null,
                         m.backdropUrl ?: m.posterUrl, m.posterUrl, progress(pos), remaining(pos), false, false,
-                        pos.durationMillis, raw.id, null, pos.updatedAtMillis)
+                        pos.durationMillis, raw.id, null, pos.updatedAtMillis, movieFacts(raw, m.rating, enabled))
                     if (pos.isFinished) watched += entry else resume += entry
                 }
                 "ep" -> {
@@ -169,7 +186,8 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                             if (s != null) showChips(show, s) else emptyList(),
                             inSeason.size.takeIf { it > 1 }?.let { "Ep ${inSeason.indexOfFirst { it.id == e.id } + 1} of $it" },
                             e.stillUrl ?: s?.backdropUrl ?: s?.posterUrl, s?.posterUrl,
-                            p?.let(::progress) ?: 0f, p?.let(::remaining), upNext, isNew, p?.durationMillis ?: 0L, null, raw?.id, pos.updatedAtMillis)
+                            p?.let(::progress) ?: 0f, p?.let(::remaining), upNext, isNew, p?.durationMillis ?: 0L, null, raw?.id, pos.updatedAtMillis,
+                            showFacts(raw, show, s?.rating, enabled))
                     }
                     if (!pos.isFinished) { resume += activity(ep, pos, false, false); continue }
                     watched += activity(ep, pos, false, false)

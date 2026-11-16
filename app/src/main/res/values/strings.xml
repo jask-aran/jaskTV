@@ -668,4 +668,10 @@
     <string tools:ignore="MissingTranslation" name="jask_inventory">Shows provider inventory</string>
     <string tools:ignore="MissingTranslation" name="jask_shows_pending">Your shows are available in Provider inventory.</string>
     <string tools:ignore="MissingTranslation" name="jask_guide_sources">TV guide sources</string>
+    <string tools:ignore="MissingTranslation" name="jask_not_on_sources">Not on your sources</string>
+    <string tools:ignore="MissingTranslation" name="jask_not_on_sources_body">None of your sources has this right now. It becomes playable here when one adds it.</string>
+    <string tools:ignore="MissingTranslation" name="jask_switch_profile">Switch profile</string>
+    <string tools:ignore="MissingTranslation" name="jask_browse">Browse</string>
+    <string tools:ignore="MissingTranslation" name="jask_show_unavailable">Show everything</string>
+    <string tools:ignore="MissingTranslation" name="jask_show_unavailable_hint">Include titles not on your sources</string>
 </resources>

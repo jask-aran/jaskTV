@@ -19,6 +19,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.drawWithContent
@@ -74,7 +78,7 @@ internal fun JaskChromeFrame(
     query: String, onQuery: (String) -> Unit, onFilter: () -> Unit,
     accountMenu: List<JaskMenuItem>,
     searchEnabled: Boolean = true,
-    filterIcon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.Tune,
+    filterIcon: androidx.compose.ui.graphics.vector.ImageVector? = Icons.Default.Tune,
     filterLabel: String? = null,
     content: @Composable () -> Unit,
 ) {
@@ -83,10 +87,17 @@ internal fun JaskChromeFrame(
     // Edge to edge: pages draw under the status and navigation bars; chrome and content padding add the bar heights.
     val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBar = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val ambient = remember { JaskAmbient() }
+    LaunchedEffect(current) { ambient.art = null }
     CompositionLocalProvider(LocalJaskOpenSearch provides { if (searchEnabled) searching = true }, LocalJaskTouchShell provides true,
+        LocalJaskAmbient provides ambient,
         LocalJaskSearchFocus provides searchFocus,
         LocalJaskContentPadding provides PaddingValues(top = statusBar + 72.dp, bottom = navBar + 84.dp)) {
-        JaskSurfaceHost(Modifier.fillMaxSize().background(Color(0xFF141312)), background = { content() }) {
+        // The waves are part of the recorded page, so the header and rail glass blur them too.
+        JaskSurfaceHost(Modifier.fillMaxSize().background(Color.Black), background = {
+            Box(Modifier.matchParentSize().jaskWavesBackground(ambient.art))
+            content()
+        }) {
             // Dim behind the status bar and header so the brand and clock read over artwork; cheap, no blur.
             Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(statusBar + 88.dp).background(Brush.verticalGradient(
                 listOf(Color(0xFF141312).copy(alpha = .9f), Color(0xFF141312).copy(alpha = .55f), Color.Transparent))))
@@ -102,6 +113,17 @@ internal fun JaskChromeFrame(
                     .padding(horizontal = 16.dp, vertical = 12.dp))
         }
     }
+}
+
+/** The artwork the touch shell takes its page colour from; pages set it with [JaskAmbientFrom]. */
+internal class JaskAmbient { var art by mutableStateOf<String?>(null) }
+internal val LocalJaskAmbient = staticCompositionLocalOf<JaskAmbient?> { null }
+
+/** Colours the shell's page from [url] (the featured art, the top search hit, what you're watching). */
+@Composable
+internal fun JaskAmbientFrom(url: String?) {
+    val ambient = LocalJaskAmbient.current ?: return
+    LaunchedEffect(url) { if (url != null) ambient.art = url }
 }
 
 /** Dims the area behind the status bar (top) or navigation bar (bottom) so content shows through but the bar stays legible. */
@@ -148,7 +170,14 @@ private fun JaskOverlayEntry(visible: Boolean, layer: @Composable () -> Unit): B
     return true
 }
 
-internal data class JaskMenuItem(val label: String, val checked: Boolean = false, val enabled: Boolean = true, val onClick: () -> Unit)
+/**
+ * A popover row. [header] rows are small section labels (not tappable); [divider] draws a rule
+ * above; [keepOpen] leaves the popover open after a tap (for checks and switches).
+ */
+internal data class JaskMenuItem(val label: String, val checked: Boolean = false, val enabled: Boolean = true,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector? = null, val subtitle: String? = null,
+    val header: Boolean = false, val divider: Boolean = false, val keepOpen: Boolean = false,
+    val toggle: Boolean? = null, val onClick: () -> Unit = {})
 
 /**
  * Frosted popover menu anchored to the enclosing Box (like DropdownMenu). Drawn in the page's own
@@ -165,15 +194,10 @@ internal fun BoxScope.JaskMenu(expanded: Boolean, onDismiss: () -> Unit, items: 
         val margin = with(LocalDensity.current) { 8.dp.roundToPx() }
         androidx.compose.ui.layout.Layout({
             JaskFrostSurface(Modifier.widthIn(min = 180.dp, max = 280.dp), RoundedCornerShape(16.dp)) {
-                Column(Modifier.padding(vertical = 6.dp).width(IntrinsicSize.Max)) {
-                    items.forEach { item ->
-                        Row(Modifier.fillMaxWidth().clickable(enabled = item.enabled) { onDismiss(); item.onClick() }
-                            .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(item.label, color = if (item.enabled) Color(0xFFF4F4F4) else Color(0x80F4F4F4),
-                                style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                            if (item.checked) Icon(Icons.Default.Check, null, Modifier.padding(start = 12.dp).size(18.dp), tint = Color.White)
-                        }
-                    }
+                Column(Modifier.padding(vertical = 6.dp).width(IntrinsicSize.Max)
+                    .heightIn(max = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * .75f).dp)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    items.forEach { item -> JaskMenuRow(item) { if (!item.keepOpen) onDismiss(); item.onClick() } }
                 }
             }
         }, Modifier.fillMaxSize()) { measurables, constraints ->
@@ -186,10 +210,43 @@ internal fun BoxScope.JaskMenu(expanded: Boolean, onDismiss: () -> Unit, items: 
         }
     }
     if (!hosted) DropdownMenu(expanded, onDismissRequest = onDismiss) {
-        items.forEach { item ->
+        items.filterNot { it.header }.forEach { item ->
             DropdownMenuItem(text = { Text(item.label) }, enabled = item.enabled, onClick = { onDismiss(); item.onClick() },
                 trailingIcon = if (item.checked) ({ Icon(Icons.Default.Check, null) }) else null)
         }
+    }
+}
+
+@Composable
+private fun JaskMenuRow(item: JaskMenuItem, onTap: () -> Unit) {
+    if (item.divider) Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(Color.White.copy(alpha = .12f)))
+    if (item.header) {
+        Text(item.label.uppercase(), color = Color(0x99F4F4F4), style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp))
+        return
+    }
+    val fg = if (item.enabled) Color(0xFFF4F4F4) else Color(0x80F4F4F4)
+    Row(Modifier.fillMaxWidth().clickable(enabled = item.enabled, onClick = onTap)
+        .padding(horizontal = 16.dp, vertical = if (item.subtitle != null) 8.dp else 11.dp), verticalAlignment = Alignment.CenterVertically) {
+        item.icon?.let { Icon(it, null, Modifier.padding(end = 12.dp).size(20.dp), tint = fg) }
+        Column(Modifier.weight(1f)) {
+            Text(item.label, color = fg, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            item.subtitle?.let { Text(it, color = Color(0xA6F4F4F4), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+        when {
+            item.toggle != null -> JaskGlassSwitch(item.toggle, Modifier.padding(start = 12.dp))
+            item.checked -> Icon(Icons.Default.Check, null, Modifier.padding(start = 12.dp).size(18.dp), tint = Color.White)
+        }
+    }
+}
+
+/** Small on/off pill in the jaskTV style (display only; the row handles the tap). */
+@Composable
+internal fun JaskGlassSwitch(on: Boolean, modifier: Modifier = Modifier) {
+    val x by androidx.compose.animation.core.animateDpAsState(if (on) 16.dp else 0.dp, label = "switch")
+    Box(modifier.size(40.dp, 24.dp).clip(RoundedCornerShape(50))
+        .background(if (on) Color(0xFFF4F4F4) else Color.White.copy(alpha = .18f)).padding(3.dp)) {
+        Box(Modifier.offset(x = x).size(18.dp).clip(CircleShape).background(if (on) Color(0xFF141312) else Color(0xFFE8E8E8)))
     }
 }
 
@@ -337,12 +394,12 @@ internal val JaskRailHeight = 54.dp
 /** Brand, filters for the current destination, and account. Search lives in the bottom bar. */
 @Composable
 internal fun JaskHeader(onFilter: () -> Unit, onAccount: () -> Unit, modifier: Modifier = Modifier,
-    filterIcon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.Tune, filterLabel: String? = null,
+    filterIcon: androidx.compose.ui.graphics.vector.ImageVector? = Icons.Default.Tune, filterLabel: String? = null,
     accountMenu: @Composable BoxScope.() -> Unit = {}) {
     Row(modifier.testTag("jask.header").height(52.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         JaskWordmark(Modifier.height(20.dp))
         Spacer(Modifier.weight(1f))
-        JaskFrostSurface(Modifier.size(48.dp), RoundedCornerShape(50)) {
+        if (filterIcon != null) JaskFrostSurface(Modifier.size(48.dp), RoundedCornerShape(50)) {
             IconButton(onFilter, Modifier.fillMaxSize()) {
                 Icon(filterIcon, filterLabel ?: stringResource(R.string.catalogue_filters), Modifier.size(20.dp), tint = Color(0xFFF0F0F0))
             }

@@ -16,6 +16,7 @@ import app.opentv.catalogue.TmdbRankings
 import app.opentv.catalogue.RankedTitle
 import app.opentv.catalogue.CanonicalShow
 import app.opentv.catalogue.ShowMatching
+import app.opentv.catalogue.CanonicalShowResolver
 import app.opentv.catalogue.MovieMatching
 import app.opentv.ui.vod.cleanShowTitle
 import app.opentv.data.repo.VodBrowseRepository
@@ -43,6 +44,8 @@ import app.opentv.data.repo.PersonTitle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -73,6 +76,15 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         cataloguePrefs.getBoolean("unknown", true),
         runCatching { CatalogueSort.valueOf(cataloguePrefs.getString("sort", "TITLE")!!) }
             .getOrDefault(CatalogueSort.TITLE)))
+    /**
+     * Browsing scope, set from the account popover: false = only titles on an enabled source;
+     * true = the TMDB lists in full, with titles we can't play marked unavailable.
+     */
+    val showUnavailable = MutableStateFlow(cataloguePrefs.getBoolean("unavailable", false))
+    fun setShowUnavailable(show: Boolean) {
+        cataloguePrefs.edit().putBoolean("unavailable", show).apply()
+        showUnavailable.value = show
+    }
     val catalogueLanguages = canonical.languages().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     fun applyMovieOptions(options: MovieOptions) {
         cataloguePrefs.edit().putStringSet("languages", options.languages).putBoolean("unknown", options.includeUnknown)
@@ -150,7 +162,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     private val browseRepository = VodBrowseRepository(graph.database.movies(), graph.database.series())
 
     /** Provider filter for Movies/Shows. null = every source. Surfaced only when there's >1 source. */
-    private val vodSource = MutableStateFlow<Long?>(null)
+    private val vodSource = MutableStateFlow(cataloguePrefs.getLong("source", -1L).takeIf { it > 0 })
     val selectedVodSource = vodSource.asStateFlow()
 
     /** Providers, so Movies/Shows can offer a source filter (shown only when there's more than one). */
@@ -222,29 +234,60 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         val rating: Double?, val language: String?, val overview: String?, val rank: Int? = null,
         val movieId: Long? = null, val groupKey: String? = null, val variantCount: Int = 1,
         val network: String? = null, val status: String? = null, val networkLogo: String? = null, val quality: Int = 0,
-        val tmdbId: Int? = null)
+        val tmdbId: Int? = null,
+        /** False when no enabled source has it (only listed with [showUnavailable]). */
+        val available: Boolean = true)
     enum class HomeStyle { POSTERS, WIDE }
     data class HomeSection(val key: String, val title: String, val style: HomeStyle, val items: List<HomeTitle>)
     data class CatalogueHome(val featured: List<HomeTitle>, val sections: List<HomeSection>)
 
     private val rankings = TmdbRankings(graph.httpClient, settings, java.io.File(getApplication<Application>().filesDir, "rankings"))
 
-    /** Cached rankings first (instant), then refreshed ones when the cache is older than six hours. */
-    val movieHome: StateFlow<CatalogueHome?> = kotlinx.coroutines.flow.flow {
-        rankings.cached(TmdbRankings.Kind.MOVIES)?.let { emit(buildMovieHome(it)) }
-        rankings.lists(TmdbRankings.Kind.MOVIES)?.let { emit(buildMovieHome(it)) }
-    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Lazily, null)
+    /** Bumped when the home's own shows have been detailed (network logo, status), to rebuild it. */
+    private val showDetailed = MutableStateFlow(0)
+    private val showResolver = CanonicalShowResolver(graph.httpClient, settings)
+    private val detailing = java.util.Collections.synchronizedSet(HashSet<Int>())
 
-    val showHome: StateFlow<CatalogueHome?> = kotlinx.coroutines.flow.flow {
-        rankings.cached(TmdbRankings.Kind.SHOWS)?.let { emit(buildShowHome(it)) }
-        rankings.lists(TmdbRankings.Kind.SHOWS)?.let { emit(buildShowHome(it)) }
-    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Lazily, null)
+    /**
+     * The background worker details shows in no particular order, so the home's own (trending,
+     * airing, popular) are fetched here first: network logo and status, a few at a time.
+     */
+    private fun detailHomeShows(shows: List<CanonicalShow>) {
+        val due = shows.filter { (it.networkLogo == null || it.status == null) && detailing.add(it.tmdbId) }
+        if (due.isEmpty() || !metadataConfigured) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val done = due.chunked(6).flatMap { batch ->
+                batch.map { show -> async { runCatching { showResolver.detail(show) }.getOrNull() } }.awaitAll().filterNotNull()
+            }
+            if (done.isNotEmpty()) { runCatching { canonicalShows.putAll(done) }; showDetailed.value++ }
+        }
+    }
+
+    private fun rankingLists(kind: TmdbRankings.Kind) = kotlinx.coroutines.flow.flow {
+        rankings.cached(kind)?.let { emit(it) }
+        rankings.lists(kind)?.let { emit(it) }
+    }
+
+    /** Cached rankings first (instant), then refreshed ones when the cache is older than six hours. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val movieHome: StateFlow<CatalogueHome?> = combine(rankingLists(TmdbRankings.Kind.MOVIES), showUnavailable) { l, all -> l to all }
+        .mapLatest { (lists, all) -> buildMovieHome(lists, all) }
+        .distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Lazily, null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val showHome: StateFlow<CatalogueHome?> = combine(rankingLists(TmdbRankings.Kind.SHOWS), showUnavailable, showDetailed) { l, all, _ -> l to all }
+        .mapLatest { (lists, all) -> buildShowHome(lists, all) }
+        .distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Lazily, null)
+
+    /** A ranked title no source has, shown greyed with [HomeTitle.available] false. */
+    private fun unavailable(prefix: String, r: RankedTitle) = HomeTitle("$prefix:${r.id}", r.title, r.poster, r.backdrop, r.year,
+        r.rating, r.language, r.overview, tmdbId = r.id, available = false)
 
     private fun arrange(lists: Map<String, List<RankedTitle>>, local: Map<Int, HomeTitle>,
-        newTitle: String, kindTitle: String): CatalogueHome {
+        newTitle: String, kindTitle: String, missing: ((RankedTitle) -> HomeTitle)? = null): CatalogueHome {
         val used = HashSet<String>()
         fun pick(list: String, count: Int, need: (HomeTitle) -> Boolean = { true }) = lists[list].orEmpty()
-            .mapNotNull { local[it.id] }.distinctBy { it.key }.withIndex()
+            .mapNotNull { local[it.id] ?: missing?.invoke(it) }.distinctBy { it.key }.withIndex()
             .map { (i, t) -> if (list == TmdbRankings.TRENDING) t.copy(rank = i + 1) else t }
             .filter { it.key !in used && need(it) }.take(count).also { picked -> used += picked.map { it.key } }
         val featured = pick(TmdbRankings.TRENDING, 5) { it.backdrop != null }
@@ -256,17 +299,17 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         return CatalogueHome(featured, sections + HomeSection("all", kindTitle, HomeStyle.POSTERS, emptyList()))
     }
 
-    private suspend fun buildMovieHome(lists: Map<String, List<RankedTitle>>): CatalogueHome {
+    private suspend fun buildMovieHome(lists: Map<String, List<RankedTitle>>, all: Boolean): CatalogueHome {
         val ids = lists.values.flatten().map { it.id }.distinct()
         val local = ids.chunked(500).flatMap { canonical.availableByIds(it) }.associate { card ->
             val t = card.title
             t.tmdbId to HomeTitle("movie:${t.tmdbId}", t.title, t.posterUrl, t.backdropUrl, t.year, t.rating, t.originalLanguage,
                 t.synopsis, movieId = card.movieId, quality = card.bestQuality)
         }
-        return arrange(lists, local, "New releases", "All movies")
+        return arrange(lists, local, "New releases", "All movies", if (all) ({ unavailable("movie", it) }) else null)
     }
 
-    private suspend fun buildShowHome(lists: Map<String, List<RankedTitle>>): CatalogueHome {
+    private suspend fun buildShowHome(lists: Map<String, List<RankedTitle>>, all: Boolean): CatalogueHome {
         val ranked = lists.values.flatten().distinctBy { it.id }.associateBy { it.id }
         val ids = ranked.keys.toList()
         val groups = ids.chunked(500).flatMap { graph.database.series().groupsForHints(it) }
@@ -290,7 +333,10 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
                 networkLogo = show.networkLogo, quality = group.bestQuality)
         }.toMap()
         if (checked.isNotEmpty()) runCatching { canonicalShows.putAll(checked) }
-        return arrange(lists, local, "Airing now", "All shows")
+        // Home titles come first in the lists: detail those (logo, status) before the rest.
+        val homeIds = lists.values.flatMap { it.take(30) }.map { it.id }.toSet()
+        detailHomeShows((known.values + checked).filter { it.validated && it.tmdbId in homeIds && it.tmdbId in groups })
+        return arrange(lists, local, "Airing now", "All shows", if (all) ({ unavailable("show", it) }) else null)
     }
 
     // ---- Search: ranked hits for the Movies/Shows search layout ------------------------------
@@ -441,7 +487,9 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         movieCategory.value = null
         seriesCategory.value = null
         vodSource.value = sourceId
+        cataloguePrefs.edit().putLong("source", sourceId ?: -1L).apply()
     }
+
 
     /**
      * Whether any films / series are on disk: null until the first answer. The tabs only claim
