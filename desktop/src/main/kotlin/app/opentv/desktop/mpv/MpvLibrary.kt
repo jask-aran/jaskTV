@@ -84,6 +84,13 @@ internal interface MpvLibrary : Library {
             val relative = listOf(
                 "libs/mpv/windows-x64/libmpv-2.dll",
                 "desktop/libs/mpv/windows-x64/libmpv-2.dll",
+                // Packaged layouts: appResourcesRootDir copies the whole libs/mpv tree, so each
+                // OS/arch gets its own subdirectory and the rest are simply absent.
+                "windows-x64/libmpv-2.dll",
+                "macos-arm64/libmpv.dylib",
+                "macos-x64/libmpv.dylib",
+                "linux-x64/libmpv.so",
+                "linux-arm64/libmpv.so",
                 "libmpv-2.dll",
                 "libmpv.so",
                 "libmpv.dylib",
@@ -92,6 +99,8 @@ internal interface MpvLibrary : Library {
                 add(File(System.getProperty("user.dir")))
                 // `jpackage` sets this to the launcher executable in a packaged application.
                 System.getProperty("jpackage.app-path")?.let { add(File(it).parentFile) }
+                // Compose Desktop sets this to the packaged `resources` directory.
+                System.getProperty("compose.application.resources.dir")?.let { add(File(it)) }
             }
 
             val knownPaths = (

@@ -36,7 +36,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
-import app.opentv.desktop.mpv.MpvPlayerEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import app.opentv.desktop.mpv.MpvPlayerEngineFactory
 import app.opentv.player.PlaybackRequest
 import app.opentv.player.PlaybackState
 import app.opentv.player.VideoScale
@@ -62,7 +66,8 @@ fun main() = application {
  */
 @Composable
 private fun DesktopShell() {
-    val engineResult = remember { runCatching { MpvPlayerEngine() } }
+    val engineScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
+    val engineResult = remember { runCatching { MpvPlayerEngineFactory().create(engineScope) } }
     val engine = engineResult.getOrNull()
     var url by remember { mutableStateOf(System.getenv("JASKTV_URL").orEmpty()) }
     val state = engine?.state?.collectAsState()?.value
@@ -129,7 +134,10 @@ private fun DesktopShell() {
         Box(Modifier.fillMaxSize()) {
             if (engine != null) {
                 DisposableEffect(engine) {
-                    onDispose { engine.release() }
+                    onDispose {
+                        engine.release()
+                        engineScope.cancel()
+                    }
                 }
                 engine.surface.Content(Modifier.fillMaxSize(), VideoScale.FIT, transparent = false)
             } else {
