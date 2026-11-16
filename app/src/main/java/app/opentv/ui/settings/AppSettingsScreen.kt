@@ -5,6 +5,7 @@
  */
 package app.opentv.ui.settings
 
+import app.opentv.core.get
 import app.opentv.ui.LocalLayoutClass
 import app.opentv.ui.LayoutClass
 import androidx.compose.foundation.clickable

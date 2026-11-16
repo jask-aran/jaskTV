@@ -5,6 +5,7 @@
  */
 package app.opentv.core
 
+import app.opentv.core.savedLanguageTag
 import android.content.Context
 import android.content.res.Configuration
 import java.util.Locale

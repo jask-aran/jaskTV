@@ -5,7 +5,6 @@
  */
 package app.opentv.core
 
-import android.content.Context
 import app.opentv.data.model.StremioAddon
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,10 +20,7 @@ import kotlinx.serialization.json.Json
  * ceremony that comes with it. Each setting is also mirrored into a [StateFlow] so Compose
  * recomposes the moment one changes.
  */
-class AppSettings private constructor(context: Context) {
-
-    private val prefs =
-        context.applicationContext.getSharedPreferences("opentv_settings", Context.MODE_PRIVATE)
+class AppSettings(private val prefs: Prefs) {
 
     private val addonJson = Json { ignoreUnknownKeys = true }
 
@@ -547,13 +543,6 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_RESIZE_MODE = "player_resize_mode"
         private const val KEY_LANGUAGE = "language_tag"
 
-        /**
-         * Reads the saved language tag straight from prefs, for use in attachBaseContext before
-         * the settings singleton (or anything else) is initialised. Blank = follow the device.
-         */
-        fun savedLanguageTag(context: Context): String =
-            context.getSharedPreferences("opentv_settings", Context.MODE_PRIVATE)
-                .getString(KEY_LANGUAGE, "").orEmpty()
         private const val KEY_REC_TARGET = "recording_target"
         private const val KEY_SMB_HOST = "smb_host"
         private const val KEY_SMB_SHARE = "smb_share"
@@ -573,11 +562,14 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_REC_AUTOSWITCH = "rec_auto_switch"
         private const val KEY_LIVE_PAUSE = "live_pause_enabled"
 
+        const val PREFS_NAME = "opentv_settings"
+        const val KEY_LANGUAGE_TAG = "language_tag"
+
         @Volatile private var instance: AppSettings? = null
 
-        fun get(context: Context): AppSettings =
-            instance ?: synchronized(this) {
-                instance ?: AppSettings(context).also { instance = it }
-            }
+        /** The process-wide settings, backed by [openPrefs]. */
+        fun shared(): AppSettings = instance ?: synchronized(this) {
+            instance ?: AppSettings(openPrefs(PREFS_NAME)).also { instance = it }
+        }
     }
 }

@@ -1,5 +1,6 @@
 package app.opentv.widget
 
+import app.opentv.core.get
 import android.app.Application
 import android.content.Context
 import androidx.room.Room

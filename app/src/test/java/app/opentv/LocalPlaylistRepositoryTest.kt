@@ -1,5 +1,6 @@
 package app.opentv.data.repo
 
+import app.opentv.core.get
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider

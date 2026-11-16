@@ -1,8 +1,3 @@
-/*
- * This file is part of OpenTV.
- * Copyright (C) 2026 The OpenTV Contributors
- * Licensed under the GNU General Public License v3.0 or later.
- */
 package app.opentv.data.db
 
 import android.content.Context
@@ -38,85 +33,13 @@ import app.opentv.data.model.Source
 import app.opentv.data.model.SourceKind
 import app.opentv.data.model.StreamKind
 import app.opentv.data.parser.MovieBrowseKey
+import androidx.room.RoomDatabase.JournalMode
 
-class Converters {
-    @TypeConverter fun sourceKindToString(value: SourceKind): String = value.name
-
-    @TypeConverter fun stringToSourceKind(value: String): SourceKind =
-        runCatching { SourceKind.valueOf(value) }.getOrDefault(SourceKind.M3U)
-
-    @TypeConverter fun liveStreamFormatToString(value: LiveStreamFormat): String = value.name
-
-    @TypeConverter fun stringToLiveStreamFormat(value: String): LiveStreamFormat =
-        runCatching { LiveStreamFormat.valueOf(value) }.getOrDefault(LiveStreamFormat.HLS)
-
-    @TypeConverter fun streamKindToString(value: StreamKind): String = value.name
-
-    @TypeConverter fun stringToStreamKind(value: String): StreamKind =
-        runCatching { StreamKind.valueOf(value) }.getOrDefault(StreamKind.LIVE)
-
-    @TypeConverter fun recordingStatusToString(value: RecordingStatus): String = value.name
-
-    @TypeConverter fun stringToRecordingStatus(value: String): RecordingStatus =
-        runCatching { RecordingStatus.valueOf(value) }.getOrDefault(RecordingStatus.FAILED)
-}
-
-@Database(
-    entities = [
-        app.opentv.livetv.SavedTvChannel::class,
-        app.opentv.catalogue.MovieInventorySnapshot::class,
-        app.opentv.catalogue.MovieInventoryAsset::class,
-        app.opentv.catalogue.CanonicalMovie::class,
-        app.opentv.catalogue.CanonicalShow::class,
-        app.opentv.catalogue.MovieIdentityMatch::class,
-        Source::class,
-        Category::class,
-        Channel::class,
-        EpgFeed::class,
-        EpgChannelAlias::class,
-        Programme::class,
-        Movie::class,
-        Series::class,
-        Episode::class,
-        PlaybackPosition::class,
-        Profile::class,
-        Recording::class,
-        SeriesRule::class,
-        Reminder::class,
-        MovieFts::class,
-        SeriesFts::class,
-        Download::class,
-        UserCollection::class,
-        CollectionEntry::class,
-        ChannelAliasOverride::class,
-    ],
-    version = 23,
-    exportSchema = true,
-)
-@TypeConverters(Converters::class)
-abstract class OpenTvDatabase : RoomDatabase() {
-    abstract fun savedTv(): app.opentv.livetv.SavedTvDao
-    abstract fun canonicalMovies(): app.opentv.catalogue.CanonicalMovieDao
-    abstract fun canonicalShows(): app.opentv.catalogue.CanonicalShowDao
-    abstract fun sources(): SourceDao
-    abstract fun categories(): CategoryDao
-    abstract fun channels(): ChannelDao
-    abstract fun epgFeeds(): EpgFeedDao
-    abstract fun epgAliases(): EpgChannelAliasDao
-    abstract fun programmes(): ProgrammeDao
-    abstract fun movies(): MovieDao
-    abstract fun series(): SeriesDao
-    abstract fun episodes(): EpisodeDao
-    abstract fun positions(): PlaybackPositionDao
-    abstract fun profiles(): ProfileDao
-    abstract fun recordings(): RecordingDao
-    abstract fun seriesRules(): SeriesRuleDao
-    abstract fun reminders(): ReminderDao
-    abstract fun downloads(): DownloadDao
-    abstract fun collections(): CollectionDao
-    abstract fun channelAliases(): ChannelAliasDao
-
-    companion object {
+/**
+ * Android database setup: the file under the app's database directory and every migration from
+ * v2. Desktop opens a copy of an already-migrated database, so migrations live here only.
+ */
+object OpenTvDatabaseAndroid {
         /**
          * v2 → v3: profiles. Adds the profiles table with a default profile (id 1, "Me"), and
          * re-keys resume positions by (profileId, mediaKey) — existing positions all become the
@@ -329,14 +252,14 @@ abstract class OpenTvDatabase : RoomDatabase() {
             }
         }
 
-        internal val MIGRATION_13_14 = object : Migration(13, 14) {
+        val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `sources` ADD COLUMN `localPlaylistFileName` TEXT")
                 db.execSQL("ALTER TABLE `sources` ADD COLUMN `localPlaylistDisplayName` TEXT")
             }
         }
 
-        internal val MIGRATION_14_15 = object : Migration(14, 15) {
+        val MIGRATION_14_15 = object : Migration(14, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `movies` ADD COLUMN `browseGroupKey` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `movies` ADD COLUMN `browseQualityRank` INTEGER NOT NULL DEFAULT 0")
@@ -377,7 +300,7 @@ abstract class OpenTvDatabase : RoomDatabase() {
         }
 
         /** v15 → v16: additive saved collections and manual canonical channel mappings. */
-        internal val MIGRATION_15_16 = object : Migration(15, 16) {
+        val MIGRATION_15_16 = object : Migration(15, 16) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `user_collections` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `createdMillis` INTEGER NOT NULL)")
                 db.execSQL("CREATE TABLE IF NOT EXISTS `collection_entries` (`collectionId` INTEGER NOT NULL, `kind` TEXT NOT NULL, `sourceId` INTEGER NOT NULL, `itemKey` TEXT NOT NULL, PRIMARY KEY(`collectionId`, `kind`, `sourceId`, `itemKey`))")
@@ -386,14 +309,14 @@ abstract class OpenTvDatabase : RoomDatabase() {
         }
 
         /** v16 → v17: the existing personal collections are owned by default profile 1. */
-        internal val MIGRATION_16_17 = object : Migration(16, 17) {
+        val MIGRATION_16_17 = object : Migration(16, 17) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `user_collections` ADD COLUMN `profileId` INTEGER NOT NULL DEFAULT 1")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_user_collections_profileId` ON `user_collections` (`profileId`)")
             }
         }
 
-        internal val MIGRATION_17_18 = object : Migration(17, 18) {
+        val MIGRATION_17_18 = object : Migration(17, 18) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `canonical_movies` (`tmdbId` INTEGER NOT NULL, `title` TEXT COLLATE NOCASE NOT NULL, `originalTitle` TEXT NOT NULL, `year` INTEGER, `originalLanguage` TEXT, `posterUrl` TEXT, `backdropUrl` TEXT, `synopsis` TEXT, `genres` TEXT, `rating` REAL, `runtimeMinutes` INTEGER, `updatedMillis` INTEGER NOT NULL, PRIMARY KEY(`tmdbId`))")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_canonical_movies_title` ON `canonical_movies` (`title`)")
@@ -404,28 +327,28 @@ abstract class OpenTvDatabase : RoomDatabase() {
             }
         }
 
-        internal val MIGRATION_18_19 = object : Migration(18, 19) {
+        val MIGRATION_18_19 = object : Migration(18, 19) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `movie_inventory_snapshots` (`sourceId` INTEGER NOT NULL, `generation` TEXT NOT NULL, PRIMARY KEY(`sourceId`))")
                 db.execSQL("CREATE TABLE IF NOT EXISTS `movie_inventory_assets` (`sourceId` INTEGER NOT NULL, `generation` TEXT NOT NULL, `streamId` TEXT NOT NULL, PRIMARY KEY(`sourceId`, `generation`, `streamId`))")
             }
         }
 
-        internal val MIGRATION_19_20 = object : Migration(19, 20) {
+        val MIGRATION_19_20 = object : Migration(19, 20) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `saved_tv_channels` (`profileId` INTEGER NOT NULL, `identity` TEXT NOT NULL, `label` TEXT NOT NULL, `preferredSourceId` INTEGER, `preferredStreamId` TEXT, `sortIndex` INTEGER NOT NULL, PRIMARY KEY(`profileId`, `identity`))")
             }
         }
 
         /** Additive: TMDB TV metadata per provider hint (see CanonicalShow). */
-        internal val MIGRATION_20_21 = object : Migration(20, 21) {
+        val MIGRATION_20_21 = object : Migration(20, 21) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `canonical_shows` (`tmdbId` INTEGER NOT NULL, `validated` INTEGER NOT NULL, `title` TEXT COLLATE NOCASE, `originalTitle` TEXT, `year` INTEGER, `originalLanguage` TEXT, `posterUrl` TEXT, `backdropUrl` TEXT, `synopsis` TEXT, `genres` TEXT, `rating` REAL, `seasonCount` INTEGER, `checkedMillis` INTEGER NOT NULL, PRIMARY KEY(`tmdbId`))")
             }
         }
 
         /** Additive: TMDB network and status for canonical shows. */
-        internal val MIGRATION_21_22 = object : Migration(21, 22) {
+        val MIGRATION_21_22 = object : Migration(21, 22) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `canonical_shows` ADD COLUMN `network` TEXT")
                 db.execSQL("ALTER TABLE `canonical_shows` ADD COLUMN `status` TEXT")
@@ -433,7 +356,7 @@ abstract class OpenTvDatabase : RoomDatabase() {
         }
 
         /** Additive: TMDB network logo for canonical shows (rows re-detailed once by CanonicalShowWorker). */
-        internal val MIGRATION_22_23 = object : Migration(22, 23) {
+        val MIGRATION_22_23 = object : Migration(22, 23) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `canonical_shows` ADD COLUMN `networkLogo` TEXT")
             }
@@ -453,4 +376,6 @@ abstract class OpenTvDatabase : RoomDatabase() {
                 .fallbackToDestructiveMigrationFrom(1)
                 .build()
     }
-}
+
+/** Keeps the existing call sites (`OpenTvDatabase.build(context)`, `OpenTvDatabase.MIGRATION_x_y`). */
+fun OpenTvDatabase.Companion.build(context: Context): OpenTvDatabase = OpenTvDatabaseAndroid.build(context)

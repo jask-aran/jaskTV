@@ -5,7 +5,7 @@
  */
 package app.opentv.data.remote
 
-import android.util.Log
+import app.opentv.core.Log
 import app.opentv.data.model.StremioStream
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement

@@ -1,5 +1,6 @@
 package app.opentv.catalogue
 
+import app.opentv.core.get
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import app.opentv.core.AppSettings

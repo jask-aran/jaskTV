@@ -25,7 +25,7 @@ class MyTvRepository(context: Context) {
 
     suspend fun resolve(saved: SavedTvChannel): Entry = withContext(Dispatchers.IO) {
         val preferred = if (saved.preferredSourceId != null && saved.preferredStreamId != null)
-            db.channels().byProviderKey(saved.preferredSourceId, saved.preferredStreamId) else null
+            db.channels().byProviderKey(saved.preferredSourceId!!, saved.preferredStreamId!!) else null
         val mapped = if (saved.identity.startsWith("iptv:"))
             db.channels().myTvMappedVariants(saved.identity.removePrefix("iptv:")) else emptyList()
         val canonical = saved.identity.takeIf { it.startsWith("iptv:") }

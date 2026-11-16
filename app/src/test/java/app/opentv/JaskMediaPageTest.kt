@@ -46,14 +46,14 @@ class JaskMediaPageTest {
 
     /** The hand-written v20→v21 SQL must create exactly the table Room expects. */
     @Test fun migration21MatchesRoomSchema() {
-        val schema = java.io.File("schemas/app.opentv.data.db.OpenTvDatabase/21.json").readText()
+        val schema = java.io.File("../shared/schemas/app.opentv.data.db.OpenTvDatabase/21.json").readText()
         val expected = Regex(""""tableName": "canonical_shows",\s*"createSql": "([^"]+)"""").find(schema)!!.groupValues[1]
             .replace("\\u0060", "`").replace("${'$'}{TABLE_NAME}", "canonical_shows")
         val statements = mutableListOf<String>()
         val db = java.lang.reflect.Proxy.newProxyInstance(javaClass.classLoader, arrayOf(androidx.sqlite.db.SupportSQLiteDatabase::class.java)) { _, method, args ->
             if (method.name == "execSQL") statements += args[0] as String; null
         } as androidx.sqlite.db.SupportSQLiteDatabase
-        OpenTvDatabase.MIGRATION_20_21.migrate(db)
+        app.opentv.data.db.OpenTvDatabaseAndroid.MIGRATION_20_21.migrate(db)
         assertEquals(listOf(expected), statements)
     }
 
@@ -62,8 +62,8 @@ class JaskMediaPageTest {
         val db = java.lang.reflect.Proxy.newProxyInstance(javaClass.classLoader, arrayOf(androidx.sqlite.db.SupportSQLiteDatabase::class.java)) { _, method, args ->
             if (method.name == "execSQL") statements += args[0] as String; null
         } as androidx.sqlite.db.SupportSQLiteDatabase
-        OpenTvDatabase.MIGRATION_21_22.migrate(db)
-        val schema = java.io.File("schemas/app.opentv.data.db.OpenTvDatabase/22.json").readText()
+        app.opentv.data.db.OpenTvDatabaseAndroid.MIGRATION_21_22.migrate(db)
+        val schema = java.io.File("../shared/schemas/app.opentv.data.db.OpenTvDatabase/22.json").readText()
         val created = Regex(""""tableName": "canonical_shows",\s*"createSql": "([^"]+)"""").find(schema)!!.groupValues[1]
         // Room's v22 table = the v21 table plus exactly these two nullable TEXT columns at the end.
         assertTrue(created.endsWith("`checkedMillis` INTEGER NOT NULL, `network` TEXT, `status` TEXT, PRIMARY KEY(`tmdbId`))"))
@@ -75,8 +75,8 @@ class JaskMediaPageTest {
         val db = java.lang.reflect.Proxy.newProxyInstance(javaClass.classLoader, arrayOf(androidx.sqlite.db.SupportSQLiteDatabase::class.java)) { _, method, args ->
             if (method.name == "execSQL") statements += args[0] as String; null
         } as androidx.sqlite.db.SupportSQLiteDatabase
-        OpenTvDatabase.MIGRATION_22_23.migrate(db)
-        val schema = java.io.File("schemas/app.opentv.data.db.OpenTvDatabase/23.json").readText()
+        app.opentv.data.db.OpenTvDatabaseAndroid.MIGRATION_22_23.migrate(db)
+        val schema = java.io.File("../shared/schemas/app.opentv.data.db.OpenTvDatabase/23.json").readText()
         val created = Regex(""""tableName": "canonical_shows",\s*"createSql": "([^"]+)"""").find(schema)!!.groupValues[1]
         assertTrue(created.endsWith("`network` TEXT, `status` TEXT, `networkLogo` TEXT, PRIMARY KEY(`tmdbId`))"))
         assertEquals(listOf("ALTER TABLE `canonical_shows` ADD COLUMN `networkLogo` TEXT"), statements)

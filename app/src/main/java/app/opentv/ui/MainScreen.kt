@@ -5,6 +5,7 @@
  */
 package app.opentv.ui
 
+import app.opentv.core.get
 import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Tune
 

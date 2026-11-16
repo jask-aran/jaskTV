@@ -1,5 +1,6 @@
 package app.opentv.data.db
 
+import app.opentv.data.db.build
 import android.content.ContentValues
 import android.content.Context
 import androidx.room.Room
@@ -100,7 +101,7 @@ class DatabaseFoundationTest {
         if (fromVersion == 14) {
             // Build the intermediate version using the actual additive migration, not a guessed
             // fixture. Opening it below exercises the separately registered 14 -> 15 path.
-            OpenTvDatabase.MIGRATION_13_14.migrate(old)
+            app.opentv.data.db.OpenTvDatabaseAndroid.MIGRATION_13_14.migrate(old)
             old.execSQL("UPDATE sources SET localPlaylistFileName = 'playlist-test.m3u', localPlaylistDisplayName = 'My list.m3u'")
             old.version = 14
         }

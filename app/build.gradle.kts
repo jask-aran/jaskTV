@@ -3,7 +3,6 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.ksp)
 }
 
 android {
@@ -87,18 +86,17 @@ android {
             isReturnDefaultValues = true
         }
     }
-    sourceSets.getByName("test").resources.srcDir("schemas")
+    sourceSets.getByName("test").resources.srcDir("../shared/schemas")
 }
 
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
-}
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
 
     // The platform-neutral player contract, shared with the desktop target.
     implementation(project(":player-core"))
+    // Data model, database, catalogue and settings shared with the desktop app.
+    implementation(project(":shared"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -130,7 +128,6 @@ dependencies {
     implementation(libs.room.paging)
     implementation(libs.androidx.paging.runtime)
     implementation(libs.androidx.paging.compose)
-    ksp(libs.room.compiler)
 
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)

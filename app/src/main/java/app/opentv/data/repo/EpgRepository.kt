@@ -295,7 +295,7 @@ class EpgRepository(
     private suspend fun openFeedStream(feed: EpgFeed): InputStream {
         val raw: InputStream = when {
             feed.providerSourceId != null -> {
-                val source: Source = sourceDao.byId(feed.providerSourceId)
+                val source: Source = sourceDao.byId(feed.providerSourceId!!)
                     ?: throw IllegalStateException("Provider for this guide no longer exists.")
                 check(!source.isLocalPlaylist || !source.epgUrl.isNullOrBlank()) { "Local playlist has no guide URL" }
                 if (source.isLocalPlaylist) {
@@ -311,7 +311,7 @@ class EpgRepository(
                 } else api.openEpgStream(source)
             }
             feed.url != null -> {
-                val response = http.newCall(Request.Builder().url(feed.url).build()).execute()
+                val response = http.newCall(Request.Builder().url(feed.url!!).build()).execute()
                 if (!response.isSuccessful) {
                     response.close()
                     throw IllegalStateException("Guide download failed (HTTP ${response.code}).")
