@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- jaskTV launcher background: Conduit's waves dither in blue, as a bitmap (a vector with this many shapes failed to load on device). -->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android" android:src="@drawable/ic_launcher_background_art" android:filter="false" />

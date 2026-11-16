@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon glyph. Built from the Druk wordmark outlines and Conduit's waves dither. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="41.717" android:translateY="27.000" android:scaleX="0.05794" android:scaleY="0.05794">
+        <group android:translateX="33" android:translateY="-56">
+            <path android:fillColor="#FFF4F4F4" android:pathData="M-6 820Q15 820 21.0 814.0Q27 808 27 785V262H391V824Q391 873 380.0 904.5Q369 936 350.5 954.5Q332 973 308.5 980.5Q285 988 260 988H-33V820Z"/>
+            <path android:fillColor="#FFFFFFFF" android:pathData="M391 231H27V56H391Z"/>
+        </group>
+    </group>
+</vector>
