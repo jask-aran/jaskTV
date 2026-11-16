@@ -5,6 +5,7 @@
  */
 package app.opentv.ui.vod
 
+import app.opentv.ui.jaskWheelScroll
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
@@ -123,6 +124,7 @@ fun MovieDetailScreen(
     var addonStreams by remember(movieId) { mutableStateOf<List<StremioStream>?>(null) }
     var addonLoading by remember(movieId) { mutableStateOf(false) }
     var showCollectionPicker by remember(movieId) { mutableStateOf(false) }
+    val wideLayout = LocalLayoutClass.current.isWide
 
     LaunchedEffect(movieId) {
         versions = viewModel.canonicalVersions(movieId)
@@ -131,7 +133,9 @@ fun MovieDetailScreen(
         movie = loaded
         if (loaded != null) {
             resumeExists = viewModel.resumePosition("movie:${loaded.id}")?.let { !it.isFinished } == true
-            moreLike = if (versions.isEmpty()) viewModel.moreLikeThis(loaded) else emptyList()
+            // Wide jaskTV pages show "More like this" for every movie; the phone page doesn't show it.
+            moreLike = if (versions.isEmpty() || wideLayout) viewModel.moreLikeThis(loaded)
+                .filter { it.displayTitle != loaded.displayTitle }.distinctBy { it.displayTitle to it.year } else emptyList()
         }
     }
 
@@ -164,11 +168,17 @@ fun MovieDetailScreen(
         val quality = { v: Movie -> app.opentv.data.parser.MovieBrowseKey.from(versionNames[v.id].orEmpty(), v.year).qualityLabel }
         val providerName = { v: Movie -> providers.firstOrNull { it.id == v.sourceId }?.name ?: unknownSource }
         var sourceSheet by remember { mutableStateOf(false) }
+        val selectVersion = { index: Int ->
+            val version = pool[index]
+            movie = version
+            scope.launch { resumeExists = viewModel.resumePosition("movie:${version.id}")?.let { !it.isFinished } == true }
+            Unit
+        }
         val list = androidx.compose.foundation.lazy.rememberLazyListState()
         var heroHeight by remember { mutableStateOf(0) }
         val wideHero = app.opentv.ui.LocalLayoutClass.current != app.opentv.ui.LayoutClass.PHONE
         app.opentv.ui.JaskSurfaceHost(Modifier.fillMaxSize(), background = { Box(Modifier.fillMaxSize().jaskPageBackground(tint, list, heroHeight)) {
-            LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 32.dp +
+            LazyColumn(Modifier.fillMaxSize().jaskWheelScroll(list), state = list, contentPadding = PaddingValues(bottom = 32.dp +
                 androidx.compose.foundation.layout.WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())) {
                 item(key = "hero") {
                     JaskHero(m.displayTitle, m.backdropUrl, m.posterUrl, HeroFacts(rating = m.rating, quality = quality(m).takeIf { it.length <= 6 },
@@ -193,9 +203,24 @@ fun MovieDetailScreen(
                         }
                     }
                 }
-                if (!wideHero) item(key = "synopsis") { JaskSynopsis(m.plot) }
-                item(key = "credits") { JaskCredits(m.genre, m.cast ?: credits?.first, m.director ?: credits?.second) }
-                item(key = "review-scores") { ExternalReviews(movie = m) }
+                if (wideHero) {
+                    item(key = "wide-body") {
+                        JaskMovieBody(pool.map { v -> SourceOption(providerName(v), listOf(quality(v).ifBlank { qualityUnknown }, versionNames[v.id].orEmpty())
+                            .filter(String::isNotBlank).joinToString(" · ")) }, selected, { selectVersion(it) },
+                            genre = m.genre, cast = m.cast ?: credits?.first, director = m.director ?: credits?.second, onOpenPerson = onOpenPerson) {
+                            ExternalReviews(movie = m)
+                        }
+                    }
+                    if (moreLike.isNotEmpty()) item(key = "more") {
+                        JaskShelf(stringResource(R.string.vod_more_like_this), moreLike, { it.id }) { v ->
+                            JaskPosterCard(v.displayTitle, v.posterUrl, PosterFacts(rating = v.rating)) { onOpenMovie(v) }
+                        }
+                    }
+                } else {
+                    item(key = "synopsis") { JaskSynopsis(m.plot) }
+                    item(key = "credits") { JaskCredits(m.genre, m.cast ?: credits?.first, m.director ?: credits?.second) }
+                    item(key = "review-scores") { ExternalReviews(movie = m) }
+                }
             }
         } }) {
             app.opentv.ui.JaskBarScrim(Modifier.align(Alignment.BottomCenter), top = false)
@@ -203,11 +228,7 @@ fun MovieDetailScreen(
                 val q = quality(version)
                 SourceOption(providerName(version), listOf(if (q.isBlank()) qualityUnknown else "$q (inferred)", versionNames[version.id].orEmpty())
                     .filter(String::isNotBlank).joinToString(" · "))
-            }, selected, { index ->
-                val version = pool[index]
-                movie = version
-                scope.launch { resumeExists = viewModel.resumePosition("movie:${version.id}")?.let { !it.isFinished } == true }
-            }) { sourceSheet = false }
+            }, selected, { selectVersion(it) }) { sourceSheet = false }
         }
     } else LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
@@ -475,7 +496,7 @@ fun SeriesDetailScreen(
         var heroHeight by remember { mutableStateOf(0) }
         val wideHero = app.opentv.ui.LocalLayoutClass.current != app.opentv.ui.LayoutClass.PHONE
         app.opentv.ui.JaskSurfaceHost(Modifier.fillMaxSize(), background = { Box(Modifier.fillMaxSize().jaskPageBackground(tint, list, heroHeight)) {
-            LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 32.dp +
+            LazyColumn(Modifier.fillMaxSize().jaskWheelScroll(list), state = list, contentPadding = PaddingValues(bottom = 32.dp +
                 androidx.compose.foundation.layout.WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())) {
                 item(key = "hero") {
                     JaskHero(title, s.backdropUrl, s.posterUrl, HeroFacts(rating = s.rating, networkLogo = tmdbShow?.networkLogo, network = tmdbShow?.network,
@@ -526,6 +547,11 @@ fun SeriesDetailScreen(
                             }
                         }
                     } else items(seasons[shownSeason].orEmpty(), key = { it.id }) { ep -> episodeCell(ep, Modifier, false) }
+                }
+                if (wideHero && moreLike.isNotEmpty()) item(key = "more") {
+                    JaskShelf(stringResource(R.string.vod_more_like_this), moreLike, { it.id }) { v ->
+                        JaskPosterCard(v.displayTitle, v.posterUrl, PosterFacts(rating = v.rating)) { onOpenSeries(v) }
+                    }
                 }
             }
         } }) {

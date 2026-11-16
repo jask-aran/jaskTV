@@ -1,5 +1,6 @@
 package app.opentv.ui.vod
 
+import app.opentv.ui.jaskWheelScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -168,7 +169,7 @@ internal fun <T : Any> PagedVodGrid(
         LazyVerticalGrid(
             // Three posters across a phone, ~120dp posters on tablets: browse density over hero size.
             columns = if (phone) GridCells.Fixed(3) else GridCells.Adaptive(if (LocalLayoutClass.current == LayoutClass.TV) 140.dp else 150.dp),
-            state = state, modifier = Modifier.weight(1f).fillMaxWidth(),
+            state = state, modifier = Modifier.weight(1f).fillMaxWidth().jaskWheelScroll(state),
             // A home header starts full-bleed under the floating header.
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp,
                 top = if (header != null) 0.dp else app.opentv.ui.LocalJaskContentPadding.current.calculateTopPadding() + 8.dp,

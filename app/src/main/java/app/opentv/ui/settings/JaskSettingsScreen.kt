@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -43,6 +44,11 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.LiveTv
+import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -101,6 +107,7 @@ fun JaskSettingsScreen(
     onOpenRecordings: () -> Unit,
     onOpenAbout: () -> Unit,
     onBack: () -> Unit,
+    onOpenChannels: () -> Unit = {},
 ) = JaskTheme {
     val context = LocalContext.current
     val settings = remember { AppSettings.get(context) }
@@ -112,6 +119,8 @@ fun JaskSettingsScreen(
     val options by vod.movieOptions.collectAsState()
     val languages by vod.catalogueLanguages.collectAsState()
     val glass by settings.glassMode.collectAsState()
+    val uiScale by settings.uiScale.collectAsState()
+    val wide = app.opentv.ui.LocalLayoutClass.current.isWide
     val live by settings.liveEnabled.collectAsState()
     val movies by settings.moviesEnabled.collectAsState()
     val shows by settings.seriesEnabled.collectAsState()
@@ -119,6 +128,11 @@ fun JaskSettingsScreen(
     val resume by settings.resumeLastChannel.collectAsState()
     val livePause by settings.livePauseEnabled.collectAsState()
     val tmdb by settings.tmdbApiKey.collectAsState()
+    val omdb by settings.omdbApiKey.collectAsState()
+    val addons by settings.stremioAddons.collectAsState()
+    val language by settings.languageTag.collectAsState()
+    // Which sheet is open: "tmdb", "omdb", "language", or null.
+    var sheet by remember { mutableStateOf<String?>(null) }
     val active = people.firstOrNull { it.id == activeId }
     var renaming by remember { mutableStateOf(false) }
 
@@ -206,6 +220,16 @@ fun JaskSettingsScreen(
                         "frosted" to stringResource(R.string.jask_glass_frosted), "solid" to stringResource(R.string.jask_glass_solid)),
                         { it == glass }) { settings.setGlassMode(it) }
                     Spacer(Modifier.height(6.dp))
+                    Divider()
+                    Link(Icons.Outlined.Language, stringResource(R.string.jask_settings_language),
+                        OpenTvLanguages.firstOrNull { it.first == language }?.second ?: stringResource(R.string.settings_language_system)) { sheet = "language" }
+                    if (wide) {
+                        Divider()
+                        Label(stringResource(R.string.jask_settings_ui_scale))
+                        Chips(listOf("auto" to stringResource(R.string.jask_glass_auto), "1.0" to "100%", "1.15" to "115%",
+                            "1.3" to "130%", "1.5" to "150%"), { it == uiScale }) { settings.setUiScale(it) }
+                        Spacer(Modifier.height(6.dp))
+                    }
                 }
             }
             item {
@@ -233,7 +257,19 @@ fun JaskSettingsScreen(
                     Divider()
                     Link(Icons.Outlined.CalendarViewDay, stringResource(R.string.settings_guide_title), stringResource(R.string.settings_guide_subtitle), onOpenGuide)
                     Divider()
-                    Link(Icons.Outlined.Extension, stringResource(R.string.settings_addons_title), stringResource(R.string.settings_addons_subtitle), onOpenAddons)
+                    Link(Icons.Outlined.LiveTv, stringResource(R.string.common_channels), stringResource(R.string.settings_channels_subtitle), onOpenChannels)
+                }
+            }
+            item {
+                Group(stringResource(R.string.jask_settings_services)) {
+                    Link(Icons.Outlined.Movie, stringResource(R.string.jask_tmdb_title),
+                        stringResource(if (tmdb.isBlank()) R.string.jask_tmdb_off else R.string.jask_tmdb_on)) { sheet = "tmdb" }
+                    Divider()
+                    Link(Icons.Outlined.StarOutline, stringResource(R.string.jask_omdb_title),
+                        stringResource(if (omdb.isBlank()) R.string.jask_omdb_off else R.string.jask_omdb_on)) { sheet = "omdb" }
+                    Divider()
+                    Link(Icons.Outlined.Extension, stringResource(R.string.settings_addons_title),
+                        if (addons.isEmpty()) stringResource(R.string.settings_addons_subtitle) else "${addons.size} installed", onOpenAddons)
                     Divider()
                     Link(Icons.Outlined.PhoneAndroid, stringResource(R.string.settings_webmanager_title), stringResource(R.string.settings_webmanager_subtitle), onOpenWebManager)
                 }
@@ -241,7 +277,7 @@ fun JaskSettingsScreen(
             item {
                 Group(stringResource(R.string.jask_settings_more)) {
                     Link(Icons.Outlined.Palette, stringResource(R.string.settings_display_title),
-                        if (tmdb.isBlank()) stringResource(R.string.jask_settings_tmdb_missing) else stringResource(R.string.settings_display_subtitle), onOpenDisplay)
+                        stringResource(R.string.jask_display_more), onOpenDisplay)
                     Divider()
                     Link(Icons.Outlined.Storage, stringResource(R.string.settings_recording_title), stringResource(R.string.settings_recording_subtitle), onOpenRecordings)
                     Divider()
@@ -254,6 +290,21 @@ fun JaskSettingsScreen(
         }
     }) {
         app.opentv.ui.JaskBarScrim(Modifier.align(Alignment.TopCenter), top = true)
+        when (sheet) {
+            "tmdb" -> KeySheet(stringResource(R.string.jask_tmdb_title), stringResource(R.string.settings_tmdb_note), tmdb,
+                { settings.setTmdbApiKey(it) }) { sheet = null }
+            "omdb" -> KeySheet(stringResource(R.string.jask_omdb_title), stringResource(R.string.jask_omdb_note), omdb,
+                { settings.setOmdbApiKey(it) }) { sheet = null }
+            "language" -> JaskSheet({ sheet = null }) {
+                LazyColumn(Modifier.heightIn(max = 520.dp)) {
+                    item { LanguageRow(stringResource(R.string.settings_language_system), language.isBlank()) { sheet = null; changeLanguage(context, settings, "") } }
+                    items(OpenTvLanguages.size) { i ->
+                        val (tag, name) = OpenTvLanguages[i]
+                        LanguageRow(name, language == tag) { sheet = null; changeLanguage(context, settings, tag) }
+                    }
+                }
+            }
+        }
         if (renaming && active != null) {
             var name by remember { mutableStateOf(active.name) }
             JaskSheet({ renaming = false }) {
@@ -347,5 +398,35 @@ private fun Avatar(name: String, size: androidx.compose.ui.unit.Dp, selected: Bo
         contentAlignment = Alignment.Center) {
         Text(name.trim().take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold,
             style = if (size > 50.dp) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun LanguageRow(name: String, on: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(name, color = Ink, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        if (on) Icon(Icons.Filled.Check, null, tint = Ink)
+    }
+}
+
+/** Edits one service's API key in place. Keys stay on this device; the field is masked. */
+@Composable
+private fun KeySheet(title: String, note: String, saved: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var field by remember(saved) { mutableStateOf(saved) }
+    JaskSheet(onDismiss) {
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+            Text(title, color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(note, color = Dim, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(field, { field = it.trim() }, singleLine = true, label = { Text(stringResource(R.string.jask_key_label)) },
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                if (saved.isNotBlank()) TextButton(onClick = { onSave(""); onDismiss() }) { Text(stringResource(R.string.jask_key_remove)) }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(onClick = { onSave(field); onDismiss() }, enabled = field.isNotBlank()) { Text(stringResource(R.string.common_save)) }
+            }
+        }
     }
 }

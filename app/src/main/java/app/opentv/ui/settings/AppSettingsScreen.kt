@@ -316,7 +316,7 @@ private fun OmdbKeySection(settings: AppSettings) {
  * both the stored language tag and the resource qualifier (values-<tag>), so adding a language is
  * just a new `values-xx/strings.xml` plus a line here.
  */
-private val OpenTvLanguages: List<Pair<String, String>> = listOf(
+internal val OpenTvLanguages: List<Pair<String, String>> = listOf(
     "en" to "English",
     "es" to "Español",
     "fr" to "Français",
@@ -351,7 +351,7 @@ private val OpenTvLanguages: List<Pair<String, String>> = listOf(
 )
 
 /** Persist the chosen language and recreate the activity so the whole UI reloads translated. */
-private fun changeLanguage(context: Context, settings: AppSettings, tag: String) {
+internal fun changeLanguage(context: Context, settings: AppSettings, tag: String) {
     if (settings.languageTag.value == tag) return
     settings.setLanguageTag(tag)
     context.findActivity()?.recreate()

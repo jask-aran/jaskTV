@@ -1,5 +1,7 @@
 package app.opentv.ui.vod
 
+import androidx.compose.ui.draw.drawWithContent
+import app.opentv.ui.jaskFocusLift
 import app.opentv.ui.jaskArtSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -210,7 +212,8 @@ internal fun JaskPosterCard(title: String, poster: String?, facts: PosterFacts, 
     val shape = RoundedCornerShape(8.dp)
     // Top padding leaves room for the overhanging badges inside the card's own bounds, so lazy
     // lists never clip them; the sideways overhang falls inside the grid spacing.
-    Column(Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }.clickable(onClick = onClick)
+    Column(Modifier.fillMaxWidth().jaskFocusLift().onFocusChanged { focused = it.isFocused }
+        .clickable(interactionSource = null, indication = null, onClick = onClick)
         .padding(start = 2.dp, end = 2.dp, bottom = 2.dp, top = PosterBadgeOverhang + 1.dp)) {
         PosterArt(poster, facts, Modifier.fillMaxWidth().aspectRatio(2f / 3f), shape, focused)
         Text(title, color = if (facts.noSource) Color(0xFFA9A49F) else Color(0xFFF6F3EF), style = MaterialTheme.typography.labelLarge,
@@ -231,7 +234,7 @@ internal fun PosterArt(poster: String?, facts: PosterFacts, modifier: Modifier, 
     Box(modifier.then(Modifier.jaskArtSource(art))) {
     androidx.compose.runtime.CompositionLocalProvider(app.opentv.ui.LocalJaskBackdrop provides art) {
         Box(Modifier.matchParentSize().clip(shape).background(Color(0xFF282522))
-            .then(if (focused) Modifier.border(3.dp, JaskAccent, shape) else Modifier)) {
+            .then(if (focused) Modifier.drawWithContent { drawContent(); drawRect(Color.White.copy(alpha = 0.12f)) } else Modifier)) {
             AsyncImage(poster, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
                 colorFilter = if (facts.noSource) UnavailableArt else null, alpha = if (facts.noSource) .7f else 1f)
             if (!compact) FlowRow(Modifier.align(androidx.compose.ui.Alignment.BottomStart).padding(5.dp),

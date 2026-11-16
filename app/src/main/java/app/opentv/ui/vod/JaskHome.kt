@@ -13,6 +13,9 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.border
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -41,6 +44,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.opentv.ui.LayoutClass
 import app.opentv.ui.jaskArtSource
+import app.opentv.ui.jaskWheelScroll
+import app.opentv.ui.jaskFocusLift
 import app.opentv.ui.LocalLayoutClass
 import app.opentv.ui.VodViewModel.CatalogueHome
 import app.opentv.ui.VodViewModel.HomeStyle
@@ -123,34 +128,53 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
             pager.animateScrollToPage((pager.settledPage + 1) % titles.size, animationSpec = androidx.compose.animation.core.tween(1_100))
     }
     val wash = app.opentv.ui.LocalJaskAmbient.current?.wash ?: JaskPageCanvas
-    val tail = with(androidx.compose.ui.platform.LocalDensity.current) { 200.dp.toPx() }
-    // Below the hero (outside the pager, which clips), its colour fades into the dithered page.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val tail = with(density) { 200.dp.toPx() }
     val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
-    Box(modifier.fillMaxWidth().then(if (wide) Modifier.height((screenH * 0.74f).coerceIn(380f, 680f).dp) else Modifier.aspectRatio(0.9f)).drawBehind {
+    // Wide: the item ends where the first shelf's title starts, but the art carries on [overlap]
+    // further, under that shelf, and fades out there, so the colour change happens behind the
+    // cards. The art also starts [shift] lower, clear of the header.
+    val heroH = (screenH * 0.74f).coerceIn(340f, 680f).dp
+    val overlap = HeroOverlap
+    val shift = HeroShift
+    var top by remember { mutableFloatStateOf(0f) }
+    Box(modifier.fillMaxWidth().then(if (wide) Modifier.heroOverhang(overlap).height(heroH + overlap)
+        .onGloballyPositioned { top = it.positionInRoot().y }
+    else Modifier.aspectRatio(0.9f).drawBehind {
+        // Phone: below the hero (outside the pager, which clips), its colour fades into the dithered page.
         drawRect(Brush.verticalGradient(listOf(wash, wash.copy(alpha = 0f)), startY = size.height - 1f, endY = size.height + tail),
             topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - 1f), size = androidx.compose.ui.geometry.Size(size.width, tail))
-    }) {
-        HorizontalPager(pager, Modifier.fillMaxSize(), key = { titles[it].key }) { page ->
+    })) {
+        // Wide: the art fades out as the hero scrolls away, so the part under the shelf doesn't
+        // vanish at once when the hero item leaves the list.
+        val heroPx = with(density) { heroH.toPx() }
+        HorizontalPager(pager, Modifier.fillMaxSize().then(if (wide) Modifier.graphicsLayer {
+            alpha = ((heroPx + top) / (heroPx * 0.6f)).coerceIn(0f, 1f)
+        } else Modifier), key = { titles[it].key }) { page ->
             val t = titles[page]
-            Box(Modifier.fillMaxSize().clickable { onOpen(t) }) {
-                // Art → the ambient colour (flat, no dots over the art) → below the hero, that colour
-                // fades into the dithered background (drawn past the item's bottom, under the rows).
-                val wash = app.opentv.ui.LocalJaskAmbient.current?.wash ?: JaskPageCanvas
-                AsyncImage(t.backdrop?.replace("/t/p/w1280/", "/t/p/original/"), null, contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.55f), 0.2f to Color.Transparent, 0.55f to Color.Transparent,
-                    0.8f to Color.Black.copy(alpha = 0.18f), 1f to Color.Transparent)))
-                // Wide screens: text in a left column over a soft side scrim, not stretched across the art.
-                if (wide) Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
-                    0f to Color.Black.copy(alpha = 0.6f), 0.45f to Color.Black.copy(alpha = 0.15f), 0.7f to Color.Transparent)))
-                // Last over the art and scrims, so the hero's bottom edge is exactly the wash colour (no seam).
-                Box(Modifier.fillMaxSize().background(if (wide) Brush.verticalGradient(0.8f to wash.copy(alpha = 0f), 0.94f to wash.copy(alpha = .55f), 1f to wash)
-                    else Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash)))
+            Box(Modifier.fillMaxSize()) {
+                if (wide) Box(Modifier.fillMaxSize().heroFadeOut(heroPx - with(density) { 24.dp.toPx() })) {
+                    AsyncImage(t.backdrop?.replace("/t/p/w1280/", "/t/p/original/"), null, contentScale = ContentScale.Crop,
+                        alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize().padding(top = shift))
+                    Box(Modifier.fillMaxSize().drawBehind { heroScrims(heroPx, with(density) { shift.toPx() }, wash) })
+                } else {
+                    // Art → the ambient colour (flat, no dots over the art) → below the hero, that colour
+                    // fades into the dithered background (drawn past the item's bottom, under the rows).
+                    AsyncImage(t.backdrop?.replace("/t/p/w1280/", "/t/p/original/"), null, contentScale = ContentScale.Crop,
+                        alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.55f), 0.2f to Color.Transparent, 0.55f to Color.Transparent,
+                        0.8f to Color.Black.copy(alpha = 0.18f), 1f to Color.Transparent)))
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash)))
+                }
                 val facts = HeroFacts(rank = t.rank.takeIf { caption == null }, rating = t.rating, quality = qualityBadge(t.quality),
                     networkLogo = t.networkLogo, network = t.network, text = listOfNotNull(t.year?.toString(), t.status),
                     noSource = !t.available, caption = caption)
-                if (wide) Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 44.dp, end = 44.dp, bottom = 40.dp),
+                // The tappable hero is only the visible part above the shelf. With a d-pad, focus goes
+                // to Play and Watchlist instead of the whole picture.
+                Box(Modifier.fillMaxWidth().then(if (wide) Modifier.height(heroH) else Modifier.fillMaxHeight())
+                    .then(if (wide) Modifier.focusProperties { canFocus = false } else Modifier).clickable { onOpen(t) }) {
+                if (wide) Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 44.dp, end = 44.dp, bottom = 36.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Column(Modifier.widthIn(max = 600.dp)) {
@@ -178,10 +202,11 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
                             textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
+                }
             }
         }
         if (titles.size > 1) Row(Modifier.align(if (wide) Alignment.BottomStart else Alignment.BottomCenter)
-            .padding(start = if (wide) 44.dp else 0.dp, bottom = if (wide) 16.dp else 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            .padding(start = if (wide) 44.dp else 0.dp, bottom = if (wide) overlap + 14.dp else 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             repeat(titles.size) { i ->
                 Box(Modifier.size(if (i == pager.currentPage) 7.dp else 5.dp).clip(CircleShape)
                     .background(if (i == pager.currentPage) Color.White else Color.White.copy(alpha = 0.4f)))
@@ -200,14 +225,14 @@ private fun HeroActions(t: HomeTitle, watchlist: HomeWatchlist?, onOpen: () -> U
     var saved by remember(t.key) { mutableStateOf<Boolean?>(null) }
     if (watchlist != null && t.available) LaunchedEffect(t.key) { saved = watchlist.isSaved(t) }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (t.available) Row(Modifier.height(52.dp).clip(RoundedCornerShape(50)).background(Color.White).clickable(onClick = onOpen)
+        if (t.available) Row(Modifier.jaskFocusLift().height(52.dp).clip(RoundedCornerShape(50)).background(Color.White).clickable(onClick = onOpen)
             .padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(androidx.compose.material.icons.Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(24.dp))
             Spacer(Modifier.width(6.dp))
             Text("Play", color = Color.Black, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         }
         saved?.let { on ->
-            Box(Modifier.size(52.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.38f))
+            Box(Modifier.jaskFocusLift().size(52.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.38f))
                 .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
                 .clickable { saved = !on; scope.launch { watchlist?.toggle(t) } }, contentAlignment = Alignment.Center) {
                 Icon(if (on) androidx.compose.material.icons.Icons.Filled.Star else androidx.compose.material.icons.Icons.Outlined.StarOutline,
@@ -250,9 +275,10 @@ internal fun JaskSearchResults(hits: List<HomeTitle>?, emptyText: String, onOpen
         else -> {
             app.opentv.ui.JaskAmbientFrom(hits.first().let { it.backdrop ?: it.poster })
             val phone = LocalLayoutClass.current == LayoutClass.PHONE
+            val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
             androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                 columns = if (phone) androidx.compose.foundation.lazy.grid.GridCells.Fixed(3) else androidx.compose.foundation.lazy.grid.GridCells.Adaptive(120.dp),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().jaskWheelScroll(grid), state = grid,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = padding.calculateBottomPadding() + 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {

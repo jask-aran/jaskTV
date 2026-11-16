@@ -165,6 +165,11 @@ abstract class CanonicalMovieDao {
     @Query("SELECT * FROM canonical_movies WHERE tmdbId = :id")
     abstract suspend fun title(id: Int): CanonicalMovie?
 
+    /** Best-rated catalogue titles whose TMDB genres include [genre] ("More like this"). */
+    @Query("""SELECT tmdbId FROM canonical_movies WHERE tmdbId != :id AND genres IS NOT NULL AND instr(genres, :genre) > 0
+        ORDER BY rating DESC LIMIT :limit""")
+    abstract suspend fun idsWithGenre(id: Int, genre: String, limit: Int): List<Int>
+
     @Query("""SELECT m.* FROM movies m JOIN movie_identity_matches l ON m.sourceId = l.sourceId AND m.streamId = l.streamId
         WHERE l.tmdbId = :id AND EXISTS (SELECT 1 FROM sources provider WHERE provider.id = m.sourceId AND provider.enabled = 1)
                   AND (NOT EXISTS (SELECT 1 FROM movie_inventory_snapshots snap WHERE snap.sourceId = m.sourceId)

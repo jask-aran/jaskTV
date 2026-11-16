@@ -26,6 +26,9 @@ import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.ui.res.stringResource
 import app.opentv.R
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
@@ -95,9 +98,48 @@ internal fun Modifier.jaskPageBackground(tint: Color, list: LazyListState, heroH
         val heroBottom = if (list.firstVisibleItemIndex == 0) (heroHeightPx - list.firstVisibleItemScrollOffset).toFloat() else -fade
         drawRect(JaskPageCanvas)
         if (heroBottom + fade > 0f) drawRect(Brush.verticalGradient(
-            0f to tint, 0.35f to lerp(tint, JaskPageCanvas, 0.45f), 0.7f to lerp(tint, JaskPageCanvas, 0.85f), 1f to JaskPageCanvas,
+            0f to lerp(tint, JaskPageCanvas, 0.15f), 0.35f to lerp(tint, JaskPageCanvas, 0.5f), 0.7f to lerp(tint, JaskPageCanvas, 0.85f), 1f to JaskPageCanvas,
             startY = heroBottom, endY = heroBottom + fade))
     }
+}
+
+/** Wide heroes: how far the art carries on under the content below, and how far it starts below the top. */
+internal val HeroOverlap = 210.dp
+internal val HeroShift = 44.dp
+
+/**
+ * Reports a height [overlap] shorter than the content measures, so the content draws on under the
+ * next items of a list (which are drawn later, on top). Touches only reach the reported part.
+ */
+internal fun Modifier.heroOverhang(overlap: androidx.compose.ui.unit.Dp) = this.then(Modifier.layout { measurable, constraints ->
+    val extra = overlap.roundToPx()
+    val placeable = measurable.measure(constraints.copy(maxHeight = androidx.compose.ui.unit.Constraints.Infinity))
+    layout(placeable.width, (placeable.height - extra).coerceAtLeast(0)) { placeable.place(0, 0) }
+})
+
+/** Fades this content out from [startPx] down to its bottom edge (the art under the shelf). */
+internal fun Modifier.heroFadeOut(startPx: Float) = graphicsLayer {
+    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+}.drawWithContent {
+    drawContent()
+    drawRect(Brush.verticalGradient(0f to Color.Black, 0.45f to Color.Black.copy(alpha = 0.6f), 1f to Color.Transparent,
+        startY = startPx, endY = size.height), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+}
+
+/**
+ * Wide hero scrims over art that starts [shiftPx] down: a dark band above the art under the header,
+ * a left scrim behind the text, a little darkening for the title near [heroPx], then [ink] (the
+ * page's colour) only in the part under the next row.
+ */
+internal fun androidx.compose.ui.graphics.drawscope.DrawScope.heroScrims(heroPx: Float, shiftPx: Float, ink: Color) {
+    drawRect(Color(0xFF0C0B0A), size = androidx.compose.ui.geometry.Size(size.width, shiftPx + 1f))
+    drawRect(Brush.verticalGradient(0f to Color(0xFF0C0B0A), 0.35f to Color.Black.copy(alpha = 0.45f), 1f to Color.Transparent,
+        startY = shiftPx, endY = shiftPx + heroPx * 0.35f))
+    drawRect(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.45f to Color.Black.copy(alpha = 0.15f), 0.7f to Color.Transparent))
+    val start = heroPx * 0.55f
+    val f = ((heroPx - start) / (size.height - start)).coerceIn(0.01f, 0.99f)
+    drawRect(Brush.verticalGradient(0f to Color.Transparent, f to Color.Black.copy(alpha = 0.22f), 1f to ink.copy(alpha = 0.55f),
+        startY = start, endY = size.height))
 }
 
 /** TMDB's largest backdrop: phones crop a wide image to a near-square hero, so w1280 looked soft. */
@@ -115,15 +157,26 @@ internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, fact
     val candidates = remember(artUrl, fallbackArt) { listOfNotNull(heroArt(artUrl), artUrl, fallbackArt).distinct() }
     var index by remember(candidates) { mutableIntStateOf(0) }
     val model = candidates.getOrNull(index)
-    // Side scrim (wide) and an eased ramp into exactly `tint` at the bottom edge, where
-    // jaskPageBackground picks it up. Wide screens keep more of the art: the ramp starts lower.
+    // Wide: the item reports [heroH], but the art carries on [HeroOverlap] further under the
+    // content below and fades out there, over the page tint; it starts [HeroShift] lower, clear of
+    // the top controls. Phone: the art fills the hero and eases into exactly `tint` at the bottom
+    // edge, where jaskPageBackground picks it up.
+    val density = LocalDensity.current
+    val heroH = (screenH * 0.8f).coerceIn(340f, 760f).dp
+    val shift = if (wide) HeroShift else 0.dp
+    val heroPx = with(density) { heroH.toPx() }
+    val shiftPx = with(density) { shift.toPx() }
     val scrim: androidx.compose.ui.graphics.drawscope.DrawScope.(androidx.compose.ui.geometry.Size) -> Unit = { size ->
-        if (wide) drawRect(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.55f), 0.45f to Color.Black.copy(alpha = 0.12f),
-            0.7f to Color.Transparent), size = size)
-        drawRect(if (wide) Brush.verticalGradient(
-            0f to Color.Black.copy(alpha = 0.40f), 0.18f to Color.Transparent, 0.62f to Color.Transparent,
-            0.76f to tint.copy(alpha = 0.35f), 0.88f to tint.copy(alpha = 0.8f), 1f to tint)
-        else Brush.verticalGradient(
+        if (wide) {
+            val artH = heroPx - shiftPx
+            drawRect(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.5f), 1f to Color.Transparent, endY = artH * 0.3f), size = size)
+            drawRect(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.55f), 0.45f to Color.Black.copy(alpha = 0.12f),
+                0.7f to Color.Transparent), size = size)
+            val start = artH * 0.55f
+            val f = ((artH - start) / (size.height - start)).coerceIn(0.01f, 0.99f)
+            drawRect(Brush.verticalGradient(0f to Color.Transparent, f to Color.Black.copy(alpha = 0.25f), 1f to tint.copy(alpha = 0.7f),
+                startY = start, endY = size.height), size = size)
+        } else drawRect(Brush.verticalGradient(
             0f to Color.Black.copy(alpha = 0.40f), 0.18f to Color.Transparent, 0.40f to Color.Transparent,
             0.55f to tint.copy(alpha = 0.22f), 0.68f to tint.copy(alpha = 0.55f), 0.80f to tint.copy(alpha = 0.82f),
             0.90f to tint.copy(alpha = 0.95f), 1f to tint), size = size)
@@ -132,17 +185,22 @@ internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, fact
     val screenW = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
     val art = app.opentv.ui.rememberArtBackdrop(model, cells = (screenW / 12).coerceIn(24, 128))
     art?.scrim = scrim
-    Box(modifier.fillMaxWidth().then(if (wide) Modifier.height((screenH * 0.66f).coerceIn(380f, 620f).dp) else Modifier.aspectRatio(0.92f))
-        .then(Modifier.jaskArtSource(art))) {
-        model?.let {
-            AsyncImage(it, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.matchParentSize(),
-                onError = { if (index < candidates.lastIndex) index++ })
+    Box(modifier.fillMaxWidth().then(if (wide) Modifier.heroOverhang(HeroOverlap).height(heroH + HeroOverlap) else Modifier.aspectRatio(0.92f))) {
+        Box(Modifier.matchParentSize().then(if (wide) Modifier.heroFadeOut(heroPx - with(density) { 24.dp.toPx() }).drawBehind {
+            drawRect(Color(0xFF0C0B0A), size = androidx.compose.ui.geometry.Size(size.width, shiftPx + 1f))
+        } else Modifier)) {
+            Box(Modifier.matchParentSize().padding(top = shift).jaskArtSource(art)) {
+                model?.let {
+                    AsyncImage(it, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.matchParentSize(),
+                        onError = { if (index < candidates.lastIndex) index++ })
+                }
+                Box(Modifier.matchParentSize().drawBehind { scrim(size) })
+            }
         }
-        Box(Modifier.matchParentSize().drawBehind { scrim(size) })
         CompositionLocalProvider(app.opentv.ui.LocalJaskBackdrop provides art) {
         JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, "Back", Modifier.align(Alignment.TopStart).statusBarsPadding().padding(12.dp),
             size = 44.dp, onClick = onBack)
-        if (wide) {
+        if (wide) Box(Modifier.fillMaxWidth().height(heroH)) {
             // Wide screens: title, badges and blurb in a left column; the actions sit on the right,
             // centred against that column.
             Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 44.dp, end = 44.dp, bottom = 28.dp),
@@ -158,7 +216,7 @@ internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, fact
                             Spacer(Modifier.height(12.dp))
                             Text(blurb, color = Color(0xFFE2E2E2), style = MaterialTheme.typography.bodyMedium,
                                 maxLines = if (expanded) 12 else 3, overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.animateContentSize().clickable { expanded = !expanded })
+                                modifier = Modifier.animateContentSize().focusProperties { canFocus = false }.clickable { expanded = !expanded })
                         }
                     }
                 }
@@ -305,7 +363,7 @@ internal fun JaskSynopsis(text: String?) {
     var expanded by remember { mutableStateOf(false) }
     Text(text, color = Color(0xFFE6E6E6), style = MaterialTheme.typography.bodyMedium,
         maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.fillMaxWidth().animateContentSize().clickable { expanded = !expanded }.padding(horizontal = jaskSide(), vertical = 12.dp).widthIn(max = 900.dp))
+        modifier = Modifier.fillMaxWidth().animateContentSize().focusProperties { canFocus = false }.clickable { expanded = !expanded }.padding(horizontal = jaskSide(), vertical = 12.dp).widthIn(max = 900.dp))
 }
 
 internal data class SeasonSummary(val season: Int, val episodes: Int, val watched: Int, val poster: String?)
@@ -448,4 +506,80 @@ internal fun nextEpisode(ordered: List<Episode>, positions: List<PlaybackPositio
     if (!latest.isFinished) return ordered[index] to latest
     val next = ordered.getOrNull(index + 1) ?: return ordered[index] to latest
     return next to byKey["ep:${next.id}"]
+}
+
+/**
+ * Wide movie page body: the sources this title can play from (tap to switch) beside the details
+ * (genres, cast and director as tappable names, review scores in [extra]).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun JaskMovieBody(sources: List<SourceOption>, selected: Int, onSelect: (Int) -> Unit, genre: String?, cast: String?,
+    director: String?, onOpenPerson: (String) -> Unit, extra: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = jaskSide(), end = jaskSide(), top = 12.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            JaskSectionTitle(if (sources.size == 1) "Source" else "Sources · ${sources.size}")
+            sources.forEachIndexed { i, option ->
+                val on = i == selected
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .background(if (on) Color.White.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.03f))
+                    .clickable { onSelect(i) }.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (on) Icons.Filled.CheckCircle else Icons.Filled.Layers, null, tint = if (on) Color.White else Color(0xFF9A9A9A),
+                        modifier = Modifier.size(20.dp))
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(option.provider, color = Color.White, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (option.detail.isNotBlank()) Text(option.detail, color = Color(0xFFA8A8A8), style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (on) Text("Playing", color = Color(0xFFCFCFCF), style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+        Column(Modifier.width(380.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val genres = genre?.split(',', '/', '|')?.map(String::trim)?.filter(String::isNotEmpty)?.distinct().orEmpty()
+            val people = cast?.split(',')?.map(String::trim)?.filter(String::isNotEmpty)?.take(8).orEmpty()
+            val directors = director?.split(',')?.map(String::trim)?.filter(String::isNotEmpty).orEmpty()
+            if (genres.isNotEmpty() || people.isNotEmpty() || directors.isNotEmpty()) JaskSectionTitle("Details")
+            if (genres.isNotEmpty()) Text(genres.joinToString(" · "), color = Color(0xFFCFCFCF), style = MaterialTheme.typography.bodyMedium)
+            if (people.isNotEmpty()) {
+                Text("Cast", color = Color(0xFF9A9A9A), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    people.forEach { JaskPersonPill(it) { onOpenPerson(it) } }
+                }
+            }
+            if (directors.isNotEmpty()) {
+                Text("Director", color = Color(0xFF9A9A9A), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    directors.forEach { JaskPersonPill(it) { onOpenPerson(it) } }
+                }
+            }
+            extra()
+        }
+    }
+}
+
+@Composable
+internal fun JaskSectionTitle(text: String) {
+    Text(text, color = Color(0xFFF4F4F4), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(bottom = 2.dp))
+}
+
+@Composable
+private fun JaskPersonPill(name: String, onClick: () -> Unit) {
+    Text(name, color = Color(0xFFEDEDED), style = MaterialTheme.typography.labelLarge, maxLines = 1,
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.08f))
+            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(50)).clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp))
+}
+
+/** A titled, sideways-scrolling row of posters across a wide page. */
+@Composable
+internal fun <T> JaskShelf(title: String, items: List<T>, key: (T) -> Any, card: @Composable (T) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 28.dp)) {
+        Box(Modifier.padding(horizontal = jaskSide())) { JaskSectionTitle(title) }
+        Spacer(Modifier.height(8.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = jaskSide()), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            items(items, key = key) { Box(Modifier.width(150.dp)) { card(it) } }
+        }
+    }
 }

@@ -210,9 +210,10 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    CompositionLocalProvider(LocalLayoutClass provides rememberLayoutClass(isTelevision),
+                    val layoutClass = rememberLayoutClass(isTelevision)
+                    CompositionLocalProvider(LocalLayoutClass provides layoutClass,
                         app.opentv.ui.LocalJaskMaterial provides app.opentv.ui.rememberJaskMaterial(isTelevision)) {
-                        OpenTvApp(isTelevision = isTelevision)
+                        app.opentv.ui.JaskUiScale(layoutClass) { OpenTvApp(isTelevision = isTelevision) }
                     }
                 }
             }
@@ -533,6 +534,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     onOpenRecordings = { navController.navigate(Routes.REC_SETTINGS) },
                     onOpenAbout = { navController.navigate(Routes.ABOUT) },
                     onBack = { navController.popBackStack() },
+                    onOpenChannels = { navController.navigate(Routes.CHANNELS) },
                 ) else SettingsHubScreen(
                     onOpenProviders = { navController.navigate(Routes.PROVIDERS) },
                     onOpenAddons = { navController.navigate(Routes.ADDONS) },

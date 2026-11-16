@@ -109,7 +109,7 @@ internal fun rememberJaskMaterial(isTelevision: Boolean): JaskMaterial {
 }
 
 /** True when this window is on a display other than the device's own screen (Samsung DeX, glasses, casting). */
-private fun onExternalDisplay(context: Context): Boolean {
+internal fun onExternalDisplay(context: Context): Boolean {
     if (Build.VERSION.SDK_INT < 30) return false
     val display = runCatching { context.display }.getOrNull() ?: return false
     return display.displayId != android.view.Display.DEFAULT_DISPLAY
@@ -251,11 +251,11 @@ internal fun JaskGlassSurface(modifier: Modifier = Modifier, shape: Shape = Roun
         backdrop is JaskArtBackdrop -> Modifier.artFrost(backdrop, fill)
         else -> Modifier.background(fill)
     }
-    Box(clipped.then(behind).background(if (badge) BadgeSheen else ChromeSheen).border(if (focused) 3.dp else 1.dp, if (focused) FocusRim else if (badge) BadgeRim else ChromeRim, shape),
+    Box(clipped.then(behind).background(if (badge) BadgeSheen else ChromeSheen).then(if (focused) Modifier.background(FocusWash) else Modifier).border(1.dp, if (badge) BadgeRim else ChromeRim, shape),
         content = content)
 }
 
-private val FocusRim = androidx.compose.ui.graphics.SolidColor(Color.White)
+private val FocusWash = Color.White.copy(alpha = 0.26f)
 private val ChromeSheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = .14f), Color.Black.copy(alpha = .28f)))
 private val BadgeSheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = .16f), Color.Black.copy(alpha = .38f)))
 private val ChromeRim = Brush.verticalGradient(listOf(Color.White.copy(alpha = .38f), Color.White.copy(alpha = .06f), Color.White.copy(alpha = .12f)))

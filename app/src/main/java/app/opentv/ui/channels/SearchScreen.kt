@@ -101,7 +101,7 @@ fun SearchScreen(
     vodViewModel: VodViewModel = viewModel(),
 ) {
     LaunchedEffect(Unit) { vodViewModel.ensureVodLoaded() }
-    if (LocalLayoutClass.current.isTouch) {
+    if (LocalLayoutClass.current.usesJaskShell) {
         PhoneSearchScreen(onPlayChannel, onOpenMovie, onOpenSeries, onBack, initialScope, viewModel, vodViewModel)
         return
     }

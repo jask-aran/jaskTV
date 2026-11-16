@@ -30,14 +30,20 @@ import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.ScrollableState
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import kotlin.math.abs
 
 /*
  * D-pad focus, shown the same way everywhere:
- *  - [JaskIndication] (installed by JaskTheme) gives every clickable a white ring and a light
- *    wash while focused, on top of the touch ripple. Small controls (≤ 72dp on their short side:
- *    circles, pills, tabs) get a fully rounded ring; larger ones (cards, rows) a 12dp-cornered one.
- *  - [jaskFocusLift] scales an element up while it or a child has focus: posters and the white
- *    Play buttons, where a white ring alone would not show.
+ *  - [JaskIndication] (installed by JaskTheme) lays a soft white wash over every clickable while
+ *    focused, on top of the touch ripple; no outline, as TV launchers do (tvOS, Google TV). Small
+ *    controls (≤ 72dp on their short side) get a fully rounded wash, larger ones 12dp corners.
+ *  - [jaskFocusLift] scales an element up while it or a child has focus: posters, cards and buttons.
+ *  - Focus lands on controls (buttons, cards, rows), never on full-bleed art or plain text.
  */
 
 internal object JaskIndication : IndicationNodeFactory {
@@ -69,12 +75,9 @@ private class JaskIndicationNode(private val source: InteractionSource) : Delega
     override fun ContentDrawScope.draw() {
         drawContent()
         if (!focused) return
-        val stroke = 3.dp.toPx()
         val short = minOf(size.width, size.height)
         val radius = if (short <= 72.dp.toPx()) short / 2 else 12.dp.toPx()
-        drawRoundRect(Color.White.copy(alpha = .14f), cornerRadius = CornerRadius(radius))
-        drawRoundRect(Color.White, topLeft = Offset(stroke / 2, stroke / 2), size = Size(size.width - stroke, size.height - stroke),
-            cornerRadius = CornerRadius((radius - stroke / 2).coerceAtLeast(0f)), style = Stroke(stroke))
+        drawRoundRect(Color.White.copy(alpha = .16f), cornerRadius = CornerRadius(radius))
     }
 }
 
@@ -83,4 +86,28 @@ internal fun Modifier.jaskFocusLift(scale: Float = 1.06f): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     val s by animateFloatAsState(if (focused) scale else 1f, label = "focusLift")
     onFocusChanged { focused = it.hasFocus }.graphicsLayer { scaleX = s; scaleY = s }
+}
+
+/**
+ * Mouse wheel and trackpad scrolling (DeX, Chromebooks): vertical scrolls go to this list even
+ * when the pointer is over a sideways shelf or a card, which would otherwise swallow them.
+ * Sideways scrolls are left to the shelf under the pointer.
+ */
+internal fun Modifier.jaskWheelScroll(state: ScrollableState): Modifier = composed {
+    val context = LocalContext.current
+    val factor = remember(context) {
+        androidx.core.view.ViewConfigurationCompat.getScaledVerticalScrollFactor(android.view.ViewConfiguration.get(context), context)
+    }
+    pointerInput(state, factor) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.type != PointerEventType.Scroll) continue
+                val delta = event.changes.fold(Offset.Zero) { sum, change -> sum + change.scrollDelta }
+                if (abs(delta.y) <= abs(delta.x)) continue
+                state.dispatchRawDelta(delta.y * factor)
+                event.changes.forEach { it.consume() }
+            }
+        }
+    }
 }

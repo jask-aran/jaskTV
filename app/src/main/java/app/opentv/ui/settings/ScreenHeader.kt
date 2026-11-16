@@ -44,7 +44,8 @@ fun ScreenHeader(
     icon: ImageVector? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    if (LocalLayoutClass.current == LayoutClass.PHONE) {
+    // jaskTV layouts (phone, tablet, TV) put Back on the left; full-screen windows may have no system Back.
+    if (LocalLayoutClass.current.usesJaskShell) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_done))

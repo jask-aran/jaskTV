@@ -196,6 +196,18 @@ class AppSettings(private val prefs: Prefs) {
         _glassMode.value = mode
     }
 
+    /**
+     * Interface size on wide layouts (tablet, DeX, TV): "auto" or a scale such as "1.15". Phones
+     * ignore it.
+     */
+    private val _uiScale = MutableStateFlow(prefs.getString(KEY_UI_SCALE, null) ?: "auto")
+    val uiScale: StateFlow<String> = _uiScale.asStateFlow()
+
+    fun setUiScale(scale: String) {
+        prefs.edit().putString(KEY_UI_SCALE, scale).apply()
+        _uiScale.value = scale
+    }
+
     /** Whether launching the app jumps straight back to the last channel you watched. */
     private val _resumeLastChannel = MutableStateFlow(prefs.getBoolean(KEY_RESUME_LAST, false))
     val resumeLastChannel: StateFlow<Boolean> = _resumeLastChannel.asStateFlow()
@@ -537,6 +549,7 @@ class AppSettings(private val prefs: Prefs) {
         private const val KEY_SUBTITLES = "subtitles_enabled"
         private const val KEY_PREVIEW_VIDEO = "guide_preview_video"
         private const val KEY_GLASS_MODE = "glass_mode"
+        private const val KEY_UI_SCALE = "ui_scale"
         private const val KEY_PREVIEW_SOUND = "guide_preview_sound"
         private const val KEY_PIN_HASH = "parental_pin_hash"
         private const val KEY_HIDDEN_CATS = "hidden_categories"

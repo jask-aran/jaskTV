@@ -666,8 +666,22 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     /** Loads a series, lazily enriching backdrop/cast/genre on first open. See CatalogRepository.seriesDetail. */
     suspend fun seriesDetail(id: Long): Series? = graph.catalogRepository.seriesDetail(id)?.let { withCanonicalShow(it) }
 
-    /** "More like this" for the movie detail screen. */
-    suspend fun moreLikeThis(movie: Movie): List<Movie> = graph.catalogRepository.moreLikeThis(movie)
+    /**
+     * "More like this" for the movie detail screen. Catalogue (TMDB-matched) movies: other matched
+     * titles you have that share the most TMDB genres, best rated first; otherwise the provider's
+     * genre/category match.
+     */
+    suspend fun moreLikeThis(movie: Movie): List<Movie> = withContext(Dispatchers.IO) {
+        val title = canonical.match(movie.sourceId, movie.streamId)?.tmdbId?.let { canonical.title(it) }
+        val genres = title?.genres?.split(',')?.map(String::trim)?.filter(String::isNotEmpty).orEmpty()
+        if (title == null || genres.isEmpty()) return@withContext graph.catalogRepository.moreLikeThis(movie)
+        val shared = genres.take(3).flatMap { canonical.idsWithGenre(title.tmdbId, it, 150) }.groupingBy { it }.eachCount()
+        val ranked = shared.entries.sortedByDescending { it.value }.map { it.key }.take(80)
+        val available = canonical.availableByIds(ranked).associateBy { it.title.tmdbId }
+        ranked.mapNotNull { available[it] }.take(20).mapNotNull { card ->
+            canonical.versions(card.title.tmdbId).firstOrNull()?.withCanonical(card.title)
+        }
+    }
 
     /** "More like this" for the series detail screen. */
     suspend fun moreLikeThisSeries(series: Series): List<Series> =

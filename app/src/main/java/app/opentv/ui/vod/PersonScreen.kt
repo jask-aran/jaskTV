@@ -5,6 +5,8 @@
  */
 package app.opentv.ui.vod
 
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
@@ -61,14 +63,20 @@ fun PersonScreen(
     BackHandler { onBack() }
 
     Column(Modifier.fillMaxSize()) {
-        Text(
-            stringResource(R.string.vod_person_title, name),
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 16.dp),
-        )
+        // An on-screen back button: full-screen windows (tablets, DeX) may have no system Back.
+        androidx.compose.foundation.layout.Row(Modifier.statusBarsPadding().padding(start = 12.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            app.opentv.ui.JaskGlassCircle(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                stringResource(R.string.common_back), size = 44.dp, onClick = onBack)
+            androidx.compose.foundation.layout.Spacer(Modifier.width(12.dp))
+            Text(
+                stringResource(R.string.vod_person_title, name),
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
 
         // Weighted so the grid/empty state fills the space under the fixed header, exactly — the same
         // remaining-space pattern the Movies/Shows home uses.
