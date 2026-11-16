@@ -21,6 +21,11 @@ java {
 
 dependencies {
     implementation(project(":player-core"))
+    // Database, catalogue and settings shared with the Android app.
+    implementation(project(":shared"))
+    implementation(libs.coil3.compose)
+    implementation(libs.coil3.network.okhttp)
+    implementation(libs.sqlite.bundled)
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
