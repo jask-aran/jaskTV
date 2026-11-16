@@ -49,6 +49,8 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import app.opentv.R
 import app.opentv.core.AppSettings
 import app.opentv.core.SleepTimer
+import app.opentv.core.findActivity
+import android.content.Context
 import app.opentv.core.isIgnoringBatteryOptimizations
 import app.opentv.core.requestIgnoreBatteryOptimizations
 import app.opentv.recording.RecordingStorage
@@ -249,3 +251,50 @@ private fun NasSheet(settings: AppSettings, onDismiss: () -> Unit) {
         }
     }
 }
+
+/**
+ * The UI languages OpenTV ships translations for, each labelled with its own endonym. The tag is
+ * both the stored language tag and the resource qualifier (values-<tag>), so adding a language is
+ * just a new `values-xx/strings.xml` plus a line here.
+ */
+internal val OpenTvLanguages: List<Pair<String, String>> = listOf(
+    "en" to "English",
+    "es" to "Español",
+    "fr" to "Français",
+    "de" to "Deutsch",
+    "it" to "Italiano",
+    "pt" to "Português",
+    "nl" to "Nederlands",
+    "pl" to "Polski",
+    "ru" to "Русский",
+    "tr" to "Türkçe",
+    "ar" to "العربية",
+    "zh" to "中文",
+    "ja" to "日本語",
+    "ko" to "한국어",
+    "hi" to "हिन्दी",
+    "sv" to "Svenska",
+    "da" to "Dansk",
+    "fi" to "Suomi",
+    "nb" to "Norsk",
+    "cs" to "Čeština",
+    "el" to "Ελληνικά",
+    "ro" to "Română",
+    "hu" to "Magyar",
+    "uk" to "Українська",
+    "id" to "Bahasa Indonesia",
+    "th" to "ไทย",
+    "vi" to "Tiếng Việt",
+    "bg" to "Български",
+    "sk" to "Slovenčina",
+    "hr" to "Hrvatski",
+    "fa" to "فارسی",
+)
+
+/** Persist the chosen language and recreate the activity so the whole UI reloads translated. */
+internal fun changeLanguage(context: Context, settings: AppSettings, tag: String) {
+    if (settings.languageTag.value == tag) return
+    settings.setLanguageTag(tag)
+    context.findActivity()?.recreate()
+}
+

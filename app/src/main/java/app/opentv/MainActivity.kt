@@ -74,22 +74,9 @@ import app.opentv.ui.MainScreen
 import app.opentv.ui.browsingDestination
 import app.opentv.ui.ProfilesViewModel
 import app.opentv.ui.SourcesViewModel
-import app.opentv.ui.channels.ChannelManagerScreen
 import app.opentv.ui.channels.SearchScreen
 import app.opentv.ui.VodViewModel
-import app.opentv.ui.onboarding.AddSourceScreen
 import app.opentv.ui.player.PlayerScreen
-import app.opentv.ui.settings.AboutScreen
-import app.opentv.ui.settings.AppSettingsScreen
-import app.opentv.ui.settings.EpgSettingsScreen
-import app.opentv.ui.settings.ParentalControlsScreen
-import app.opentv.ui.settings.ProfilesScreen
-import app.opentv.ui.settings.ProvidersScreen
-import app.opentv.ui.settings.StremioAddonsScreen
-import app.opentv.ui.settings.RecordingSettingsScreen
-import app.opentv.ui.settings.SyncScreen
-import app.opentv.ui.settings.SettingsHubScreen
-import app.opentv.ui.settings.WebManagerScreen
 import app.opentv.ui.theme.OpenTvTheme
 import app.opentv.ui.vod.MovieDetailScreen
 import app.opentv.ui.vod.PersonScreen
@@ -298,17 +285,12 @@ object Routes {
     const val SEARCH = "search?scope={scope}"
     fun search(scope: String = "all") = "search?scope=$scope"
     const val EPG_SETTINGS = "epg-settings"
-    const val APP_SETTINGS = "app-settings"
     const val SETTINGS_HUB = "settings"
     const val PROVIDERS = "providers"
     const val ADDONS = "addons"
     const val CHANNELS = "channels"
-    const val WEB_MANAGER = "web-manager"
     const val PROFILES = "profiles"
     const val PARENTAL = "parental"
-    const val SYNC = "sync"
-    const val REC_SETTINGS = "recording-settings"
-    const val ABOUT = "about"
     const val SERIES_DETAIL = "series/{seriesId}"
     const val MOVIE_DETAIL = "movie/{movieId}"
     const val EDIT_SOURCE = "edit-source/{sourceId}"
@@ -415,22 +397,26 @@ private fun OpenTvApp(isTelevision: Boolean) {
     Box(Modifier.fillMaxSize()) {
         NavHost(navController = navController, startDestination = start) {
             browsingDestination(Routes.ADD_SOURCE) {
-                AddSourceScreen(
+                // First run has nowhere to go back to; adding from Providers does.
+                val canGoBack = navController.previousBackStackEntry != null
+                app.opentv.ui.settings.JaskSourceForm(
                     viewModel = sourcesViewModel,
                     onFinished = {
                         navController.navigate(Routes.HOME) {
                             popUpTo(Routes.ADD_SOURCE) { inclusive = true }
                         }
                     },
+                    onBack = if (canGoBack) ({ navController.popBackStack() }) else null,
                 )
             }
 
             browsingDestination(Routes.EDIT_SOURCE) { entry ->
                 val sourceId = entry.arguments?.getString("sourceId")?.toLongOrNull() ?: return@browsingDestination
-                AddSourceScreen(
+                app.opentv.ui.settings.JaskSourceForm(
                     viewModel = sourcesViewModel,
                     editingSourceId = sourceId,
                     onFinished = { navController.popBackStack() },
+                    onBack = { navController.popBackStack() },
                 )
             }
 
@@ -493,10 +479,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
             }
 
             browsingDestination(Routes.PROFILES) {
-                ProfilesScreen(
-                    viewModel = profilesViewModel,
-                    onBack = { navController.popBackStack() },
-                )
+                app.opentv.ui.settings.JaskProfilesPage(onBack = { navController.popBackStack() }, viewModel = profilesViewModel)
             }
 
             browsingDestination(Routes.SEARCH) { entry ->
@@ -521,54 +504,28 @@ private fun OpenTvApp(isTelevision: Boolean) {
             }
 
             browsingDestination(Routes.SETTINGS_HUB, edgeToEdgeOnTouch = true) {
-                if (app.opentv.ui.LocalLayoutClass.current.usesJaskShell) app.opentv.ui.settings.JaskSettingsScreen(
+                app.opentv.ui.settings.JaskSettingsScreen(
                     profiles = profilesViewModel, vod = vodViewModel,
                     onOpenProfiles = { navController.navigate(Routes.PROFILES) },
                     onOpenProviders = { navController.navigate(Routes.PROVIDERS) },
                     onOpenAddons = { navController.navigate(Routes.ADDONS) },
                     onOpenGuide = { navController.navigate(Routes.EPG_SETTINGS) },
-                    onOpenWebManager = { navController.navigate(Routes.WEB_MANAGER) },
                     onOpenParental = { navController.navigate(Routes.PARENTAL) },
-                    onOpenAbout = { navController.navigate(Routes.ABOUT) },
-                    onBack = { navController.popBackStack() },
                     onOpenChannels = { navController.navigate(Routes.CHANNELS) },
-                ) else SettingsHubScreen(
-                    onOpenProviders = { navController.navigate(Routes.PROVIDERS) },
-                    onOpenAddons = { navController.navigate(Routes.ADDONS) },
-                    onOpenGuide = { navController.navigate(Routes.EPG_SETTINGS) },
-                    onOpenChannels = { navController.navigate(Routes.CHANNELS) },
-                    onOpenWebManager = { navController.navigate(Routes.WEB_MANAGER) },
-                    onOpenDisplay = { navController.navigate(Routes.APP_SETTINGS) },
-                    onOpenParental = { navController.navigate(Routes.PARENTAL) },
-                    onOpenSync = { navController.navigate(Routes.SYNC) },
-                    onOpenRecordings = { navController.navigate(Routes.REC_SETTINGS) },
-                    onOpenAbout = { navController.navigate(Routes.ABOUT) },
                     onBack = { navController.popBackStack() },
                 )
             }
 
-            browsingDestination(Routes.SYNC) {
-                SyncScreen(onBack = { navController.popBackStack() })
-            }
-
-            browsingDestination(Routes.REC_SETTINGS) {
-                RecordingSettingsScreen(onBack = { navController.popBackStack() })
-            }
-
             browsingDestination(Routes.CHANNELS) {
-                ChannelManagerScreen(onBack = { navController.popBackStack() })
-            }
-
-            browsingDestination(Routes.WEB_MANAGER) {
-                WebManagerScreen(onBack = { navController.popBackStack() })
+                app.opentv.ui.settings.JaskChannelsPage(onBack = { navController.popBackStack() })
             }
 
             browsingDestination(Routes.PARENTAL) {
-                ParentalControlsScreen(onBack = { navController.popBackStack() })
+                app.opentv.ui.settings.JaskParentalPage(onBack = { navController.popBackStack() })
             }
 
             browsingDestination(Routes.PROVIDERS) {
-                ProvidersScreen(
+                app.opentv.ui.settings.JaskProvidersPage(
                     viewModel = sourcesViewModel,
                     onAddSource = { navController.navigate(Routes.ADD_SOURCE) },
                     onEditSource = { src -> navController.navigate(Routes.editSource(src.id)) },
@@ -577,19 +534,11 @@ private fun OpenTvApp(isTelevision: Boolean) {
             }
 
             browsingDestination(Routes.ADDONS) {
-                StremioAddonsScreen(onBack = { navController.popBackStack() })
-            }
-
-            browsingDestination(Routes.ABOUT) {
-                AboutScreen(onBack = { navController.popBackStack() })
+                app.opentv.ui.settings.JaskAddonsPage(onBack = { navController.popBackStack() })
             }
 
             browsingDestination(Routes.EPG_SETTINGS) {
-                EpgSettingsScreen(onBack = { navController.popBackStack() })
-            }
-
-            browsingDestination(Routes.APP_SETTINGS) {
-                AppSettingsScreen(onBack = { navController.popBackStack() })
+                app.opentv.ui.settings.JaskGuidesPage(onBack = { navController.popBackStack() })
             }
 
             composable(Routes.PLAYER) { entry ->

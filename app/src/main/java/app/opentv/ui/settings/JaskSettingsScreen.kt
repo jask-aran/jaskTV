@@ -100,9 +100,7 @@ fun JaskSettingsScreen(
     onOpenProviders: () -> Unit,
     onOpenAddons: () -> Unit,
     onOpenGuide: () -> Unit,
-    onOpenWebManager: () -> Unit,
     onOpenParental: () -> Unit,
-    onOpenAbout: () -> Unit,
     onBack: () -> Unit,
     onOpenChannels: () -> Unit = {},
 ) = JaskTheme {
@@ -273,15 +271,11 @@ fun JaskSettingsScreen(
                     JaskDivider()
                     Link(Icons.Outlined.Extension, stringResource(R.string.settings_addons_title),
                         if (addons.isEmpty()) stringResource(R.string.settings_addons_subtitle) else "${addons.size} installed", onOpenAddons)
-                    JaskDivider()
-                    Link(Icons.Outlined.PhoneAndroid, stringResource(R.string.settings_webmanager_title), stringResource(R.string.settings_webmanager_subtitle), onOpenWebManager)
                 }
             }
             item {
                 Group(stringResource(R.string.jask_settings_more)) {
                     Link(Icons.Outlined.Lock, stringResource(R.string.settings_parental_title), stringResource(R.string.settings_parental_subtitle), onOpenParental)
-                    JaskDivider()
-                    Link(Icons.Outlined.Info, stringResource(R.string.settings_about_title), stringResource(R.string.settings_about_subtitle), onOpenAbout)
                 }
             }
             item { Spacer(Modifier.navigationBarsPadding()) }

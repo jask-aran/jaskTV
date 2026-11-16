@@ -14,7 +14,6 @@ import app.opentv.core.ServiceLocator
 import app.opentv.data.model.EpgFeed
 import app.opentv.data.model.PlaybackPosition
 import app.opentv.data.model.Profile
-import app.opentv.pairing.ManagerServer
 import app.opentv.sync.NasSync
 import app.opentv.sync.WebDavCloudSync
 import app.opentv.sync.CloudSyncPrefs
@@ -305,25 +304,3 @@ class SyncViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-/**
- * Owns the "manage channels from your phone or laptop" web server for the manage screen.
- *
- * Same ownership shape as [SyncViewModel]: the server is bound to [viewModelScope] (so its idle
- * watchdog is torn down with the screen) and stopped in [onCleared]. The screen also starts it on
- * open and stops it on leave, mirroring the phone-pairing lifecycle — so no socket is ever left
- * listening on the user's network once they navigate away.
- */
-class WebManagerViewModel(app: Application) : AndroidViewModel(app) {
-    private val graph = ServiceLocator.get(app)
-    private val server = ManagerServer(viewModelScope, graph.catalogRepository, graph.settings, graph.sourceRepository)
-
-    val state: StateFlow<ManagerServer.State> = server.state
-
-    fun start() = server.start()
-
-    fun stop() = server.stop()
-
-    override fun onCleared() {
-        server.stop()
-    }
-}
