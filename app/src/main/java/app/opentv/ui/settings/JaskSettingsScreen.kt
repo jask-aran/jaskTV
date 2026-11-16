@@ -242,6 +242,7 @@ fun JaskSettingsScreen(
             item { Spacer(Modifier.navigationBarsPadding()) }
         }
     }) {
+        app.opentv.ui.JaskBarScrim(Modifier.align(Alignment.TopCenter), top = true)
         if (renaming && active != null) {
             var name by remember { mutableStateOf(active.name) }
             JaskSheet({ renaming = false }) {

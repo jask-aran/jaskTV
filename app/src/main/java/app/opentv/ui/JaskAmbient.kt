@@ -60,16 +60,19 @@ half4 main(float2 xy) {
     float tone = min(3.0, floor(clamp(field * 0.125 + 0.5, 0.0, 1.0) * 3.0 + bayer8(cell)));
     half4 ink = tone < 0.5 ? ink0 : tone < 1.5 ? ink1 : tone < 2.5 ? ink2 : ink3;
     float down = xy.y / view.y;
-    return half4(ink.rgb * (1.0 - fade * smoothstep(0.12, 0.78, down)), 1.0);
+    // Conduit's picture fade: dims towards the bottom by [fade], starting a quarter of the way down.
+    return half4(ink.rgb * (1.0 - fade * smoothstep(0.25, 1.0, down)), 1.0);
 }
 """
 
 @Composable
-internal fun Modifier.jaskWavesBackground(art: String?): Modifier {
-    val accent = rememberArtworkAccent(art)
+internal fun Modifier.jaskWavesBackground(ambient: JaskAmbient): Modifier {
+    val accent = rememberArtworkAccent(ambient.art)
+    // The flat colour the dither averages to, so heroes can fade into it before the dots begin.
+    ambient.wash = wavesWash(wavesInks(accent))
     if (Build.VERSION.SDK_INT < 33) return drawBehind { drawRect(Color.Black) }
     val shader = remember { RuntimeShader(WAVES) }
-    val grain = with(LocalDensity.current) { 2.dp.toPx() }.coerceAtLeast(2f)
+    val grain = 2f // device pixels, as in Conduit
     var time by remember { mutableFloatStateOf(0f) }
     val context = LocalContext.current
     val still = remember(context) {
@@ -88,10 +91,18 @@ internal fun Modifier.jaskWavesBackground(art: String?): Modifier {
         shader.setFloatUniform("view", size.width, size.height)
         shader.setFloatUniform("grain", grain)
         shader.setFloatUniform("time", time)
-        shader.setFloatUniform("fade", 1f)
+        shader.setFloatUniform("fade", 0.6f)
         inks.forEachIndexed { i, c -> shader.setColorUniform("ink$i", c.toArgb()) }
         drawRect(ShaderBrush(shader))
     }
+}
+
+/** Roughly the colour the dithered field reads as from a distance. */
+private fun wavesWash(inks: List<Color>): Color {
+    val w = floatArrayOf(.2f, .35f, .3f, .15f)
+    return Color(inks.indices.sumOf { (inks[it].red * w[it]).toDouble() }.toFloat(),
+        inks.indices.sumOf { (inks[it].green * w[it]).toDouble() }.toFloat(),
+        inks.indices.sumOf { (inks[it].blue * w[it]).toDouble() }.toFloat())
 }
 
 /** Near-black, deep, mid and light tones of the accent hue; transparent accent (no art) → all black. */
@@ -117,7 +128,7 @@ private fun rememberArtworkAccent(url: String?): Color {
             ?: return@LaunchedEffect
         target = withContext(Dispatchers.Default) { artworkAccent(bitmap) }
     }
-    return animateColorAsState(target, tween(900), label = "artworkAccent").value
+    return animateColorAsState(target, tween(300), label = "artworkAccent").value
 }
 
 /** Hue bucket weighted by saturation² × brightness (so vivid areas win over large dull ones), saturation lifted. */

@@ -1,6 +1,7 @@
 package app.opentv.ui.vod
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.drawBehind
 import kotlinx.coroutines.launch
 import app.opentv.R
 import androidx.compose.ui.res.stringResource
@@ -102,22 +103,27 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
         if (!pager.isScrollInProgress && titles.size > 1)
             pager.animateScrollToPage((pager.settledPage + 1) % titles.size, animationSpec = androidx.compose.animation.core.tween(1_100))
     }
-    Box(modifier.fillMaxWidth().then(if (wide) Modifier.height(440.dp) else Modifier.aspectRatio(0.9f))) {
+    val wash = app.opentv.ui.LocalJaskAmbient.current?.wash ?: JaskPageCanvas
+    val tail = with(androidx.compose.ui.platform.LocalDensity.current) { 200.dp.toPx() }
+    // Below the hero (outside the pager, which clips), its colour fades into the dithered page.
+    Box(modifier.fillMaxWidth().then(if (wide) Modifier.height(440.dp) else Modifier.aspectRatio(0.9f)).drawBehind {
+        drawRect(Brush.verticalGradient(listOf(wash, wash.copy(alpha = 0f)), startY = size.height - 1f, endY = size.height + tail),
+            topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - 1f), size = androidx.compose.ui.geometry.Size(size.width, tail))
+    }) {
         HorizontalPager(pager, Modifier.fillMaxSize(), key = { titles[it].key }) { page ->
             val t = titles[page]
             Box(Modifier.fillMaxSize().clickable { onOpen(t) }) {
-                // The art itself fades out at the bottom into the shell's ambient page colour.
+                // Art → the ambient colour (flat, no dots over the art) → below the hero, that colour
+                // fades into the dithered background (drawn past the item's bottom, under the rows).
+                val wash = app.opentv.ui.LocalJaskAmbient.current?.wash ?: JaskPageCanvas
                 AsyncImage(t.backdrop?.replace("/t/p/w1280/", "/t/p/original/"), null, contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize()
-                        .graphicsLayer(compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen)
-                        .drawWithContent {
-                            drawContent()
-                            drawRect(Brush.verticalGradient(0.55f to Color.Black, 1f to Color.Transparent),
-                                blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
-                        })
+                    alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize().drawWithContent {
+                        drawContent()
+                        drawRect(Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash))
+                    })
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.55f), 0.2f to Color.Transparent, 0.5f to Color.Transparent,
-                    0.62f to Color.Black.copy(alpha = 0.18f), 0.8f to Color.Black.copy(alpha = 0.3f), 1f to Color.Transparent)))
+                    0f to Color.Black.copy(alpha = 0.55f), 0.2f to Color.Transparent, 0.55f to Color.Transparent,
+                    0.8f to Color.Black.copy(alpha = 0.18f), 1f to Color.Transparent)))
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(t.title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,

@@ -95,7 +95,7 @@ internal fun JaskChromeFrame(
         LocalJaskContentPadding provides PaddingValues(top = statusBar + 72.dp, bottom = navBar + 84.dp)) {
         // The waves are part of the recorded page, so the header and rail glass blur them too.
         JaskSurfaceHost(Modifier.fillMaxSize().background(Color.Black), background = {
-            Box(Modifier.matchParentSize().jaskWavesBackground(ambient.art))
+            Box(Modifier.matchParentSize().jaskWavesBackground(ambient))
             content()
         }) {
             // Dim behind the status bar and header so the brand and clock read over artwork; cheap, no blur.
@@ -116,7 +116,11 @@ internal fun JaskChromeFrame(
 }
 
 /** The artwork the touch shell takes its page colour from; pages set it with [JaskAmbientFrom]. */
-internal class JaskAmbient { var art by mutableStateOf<String?>(null) }
+internal class JaskAmbient {
+    var art by mutableStateOf<String?>(null)
+    /** Flat colour of the dithered background; heroes fade into it so no dots show over artwork. */
+    var wash by mutableStateOf(Color.Black)
+}
 internal val LocalJaskAmbient = staticCompositionLocalOf<JaskAmbient?> { null }
 
 /** Colours the shell's page from [url] (the featured art, the top search hit, what you're watching). */
