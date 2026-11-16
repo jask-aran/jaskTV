@@ -520,7 +520,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
             }
 
             browsingDestination(Routes.SETTINGS_HUB, edgeToEdgeOnTouch = true) {
-                if (app.opentv.ui.LocalLayoutClass.current.isTouch) app.opentv.ui.settings.JaskSettingsScreen(
+                if (app.opentv.ui.LocalLayoutClass.current.usesJaskShell) app.opentv.ui.settings.JaskSettingsScreen(
                     profiles = profilesViewModel, vod = vodViewModel,
                     onOpenProfiles = { navController.navigate(Routes.PROFILES) },
                     onOpenProviders = { navController.navigate(Routes.PROVIDERS) },

@@ -131,7 +131,10 @@ private fun CanonicalMoviesContent(vm: VodViewModel, onOpen: (Movie) -> Unit,
 internal fun JaskTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(background = JaskCanvas, surface = Color(0xFF22201F),
         primaryContainer = Color(0xFF393939), secondary = JaskAccent, secondaryContainer = Color(0xFF303030), onSecondaryContainer = Color.White, surfaceVariant = Color(0xFF303030), onSurfaceVariant = Color(0xFFBDBDBD), primary = JaskAccent, onPrimary = JaskCanvas, onSurface = Color(0xFFF6F3EF),
-        onBackground = Color(0xFFF6F3EF)), typography = MaterialTheme.typography, content = content)
+        onBackground = Color(0xFFF6F3EF)), typography = MaterialTheme.typography) {
+        // D-pad focus ring on every clickable (see JaskFocus.kt), with the touch ripple underneath.
+        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.LocalIndication provides app.opentv.ui.JaskIndication, content = content)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -285,7 +288,7 @@ internal fun PosterArt(poster: String?, facts: PosterFacts, modifier: Modifier, 
 /** Frosted badge over a poster: badge-tone glass over the poster's art backdrop (see [PosterArt]). */
 @Composable
 internal fun PosterFrost(shape: androidx.compose.ui.graphics.Shape, modifier: Modifier, content: @Composable BoxScope.() -> Unit) =
-    app.opentv.ui.JaskGlassSurface(modifier, shape, app.opentv.ui.JaskGlassTone.BADGE, content)
+    app.opentv.ui.JaskGlassSurface(modifier, shape, app.opentv.ui.JaskGlassTone.BADGE, content = content)
 
 /** Small dark pill over artwork; legible on bright posters without a full-width scrim. */
 @Composable

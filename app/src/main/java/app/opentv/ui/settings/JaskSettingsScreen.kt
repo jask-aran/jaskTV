@@ -111,6 +111,7 @@ fun JaskSettingsScreen(
     val everything by vod.showUnavailable.collectAsState()
     val options by vod.movieOptions.collectAsState()
     val languages by vod.catalogueLanguages.collectAsState()
+    val glass by settings.glassMode.collectAsState()
     val live by settings.liveEnabled.collectAsState()
     val movies by settings.moviesEnabled.collectAsState()
     val shows by settings.seriesEnabled.collectAsState()
@@ -195,6 +196,15 @@ fun JaskSettingsScreen(
                         CatalogueSort.RATING -> R.string.catalogue_sort_rating
                         CatalogueSort.ADDED -> R.string.catalogue_sort_added
                     }) }, { it == options.sort }) { vod.applyMovieOptions(options.copy(sort = it)) }
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+            item {
+                Group(stringResource(R.string.jask_settings_appearance)) {
+                    Label(stringResource(R.string.jask_settings_glass))
+                    Chips(listOf("auto" to stringResource(R.string.jask_glass_auto), "live" to stringResource(R.string.jask_glass_live),
+                        "frosted" to stringResource(R.string.jask_glass_frosted), "solid" to stringResource(R.string.jask_glass_solid)),
+                        { it == glass }) { settings.setGlassMode(it) }
                     Spacer(Modifier.height(6.dp))
                 }
             }

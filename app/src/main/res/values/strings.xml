@@ -674,6 +674,12 @@
     <string tools:ignore="MissingTranslation" name="jask_browse">Browse</string>
     <string tools:ignore="MissingTranslation" name="jask_show_unavailable">Show everything</string>
     <string tools:ignore="MissingTranslation" name="jask_show_unavailable_hint">Include titles not on your sources</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_appearance">Appearance</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_glass">Glass</string>
+    <string tools:ignore="MissingTranslation" name="jask_glass_auto">Automatic</string>
+    <string tools:ignore="MissingTranslation" name="jask_glass_live">Live blur</string>
+    <string tools:ignore="MissingTranslation" name="jask_glass_frosted">Frosted</string>
+    <string tools:ignore="MissingTranslation" name="jask_glass_solid">Solid</string>
     <string tools:ignore="MissingTranslation" name="jask_profile_local">Profile on this device</string>
     <string tools:ignore="MissingTranslation" name="jask_profiles_manage">Manage</string>
     <string tools:ignore="MissingTranslation" name="jask_settings_sources_shown">Sources shown in Movies and Shows</string>

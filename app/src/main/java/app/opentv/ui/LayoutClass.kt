@@ -22,6 +22,15 @@ enum class LayoutClass {
     TV, PHONE, TABLET;
 
     val isTouch: Boolean get() = this != TV
+
+    /**
+     * Every class now uses the jaskTV screens; TV gets the wide (tablet) layout driven by the
+     * d-pad. The original OpenTV TV screens remain behind this switch until they are removed.
+     */
+    val usesJaskShell: Boolean get() = true
+
+    /** Tablet, TV and desktop: header navigation, shelves, side-by-side layouts. */
+    val isWide: Boolean get() = this != PHONE
 }
 
 val LocalLayoutClass = staticCompositionLocalOf { LayoutClass.TV }

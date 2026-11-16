@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -101,11 +102,21 @@ private fun debugNoBlur(): Boolean = debugProp("debug.jasktv.noblur") == "1"
 internal fun rememberJaskMaterial(isTelevision: Boolean): JaskMaterial {
     val context = LocalContext.current
     val mode by remember(context) { AppSettings.get(context).glassMode }.collectAsState()
-    return remember(mode, isTelevision) { resolveMaterial(context, mode, isTelevision) }
+    // Re-checked when the window moves to another display (DeX, glasses), which changes the configuration.
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val external = remember(context, configuration) { onExternalDisplay(context) }
+    return remember(mode, isTelevision, external) { resolveMaterial(context, mode, isTelevision, external) }
 }
 
-/** "auto": live blur on capable phones and tablets, frosted on TVs, solid on low-RAM devices. */
-internal fun resolveMaterial(context: Context, mode: String, isTelevision: Boolean): JaskMaterial {
+/** True when this window is on a display other than the device's own screen (Samsung DeX, glasses, casting). */
+private fun onExternalDisplay(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < 30) return false
+    val display = runCatching { context.display }.getOrNull() ?: return false
+    return display.displayId != android.view.Display.DEFAULT_DISPLAY
+}
+
+/** "auto": live blur on capable phones and tablets, frosted on TVs and external displays, solid on low-RAM devices. */
+internal fun resolveMaterial(context: Context, mode: String, isTelevision: Boolean, external: Boolean = false): JaskMaterial {
     val lowRam = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).isLowRamDevice
     val canLive = Build.VERSION.SDK_INT >= 31 && !lowRam && !debugNoBlur()
     return when (debugProp("debug.jasktv.material") ?: mode) {
@@ -114,7 +125,9 @@ internal fun resolveMaterial(context: Context, mode: String, isTelevision: Boole
         "solid" -> JaskMaterial.SOLID
         else -> when {
             lowRam -> JaskMaterial.SOLID
-            isTelevision || !canLive -> JaskMaterial.FROSTED
+            // External displays: a phone opened in DeX on glasses froze its whole screen with live
+            // blur on 2026-11-16 (cause unconfirmed), so they default to frosted.
+            isTelevision || external || !canLive -> JaskMaterial.FROSTED
             else -> JaskMaterial.LIVE
         }
     }
@@ -221,24 +234,28 @@ internal enum class JaskGlassTone { CHROME, BADGE }
  */
 @Composable
 internal fun JaskGlassSurface(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(24.dp),
-    tone: JaskGlassTone = JaskGlassTone.CHROME, content: @Composable BoxScope.() -> Unit) {
+    tone: JaskGlassTone = JaskGlassTone.CHROME, showFocus: Boolean = false, content: @Composable BoxScope.() -> Unit) {
+    // Buttons (showFocus): a white rim and a slight lift while the control inside has d-pad focus.
+    var focused by remember { mutableStateOf(false) }
     val backdrop = LocalJaskBackdrop.current
     val material = LocalJaskMaterial.current
     val inRecording = LocalJaskInRecording.current
     val wash = LocalJaskAmbient.current?.wash ?: Color.Black
     val badge = tone == JaskGlassTone.BADGE
     // Badges: shadow and clip share one layer.
-    val clipped = if (badge) modifier.shadow(3.dp, shape, clip = true) else modifier.clip(shape)
+    val base = if (showFocus) modifier.jaskFocusLift().onFocusChanged { focused = it.hasFocus } else modifier
+    val clipped = if (badge) base.shadow(3.dp, shape, clip = true) else base.clip(shape)
     val fill = fallback(badge, inRecording, wash)
     val behind = when {
         backdrop is JaskLiveBackdrop && material == JaskMaterial.LIVE -> Modifier.liveFrost(backdrop)
         backdrop is JaskArtBackdrop -> Modifier.artFrost(backdrop, fill)
         else -> Modifier.background(fill)
     }
-    Box(clipped.then(behind).background(if (badge) BadgeSheen else ChromeSheen).border(1.dp, if (badge) BadgeRim else ChromeRim, shape),
+    Box(clipped.then(behind).background(if (badge) BadgeSheen else ChromeSheen).border(if (focused) 3.dp else 1.dp, if (focused) FocusRim else if (badge) BadgeRim else ChromeRim, shape),
         content = content)
 }
 
+private val FocusRim = androidx.compose.ui.graphics.SolidColor(Color.White)
 private val ChromeSheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = .14f), Color.Black.copy(alpha = .28f)))
 private val BadgeSheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = .16f), Color.Black.copy(alpha = .38f)))
 private val ChromeRim = Brush.verticalGradient(listOf(Color.White.copy(alpha = .38f), Color.White.copy(alpha = .06f), Color.White.copy(alpha = .12f)))

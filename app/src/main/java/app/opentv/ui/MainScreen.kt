@@ -139,7 +139,7 @@ fun MainScreen(
     vodViewModel: VodViewModel = viewModel(),
     onOpenGuide: () -> Unit = onOpenSettings,
 ) {
-    if (LocalLayoutClass.current.isTouch) {
+    if (LocalLayoutClass.current.usesJaskShell) {
         app.opentv.ui.vod.JaskTheme {
             var destination by rememberSaveable { mutableStateOf(JaskDestination.MOVIES) }
             var filterRequest by remember { mutableStateOf(0) }

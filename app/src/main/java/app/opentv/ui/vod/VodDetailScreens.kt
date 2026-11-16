@@ -143,7 +143,7 @@ fun MovieDetailScreen(
         runCatching { playFocus.requestFocus() }
     }
 
-    if (LocalLayoutClass.current.isTouch) {
+    if (LocalLayoutClass.current.usesJaskShell) {
         val tint = rememberArtworkTint(m.backdropUrl ?: m.posterUrl)
         var progress by remember(m.id) { mutableStateOf<Float?>(null) }
         var minutesLeft by remember(m.id) { mutableStateOf<Long?>(null) }
@@ -441,7 +441,7 @@ fun SeriesDetailScreen(
             .toSortedMap()
     }
 
-    if (LocalLayoutClass.current.isTouch) {
+    if (LocalLayoutClass.current.usesJaskShell) {
         val tint = rememberArtworkTint(s.backdropUrl ?: s.posterUrl)
         val positionsFlow = remember(s.sourceId, s.seriesId) { viewModel.seriesPositions(s) }
         val positions by positionsFlow.collectAsState(initial = emptyList())

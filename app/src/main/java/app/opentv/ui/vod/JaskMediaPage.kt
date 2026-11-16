@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
 import app.opentv.ui.JaskGlassSurface
 import app.opentv.ui.jaskArtSource
+import app.opentv.ui.jaskFocusLift
 import app.opentv.ui.JaskGlassCircle
 import app.opentv.ui.JaskGlassHost
 import androidx.compose.material3.Icon
@@ -240,7 +241,7 @@ private fun HeroBadge(content: @Composable RowScope.() -> Unit) {
 /** White play pill sized for the inline hero row; resume progress runs along its bottom edge. */
 @Composable
 internal fun RowScope.JaskPlayPill(label: String, progress: Float? = null, onClick: () -> Unit) {
-    Box(Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(50)).background(Color.White).clickable(onClick = onClick)) {
+    Box(Modifier.weight(1f).jaskFocusLift().height(48.dp).clip(RoundedCornerShape(50)).background(Color.White).clickable(onClick = onClick)) {
         Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(4.dp))
@@ -257,7 +258,7 @@ internal fun RowScope.JaskPlayPill(label: String, progress: Float? = null, onCli
 /** Glass source chooser for the hero row: what plays now ("4K", provider), and how many choices. */
 @Composable
 internal fun JaskSourceButton(label: String, count: Int, onClick: () -> Unit) {
-    JaskGlassSurface(Modifier.height(48.dp).widthIn(max = 150.dp), RoundedCornerShape(50)) {
+    JaskGlassSurface(Modifier.height(48.dp).widthIn(max = 150.dp), RoundedCornerShape(50), showFocus = true) {
         Row(Modifier.fillMaxHeight().clickable(onClick = onClick).padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Layers, null, tint = Color(0xFFF0F0F0), modifier = Modifier.size(18.dp))
@@ -272,7 +273,7 @@ internal fun JaskSourceButton(label: String, count: Int, onClick: () -> Unit) {
 /** Glass circle holding the download control (icon, progress ring or done tick). */
 @Composable
 internal fun JaskGlassDownload(control: @Composable () -> Unit) {
-    JaskGlassSurface(Modifier.size(48.dp), CircleShape) {
+    JaskGlassSurface(Modifier.size(48.dp), CircleShape, showFocus = true) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides Color(0xFFF0F0F0)) { control() }
         }

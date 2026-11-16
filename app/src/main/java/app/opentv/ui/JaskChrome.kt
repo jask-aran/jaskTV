@@ -78,7 +78,7 @@ internal fun JaskChromeFrame(
     val ambient = remember { JaskAmbient() }
     LaunchedEffect(current) { ambient.art = null }
     // Tablet, desktop and TV have width to spare: the pill navigation moves up into the header.
-    val wide = LocalLayoutClass.current == LayoutClass.TABLET
+    val wide = LocalLayoutClass.current.isWide
     CompositionLocalProvider(LocalJaskOpenSearch provides { if (searchEnabled) searching = true }, LocalJaskTouchShell provides true,
         LocalJaskAmbient provides ambient,
         LocalJaskSearchFocus provides searchFocus,
@@ -284,7 +284,7 @@ internal fun JaskGlassHost(modifier: Modifier = Modifier, background: @Composabl
     val live = LocalJaskMaterial.current == JaskMaterial.LIVE
     val page = rememberGraphicsLayer()
     val blurred = rememberGraphicsLayer()
-    val down = remember { debugProp("debug.jasktv.blurdown")?.toFloatOrNull() ?: 4f }
+    val down = remember { debugProp("debug.jasktv.blurdown")?.toFloatOrNull()?.takeIf { it >= 1f } ?: 4f }
     val radius = with(LocalDensity.current) { 28.dp.toPx() }
     val backdrop = remember(blurred) { JaskLiveBackdrop(blurred, down) }
     if (live) remember(blurred, radius) { blurred.renderEffect = jaskLiveEffect(radius / down) }
@@ -316,7 +316,7 @@ internal fun JaskWordmark(modifier: Modifier = Modifier, tint: Color = Color(0xF
 @Composable
 internal fun JaskGlassCircle(icon: androidx.compose.ui.graphics.vector.ImageVector, contentDescription: String,
     modifier: Modifier = Modifier, active: Boolean = false, size: androidx.compose.ui.unit.Dp = 48.dp, onClick: () -> Unit) {
-    JaskGlassSurface(modifier.size(size), CircleShape) {
+    JaskGlassSurface(modifier.size(size), CircleShape, showFocus = true) {
         IconButton(onClick, Modifier.fillMaxSize()) {
             Icon(icon, contentDescription, Modifier.size(22.dp), tint = if (active) Color.White else Color(0xFFF0F0F0))
         }
@@ -354,13 +354,13 @@ internal fun JaskHeader(onFilter: () -> Unit, onAccount: () -> Unit, modifier: M
     Row(modifier.testTag("jask.header").height(52.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         JaskWordmark(Modifier.height(20.dp))
         Spacer(Modifier.weight(1f))
-        if (filterIcon != null) JaskGlassSurface(Modifier.size(48.dp), RoundedCornerShape(50)) {
+        if (filterIcon != null) JaskGlassSurface(Modifier.size(48.dp), RoundedCornerShape(50), showFocus = true) {
             IconButton(onFilter, Modifier.fillMaxSize()) {
                 Icon(filterIcon, filterLabel ?: stringResource(R.string.catalogue_filters), Modifier.size(20.dp), tint = Color(0xFFF0F0F0))
             }
         }
         Box {
-            JaskGlassSurface(Modifier.size(48.dp), RoundedCornerShape(50)) {
+            JaskGlassSurface(Modifier.size(48.dp), RoundedCornerShape(50), showFocus = true) {
                 IconButton(onAccount, Modifier.fillMaxSize()) {
                     Icon(Icons.Default.Person, stringResource(R.string.jask_account), tint = Color(0xFFF5F5F5), modifier = Modifier.size(23.dp))
                 }
@@ -408,14 +408,14 @@ internal fun JaskBottomBar(current: JaskDestination, onSelect: (JaskDestination)
                     }
                 }
             }
-            JaskGlassSurface(Modifier.size(JaskRailHeight), RoundedCornerShape(50)) {
+            JaskGlassSurface(Modifier.size(JaskRailHeight), RoundedCornerShape(50), showFocus = true) {
                 IconButton(::close, Modifier.fillMaxSize()) {
                     Icon(Icons.Default.Close, stringResource(R.string.common_cancel), Modifier.size(22.dp), tint = Color(0xFFF5F5F5))
                 }
             }
         } else {
             JaskFloatingNavigation(current, onSelect, Modifier.weight(1f))
-            JaskGlassSurface(Modifier.size(JaskRailHeight), RoundedCornerShape(50)) {
+            JaskGlassSurface(Modifier.size(JaskRailHeight), RoundedCornerShape(50), showFocus = true) {
                 IconButton({ setSearching(true) }, Modifier.fillMaxSize().testTag("jask.searchButton"), enabled = searchEnabled) {
                     Icon(Icons.Default.Search, stringResource(R.string.nav_search), Modifier.size(24.dp),
                         tint = if (searchEnabled) Color(0xFFF5F5F5) else Color(0x55F5F5F5))
