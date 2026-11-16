@@ -21,3 +21,6 @@ captures/
 
 # Private provider inventory and source evaluations
 .local/
+
+# Local working handoff: holds device addresses, local paths and private notes
+HANDOFF.md
