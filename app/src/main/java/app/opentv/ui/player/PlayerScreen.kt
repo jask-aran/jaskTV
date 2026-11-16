@@ -5,7 +5,6 @@
  */
 package app.opentv.ui.player
 
-import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import app.opentv.ui.LocalLayoutClass
@@ -14,7 +13,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -59,6 +57,7 @@ import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -93,11 +92,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.C
-import androidx.media3.common.Tracks
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.ui.PlayerView
 import app.opentv.R
 import app.opentv.core.ServiceLocator
 import app.opentv.core.SleepTimer
@@ -106,7 +100,13 @@ import app.opentv.core.requestIgnoreBatteryOptimizations
 import app.opentv.data.model.Channel
 import app.opentv.data.model.shownName
 import app.opentv.player.PlaybackQueue
-import app.opentv.player.PlayerController
+import app.opentv.player.PlaybackRequest
+import app.opentv.player.PlaybackState
+import app.opentv.player.PlayerEngine
+import app.opentv.player.PlayerEngineConfig
+import app.opentv.player.PlayerTrack
+import app.opentv.player.PlayerTrackType
+import app.opentv.player.VideoScale
 import app.opentv.ui.RecordingBackgroundDialog
 import app.opentv.ui.RecordingBackgroundPrompt
 import coil.compose.AsyncImage
@@ -126,11 +126,10 @@ import java.util.Locale
  * quality and aspect ratio. It hides after a few seconds and any remote button brings it back.
  * Nothing is ever left permanently painted over the picture.
  *
- * Subtitles and audio come from the actual tracks in the stream ([PlayerController.tracks]) and
+ * Subtitles and audio come from the actual tracks in the stream ([PlayerEngine.tracks]) and
  * are selected explicitly — that is the fix for "captions on but nothing shows", which happens
  * when the renderer is merely enabled and left to guess a language.
  */
-@OptIn(UnstableApi::class)
 @Composable
 fun PlayerScreen(
     channelId: Long?,
@@ -143,16 +142,18 @@ fun PlayerScreen(
     val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) }
     val subtitlesDefault by settings.subtitlesEnabled.collectAsState()
     val controller = remember {
-        PlayerController(
-            context, scope, graph.streamingHttpClient,
-            subtitlesEnabled = settings.subtitlesEnabled.value,
-            // Opt-in shallow DVR so the transport's pause/rewind actually holds on a live stream.
-            dvr = settings.livePauseEnabled.value,
+        graph.playerEngines.create(
+            scope,
+            PlayerEngineConfig(
+                subtitlesEnabled = settings.subtitlesEnabled.value,
+                // Opt-in shallow DVR so the transport's pause/rewind actually holds on a live stream.
+                dvr = settings.livePauseEnabled.value,
+            ),
         )
     }
     val state by controller.state.collectAsState()
     val tracks by controller.tracks.collectAsState()
-    val playback = BindPlayerPlayback(controller.player)
+    val playback = BindPlayerPlayback(controller)
     // What's recording right now, so the Record button can show as armed for this channel.
     val activeRecordings by graph.recordingRepository.observeActive().collectAsState(initial = emptyList())
 
@@ -225,7 +226,7 @@ fun PlayerScreen(
             // Xtream/M3U carry a ready URL; a Stalker channel's URL is minted here from its cmd.
             val url = graph.catalogRepository.resolvePlaybackUrl(channel, source)
             controller.play(
-                PlayerController.Request(
+                PlaybackRequest(
                     url = url,
                     title = channel.shownName,
                     userAgent = source?.userAgent ?: "OpenTV/0.1 (Android)",
@@ -292,17 +293,15 @@ fun PlayerScreen(
     // Apply the saved captions default once the stream's tracks arrive. Only auto-selects when
     // nothing is chosen yet, so it never overrides a track the user picked by hand.
     LaunchedEffect(tracks) {
-        val hasText = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT }
-        val textChosen = tracks.groups.any { g ->
-            g.type == C.TRACK_TYPE_TEXT && (0 until g.length).any { g.isTrackSelected(it) }
-        }
+        val hasText = tracks.any { it.type == PlayerTrackType.TEXT }
+        val textChosen = tracks.any { it.type == PlayerTrackType.TEXT && it.isSelected }
         if (subtitlesDefault && hasText && !textChosen) controller.setSubtitlesEnabled(true)
     }
 
     // Auto-hide the bar after a few seconds — but never while paused or with a picker open.
     LaunchedEffect(controlsVisible, interaction, state, paused, panel, displayMenuOpen) {
         if (controlsVisible && !displayMenuOpen && !paused && panel == Panel.NONE &&
-            state is PlayerController.State.Playing
+            state is PlaybackState.Playing
         ) {
             delay(CONTROLS_TIMEOUT_MILLIS)
             controlsVisible = false
@@ -404,21 +403,10 @@ fun PlayerScreen(
                 },
             ),
     ) {
-        AndroidView(
+        controller.surface.Content(
             modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = controller.player
-                    useController = false
-                    subtitleView?.setUserDefaultStyle()
-                    subtitleView?.setUserDefaultTextSize()
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                }
-            },
-            update = { it.resizeMode = resizeMode },
+            scale = VideoScale.fromStored(resizeMode),
+            transparent = false,
         )
 
         if (touch) ImmersiveSystemBars(hidden = !controlsVisible || inPip)
@@ -454,7 +442,7 @@ fun PlayerScreen(
         }
 
         if (!inPip) when (val current = state) {
-            is PlayerController.State.Buffering -> {
+            is PlaybackState.Buffering -> {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator()
@@ -464,7 +452,7 @@ fun PlayerScreen(
                 }
             }
 
-            is PlayerController.State.Error -> {
+            is PlaybackState.Error -> {
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -484,6 +472,9 @@ fun PlayerScreen(
                         )
                         Spacer(Modifier.height(24.dp))
                         Button(onClick = { controller.retry() }) { Text(stringResource(R.string.common_try_again)) }
+                        variants.firstOrNull { it.id != currentId }?.let { alternative ->
+                            TextButton(onClick = { tuneTo(alternative) }) { Text("Try alternative source") }
+                        }
                     }
                 }
             }
@@ -492,9 +483,9 @@ fun PlayerScreen(
         }
 
         val channelTitle = when (val s = state) {
-            is PlayerController.State.Buffering -> s.title
-            is PlayerController.State.Playing -> s.title
-            is PlayerController.State.Error -> s.title
+            is PlaybackState.Buffering -> s.title
+            is PlaybackState.Playing -> s.title
+            is PlaybackState.Error -> s.title
             else -> ""
         }
 
@@ -594,7 +585,7 @@ fun PlayerScreen(
                         selected = false,
                         focusRequester = barFocus,
                     ) {
-                        controller.player.playWhenReady = paused
+                        controller.setPlaying(paused)
                         interaction++
                     }
                     if (controller.isSeekable) {
@@ -752,13 +743,12 @@ private fun ChannelListRow(
 
 private enum class Panel { NONE, SUBTITLES, AUDIO, QUALITY }
 
-@OptIn(UnstableApi::class)
 @Composable
 private fun OptionPanel(
     panel: Panel,
-    controller: PlayerController,
+    controller: PlayerEngine,
     settings: app.opentv.core.AppSettings,
-    tracks: Tracks,
+    tracks: List<PlayerTrack>,
     variants: List<Channel>,
     currentId: Long?,
     onTune: (Channel) -> Unit,
@@ -813,52 +803,42 @@ private fun OptionPanel(
 
 private data class Option(val label: String, val selected: Boolean, val onClick: () -> Unit)
 
-@OptIn(UnstableApi::class)
 private fun buildSubtitleOptions(
-    controller: PlayerController,
+    controller: PlayerEngine,
     settings: app.opentv.core.AppSettings,
-    tracks: Tracks,
+    tracks: List<PlayerTrack>,
     offLabel: String,
     onDone: () -> Unit,
 ): List<Option> {
-    val textGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-    val anySelected = textGroups.any { g -> (0 until g.length).any { g.isTrackSelected(it) } }
+    val textTracks = tracks.filter { it.type == PlayerTrackType.TEXT }
+    val anySelected = textTracks.any { it.isSelected }
     val list = mutableListOf<Option>()
     list += Option(offLabel, !anySelected) {
         controller.disableText()
         settings.setSubtitlesEnabled(false)
         onDone()
     }
-    textGroups.forEach { group ->
-        for (i in 0 until group.length) {
-            if (!group.isTrackSupported(i)) continue
-            val format = group.getTrackFormat(i)
-            list += Option(trackLabel(format.label, format.language, list.size), group.isTrackSelected(i)) {
-                controller.selectTrack(group, i)
-                settings.setSubtitlesEnabled(true)
-                onDone()
-            }
+    textTracks.filter { it.isSupported }.forEach { track ->
+        list += Option(trackLabel(track.label, track.language, list.size), track.isSelected) {
+            controller.selectTrack(track)
+            settings.setSubtitlesEnabled(true)
+            onDone()
         }
     }
     return list
 }
 
-@OptIn(UnstableApi::class)
 private fun buildAudioOptions(
-    controller: PlayerController,
-    tracks: Tracks,
+    controller: PlayerEngine,
+    tracks: List<PlayerTrack>,
     onDone: () -> Unit,
 ): List<Option> {
-    val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+    val audioTracks = tracks.filter { it.type == PlayerTrackType.AUDIO }
     val list = mutableListOf<Option>()
-    audioGroups.forEach { group ->
-        for (i in 0 until group.length) {
-            if (!group.isTrackSupported(i)) continue
-            val format = group.getTrackFormat(i)
-            list += Option(trackLabel(format.label, format.language, list.size), group.isTrackSelected(i)) {
-                controller.selectTrack(group, i)
-                onDone()
-            }
+    audioTracks.filter { it.isSupported }.forEach { track ->
+        list += Option(trackLabel(track.label, track.language, list.size), track.isSelected) {
+            controller.selectTrack(track)
+            onDone()
         }
     }
     return list

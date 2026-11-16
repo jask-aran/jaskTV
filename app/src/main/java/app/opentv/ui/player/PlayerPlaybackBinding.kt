@@ -7,47 +7,46 @@ package app.opentv.ui.player
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
-import androidx.media3.common.Player
 import app.opentv.core.PipState
 import app.opentv.core.pipAspectRatio
+import app.opentv.player.PlayerEngine
 
 data class PlayerPlaybackStatus(val isPlaying: Boolean, val playWhenReady: Boolean)
 
-/** One listener and one PiP lease per player. Never infer playback from READY or a UI toggle. */
+/** One PiP lease per player. Never infer playback from READY or a UI toggle. */
 @Composable
-fun BindPlayerPlayback(player: Player, onBackground: () -> Unit = {}): PlayerPlaybackStatus {
-    var status by remember(player) {
-        mutableStateOf(PlayerPlaybackStatus(player.isPlaying, player.playWhenReady))
-    }
+fun BindPlayerPlayback(engine: PlayerEngine, onBackground: () -> Unit = {}): PlayerPlaybackStatus {
+    val status by engine.status.collectAsState()
     val background by rememberUpdatedState(onBackground)
-    DisposableEffect(player) {
-        val token = Any()
-        fun pause() {
-            player.pause()
+    val token = remember(engine) { Any() }
+
+    DisposableEffect(engine) {
+        PipState.attach(token) {
+            engine.setPlaying(false)
             background()
         }
-        PipState.attach(token, ::pause)
-        fun publish() {
-            // Also catches a delayed prepare/retry that sets playWhenReady after Home/Stop.
-            if ((!PipState.owns(token) || !PipState.playbackAllowed) && player.playWhenReady) pause()
-            status = PlayerPlaybackStatus(player.isPlaying, player.playWhenReady)
-            val size = player.videoSize
-            PipState.update(token, player.isPlaying, pipAspectRatio(size.width, size.height, size.pixelWidthHeightRatio))
-        }
-        val listener = object : Player.Listener {
-            override fun onEvents(player: Player, events: Player.Events) = publish()
-        }
-        player.addListener(listener)
-        publish()
-        onDispose {
-            player.removeListener(listener)
-            PipState.detach(token)
+        onDispose { PipState.detach(token) }
+    }
+
+    // Also catches a delayed prepare/retry that sets playWhenReady after Home/Stop.
+    LaunchedEffect(engine) {
+        engine.status.collect { s ->
+            if ((!PipState.owns(token) || !PipState.playbackAllowed) && s.playWhenReady) {
+                engine.setPlaying(false)
+                background()
+            }
+            PipState.update(
+                token,
+                s.isPlaying,
+                pipAspectRatio(s.videoSize.width, s.videoSize.height, s.videoSize.pixelWidthHeightRatio),
+            )
         }
     }
-    return status
+
+    return PlayerPlaybackStatus(status.isPlaying, status.playWhenReady)
 }

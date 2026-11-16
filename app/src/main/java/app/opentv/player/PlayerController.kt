@@ -33,7 +33,13 @@ import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
 /**
- * Owns the single [ExoPlayer] instance and everything about switching what it is playing.
+ * Owns the single ExoPlayer instance and everything about switching what it is playing.
+ *
+ * This is the Android implementation of [PlayerEngine]. Screens talk to the interface; swapping in
+ * VLC on a Mac or AVPlayer on iOS means writing another implementation of that interface, not
+ * rewriting the player screens. The debounce/retry policy below is still ExoPlayer-shaped (it uses
+ * Exo's load-error policy and restarts), so it will move into a platform-neutral coordinator when
+ * the second engine lands; until then this class is both the engine and the coordinator.
  *
  * ## Why one player, reused
  *
@@ -78,43 +84,31 @@ class PlayerController(
      */
     growingDataSourceFactory: androidx.media3.datasource.DataSource.Factory? = null,
     /**
-     * Playing a recording that is still being written (watch-while-recording). Playback is held a
-     * cushion *behind* the file's growing edge (see the LIVE_REC_* constants) so the bursty arrival
-     * of an IPTV source — worst when the recording is read back over SMB from a NAS, where each read
-     * is a network round-trip — rides over the gaps instead of stalling on every one.
+     * Playing a recording that is still being written changes the buffer targets: hold playback a
+     * cushion behind the file's growing edge instead of right on it.
      */
     private val liveRecording: Boolean = false,
-) {
+) : PlayerEngine {
 
-    /** Channel-surf debounce for this controller — longer for the preview so browsing is calm. */
     private val switchDebounceMillis = if (preview) PREVIEW_SWITCH_DEBOUNCE_MILLIS else SWITCH_DEBOUNCE_MILLIS
 
-    sealed interface State {
-        data object Idle : State
-        data class Buffering(val title: String) : State
-        data class Playing(val title: String) : State
-        /** Playback stopped and retries are exhausted. [message] is written for humans. */
-        data class Error(val title: String, val message: String, val canRetry: Boolean) : State
-    }
+    private val _state = MutableStateFlow<PlaybackState>(PlaybackState.Idle)
+    override val state: StateFlow<PlaybackState> = _state.asStateFlow()
 
-    data class Request(
-        val url: String,
-        val title: String,
-        val userAgent: String,
-        /** Live streams are never resumed; VOD is. */
-        val startPositionMillis: Long = 0L,
-        val isLive: Boolean = true,
-    )
-
-    private val _state = MutableStateFlow<State>(State.Idle)
-    val state: StateFlow<State> = _state.asStateFlow()
+    /** Media3's own track model, kept private for selection; the UI sees [PlayerTrack]. */
+    private val _mediaTracks = MutableStateFlow(Tracks.EMPTY)
 
     /** The current stream's tracks (audio/text/video), for the in-player pickers. */
-    private val _tracks = MutableStateFlow(Tracks.EMPTY)
-    val tracks: StateFlow<Tracks> = _tracks.asStateFlow()
+    private val _tracks = MutableStateFlow<List<PlayerTrack>>(emptyList())
+    override val tracks: StateFlow<List<PlayerTrack>> = _tracks.asStateFlow()
+
+    private val _status = MutableStateFlow(PlaybackStatus())
+    override val status: StateFlow<PlaybackStatus> = _status.asStateFlow()
+
+    override val surface: PlayerSurfaceHost by lazy { ExoPlayerSurfaceHost(this) }
 
     private var switchJob: Job? = null
-    private var current: Request? = null
+    private var current: PlaybackRequest? = null
     private var consecutiveFailures = 0
 
     /**
@@ -179,7 +173,8 @@ class PlayerController(
             .build()
     }
 
-    val player: ExoPlayer = ExoPlayer.Builder(context)
+    /** Android-only escape hatch for the surface host. Screens must not use this. */
+    internal val player: ExoPlayer = ExoPlayer.Builder(context)
         .setSeekBackIncrementMs(SEEK_INCREMENT_MILLIS)
         .setSeekForwardIncrementMs(SEEK_INCREMENT_MILLIS)
         .setMediaSourceFactory(
@@ -216,19 +211,25 @@ class PlayerController(
         .apply {
             addListener(object : Player.Listener {
                 override fun onTracksChanged(tracks: Tracks) {
-                    _tracks.value = tracks
+                    _mediaTracks.value = tracks
+                    _tracks.value = tracks.toPlayerTracks()
+                    publishStatus()
+                }
+
+                override fun onEvents(player: Player, events: Player.Events) {
+                    publishStatus()
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     val title = current?.title.orEmpty()
                     _state.value = when (playbackState) {
-                        Player.STATE_BUFFERING -> State.Buffering(title)
+                        Player.STATE_BUFFERING -> PlaybackState.Buffering(title)
                         Player.STATE_READY -> {
                             consecutiveFailures = 0
-                            State.Playing(title)
+                            PlaybackState.Playing(title)
                         }
                         Player.STATE_IDLE -> _state.value
-                        Player.STATE_ENDED -> State.Idle
+                        Player.STATE_ENDED -> PlaybackState.Idle
                         else -> _state.value
                     }
                 }
@@ -236,7 +237,7 @@ class PlayerController(
                 override fun onPlayerError(error: PlaybackException) {
                     consecutiveFailures++
                     val request = current
-                    _state.value = State.Error(
+                    _state.value = PlaybackState.Error(
                         title = request?.title.orEmpty(),
                         message = PlaybackErrors.describe(error),
                         canRetry = consecutiveFailures < MAX_AUTO_RESTARTS,
@@ -253,13 +254,7 @@ class PlayerController(
             })
         }
 
-    /**
-     * Switches playback.
-     *
-     * @param debounce when true (the default for channel surfing) the switch waits briefly so
-     * that rapid presses collapse into a single tune. Pass false for a deliberate selection.
-     */
-    fun play(request: Request, debounce: Boolean = true) {
+    override fun play(request: PlaybackRequest, debounce: Boolean) {
         // Cancelling here is what makes fast channel-changing safe: the previous switch never
         // reaches the player, so we never stack prepares.
         switchJob?.cancel()
@@ -270,7 +265,7 @@ class PlayerController(
 
             consecutiveFailures = 0
             httpFactory.setDefaultRequestProperties(mapOf("User-Agent" to request.userAgent))
-            _state.value = State.Buffering(request.title)
+            _state.value = PlaybackState.Buffering(request.title)
 
             val mediaItem = MediaItem.Builder()
                 .setUri(request.url)
@@ -300,8 +295,12 @@ class PlayerController(
         }
     }
 
-    fun retry() {
+    override fun retry() {
         current?.let { play(it, debounce = false) }
+    }
+
+    override fun setPlaying(playing: Boolean) {
+        player.playWhenReady = playing
     }
 
     /**
@@ -310,14 +309,16 @@ class PlayerController(
      * the user sees no captions even though they turned them on. So On explicitly selects the
      * first available subtitle track; Off disables text entirely.
      */
-    fun setSubtitlesEnabled(enabled: Boolean) {
+    override fun setSubtitlesEnabled(enabled: Boolean) {
         if (!enabled) {
             disableText()
             return
         }
-        val firstText = _tracks.value.groups.firstOrNull { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+        val firstText = _tracks.value.firstOrNull {
+            it.type == PlayerTrackType.TEXT && it.isSupported
+        }
         if (firstText != null) {
-            selectTrack(firstText, firstSupportedIndex(firstText))
+            selectTrack(firstText)
         } else {
             // Nothing to select yet — allow the renderer so a track that arrives later can be
             // picked up, and re-assert once tracks change.
@@ -329,47 +330,79 @@ class PlayerController(
     }
 
     /** Force a specific audio or text track on (used by the in-player pickers). */
-    fun selectTrack(group: Tracks.Group, trackIndex: Int) {
+    override fun selectTrack(track: PlayerTrack) {
+        val media3Type = track.type.toMedia3Type()
+        val group = _mediaTracks.value.groups
+            .filter { it.type == media3Type }
+            .getOrNull(track.groupIndex) ?: return
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, trackIndex))
-            .setTrackTypeDisabled(group.type, false)
+            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, track.index))
+            .setTrackTypeDisabled(media3Type, false)
             .build()
     }
 
     /** Turn subtitles off entirely. */
-    fun disableText() {
+    override fun disableText() {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
             .build()
     }
 
-    fun seekBackward() {
+    override val isSeekable: Boolean get() = player.isCurrentMediaItemSeekable
+    override val positionMillis: Long get() = player.currentPosition
+    override val durationMillis: Long get() = player.duration
+    override val bufferedPositionMillis: Long get() = player.bufferedPosition
+    override val volume: Float get() = player.volume
+
+    override fun seekTo(positionMillis: Long) {
+        player.seekTo(positionMillis.coerceAtLeast(0L))
+    }
+
+    override fun seekBy(deltaMillis: Long) {
+        if (!isSeekable) return
+        seekTo((positionMillis + deltaMillis).coerceAtLeast(0L))
+    }
+
+    override fun seekBackward() {
         if (player.isCurrentMediaItemSeekable) player.seekBack()
     }
 
-    fun seekForward() {
+    override fun seekForward() {
         if (player.isCurrentMediaItemSeekable) player.seekForward()
     }
 
-    val isSeekable: Boolean get() = player.isCurrentMediaItemSeekable
-
-    private fun firstSupportedIndex(group: Tracks.Group): Int {
-        for (i in 0 until group.length) if (group.isTrackSupported(i)) return i
-        return 0
+    override fun setVolume(volume: Float) {
+        player.volume = volume.coerceIn(0f, 1f)
     }
 
-    fun stop() {
+    override fun stop() {
         switchJob?.cancel()
         current = null
         player.stop()
         player.clearMediaItems()
-        _state.value = State.Idle
+        _mediaTracks.value = Tracks.EMPTY
+        _tracks.value = emptyList()
+        _state.value = PlaybackState.Idle
+        publishStatus()
     }
 
-    fun release() {
+    override fun release() {
         switchJob?.cancel()
         player.release()
+    }
+
+    private fun publishStatus() {
+        val size = player.videoSize
+        _status.value = PlaybackStatus(
+            isPlaying = player.isPlaying,
+            playWhenReady = player.playWhenReady,
+            videoSize = VideoSizeInfo(
+                width = size.width,
+                height = size.height,
+                pixelWidthHeightRatio = size.pixelWidthHeightRatio,
+            ),
+        )
     }
 
     private companion object {
@@ -423,4 +456,44 @@ class PlayerController(
 
         const val LIVE_TARGET_OFFSET_MILLIS = 10_000L
     }
+}
+
+/**
+ * Converts Media3's track model into the neutral one exactly once per track change.
+ *
+ * [groupIndex] counts groups of the same type: the subtitle picker filters by type and then
+ * addresses `groupIndex`, so it must not be the index into the mixed list Media3 returns.
+ */
+private fun Tracks.toPlayerTracks(): List<PlayerTrack> {
+    val seenPerType = mutableMapOf<PlayerTrackType, Int>()
+    return groups.flatMap { group ->
+        val type = group.type.toPlayerTrackType() ?: return@flatMap emptyList()
+        val groupIndex = seenPerType[type] ?: 0
+        seenPerType[type] = groupIndex + 1
+        (0 until group.length).map { index ->
+            val format = group.getTrackFormat(index)
+            PlayerTrack(
+                type = type,
+                groupIndex = groupIndex,
+                index = index,
+                label = format.label,
+                language = format.language,
+                isSelected = group.isTrackSelected(index),
+                isSupported = group.isTrackSupported(index),
+            )
+        }
+    }
+}
+
+private fun Int.toPlayerTrackType(): PlayerTrackType? = when (this) {
+    C.TRACK_TYPE_VIDEO -> PlayerTrackType.VIDEO
+    C.TRACK_TYPE_AUDIO -> PlayerTrackType.AUDIO
+    C.TRACK_TYPE_TEXT -> PlayerTrackType.TEXT
+    else -> null
+}
+
+private fun PlayerTrackType.toMedia3Type(): Int = when (this) {
+    PlayerTrackType.VIDEO -> C.TRACK_TYPE_VIDEO
+    PlayerTrackType.AUDIO -> C.TRACK_TYPE_AUDIO
+    PlayerTrackType.TEXT -> C.TRACK_TYPE_TEXT
 }

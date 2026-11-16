@@ -5,8 +5,6 @@
  */
 package app.opentv.ui.channels
 
-import android.view.ViewGroup
-import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -44,13 +42,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.util.UnstableApi
 import app.opentv.R
+import app.opentv.player.PlayerEngine
+import app.opentv.player.VideoScale
 import app.opentv.data.model.shownName
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import app.opentv.ui.ChannelsViewModel
 import coil.compose.AsyncImage
 import java.text.SimpleDateFormat
@@ -75,7 +70,6 @@ import java.util.Locale
  * logo. The logo stays behind the video as the shutter, so a buffering or failed stream still
  * shows something rather than a black hole.
  */
-@OptIn(UnstableApi::class)
 @Composable
 fun GuidePreview(
     row: ChannelsViewModel.Row?,
@@ -83,7 +77,7 @@ fun GuidePreview(
     onWatch: () -> Unit,
     onRefresh: () -> Unit,
     onAddSource: () -> Unit,
-    previewPlayer: ExoPlayer?,
+    previewPlayer: PlayerEngine?,
     isRecording: Boolean = false,
     onRecord: () -> Unit = {},
     dayLabel: String = "",
@@ -120,22 +114,10 @@ fun GuidePreview(
             // Live video on top of the logo when preview playback is on. The transparent
             // shutter means the logo behind shows through until the first frame arrives.
             if (previewPlayer != null && row != null) {
-                AndroidView(
+                previewPlayer.surface.Content(
                     modifier = Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            useController = false
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                            player = previewPlayer
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                        }
-                    },
-                    update = { it.player = previewPlayer },
+                    scale = VideoScale.FIT,
+                    transparent = true,
                 )
             }
 

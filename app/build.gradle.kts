@@ -94,6 +94,9 @@ ksp {
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
 
+    // The platform-neutral player contract, shared with the desktop target.
+    implementation(project(":player-core"))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

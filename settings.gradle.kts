@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "OpenTV"
 include(":app")
+include(":player-core")

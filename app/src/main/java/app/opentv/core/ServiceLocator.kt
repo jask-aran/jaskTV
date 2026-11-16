@@ -74,6 +74,15 @@ object ServiceLocator {
                 .build()
         }
 
+        /**
+         * The platform player factory. Screens obtain engines here instead of constructing
+         * [app.opentv.player.PlayerController], so a desktop target can supply a VLC-backed
+         * factory without touching any screen.
+         */
+        val playerEngines: app.opentv.player.PlayerEngineFactory by lazy {
+            app.opentv.player.ExoPlayerEngineFactory(appContext, streamingHttpClient, settings)
+        }
+
         val xtreamApi: XtreamApi by lazy { XtreamApi(httpClient) }
 
         /** Stalker / Ministra portal client (MAC handshake + create_link). */
