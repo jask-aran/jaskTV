@@ -120,6 +120,11 @@ class SyncEngine(private val graph: ServiceLocator.Graph) {
         }
 
         return SyncBundle(
+            myTv = graph.database.savedTv().all().mapNotNull { item ->
+                val profile = names[item.profileId] ?: return@mapNotNull null
+                if (item.identity.startsWith("provider:")) null
+                else SyncSavedTv(profile, item.identity, item.label, item.sortIndex)
+            },
             generatedAtMillis = System.currentTimeMillis(),
             profiles = profiles.map { it.name },
             positions = positions,
@@ -177,6 +182,17 @@ class SyncEngine(private val graph: ServiceLocator.Graph) {
             graph.settings.setHiddenCategories(
                 graph.settings.hiddenCategories.value + bundle.hiddenCategories,
             )
+        }
+
+        // Canonical My TV saves contain no stream URLs, provider credentials or local row IDs.
+        for (remote in bundle.myTv.take(1500)) {
+            if (remote.identity.length > 240 || remote.label.length > 240 ||
+                !(remote.identity.startsWith("iptv:") || remote.identity.startsWith("group:"))) continue
+            val profile = profileIdFor(remote.profile) ?: continue
+            if (graph.database.savedTv().observe(profile).first().none { it.identity == remote.identity }) {
+                graph.database.savedTv().save(app.opentv.livetv.SavedTvChannel(profile, remote.identity,
+                    remote.label, null, null, remote.sortIndex.coerceAtLeast(0)))
+            }
         }
 
         // Personal collections: resolve profile by name and all item IDs against this device's

@@ -28,7 +28,8 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class SyncBundle(
-    val version: Int = 4,
+    val version: Int = 5,
+    val myTv: List<SyncSavedTv> = emptyList(),
     val generatedAtMillis: Long = 0,
     /** Profile names the peer knows about. Others add any they are missing (add-only). */
     val profiles: List<String> = emptyList(),
@@ -101,3 +102,7 @@ data class SyncCollectionMember(
     /** Provider URL for series disambiguation (avoids collisions across providers). */
     val providerUrl: String = "",
 )
+
+/** Portable broadcaster/feed identity; preferred streams remain device-local. */
+@Serializable
+data class SyncSavedTv(val profile: String, val identity: String, val label: String, val sortIndex: Int)

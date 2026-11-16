@@ -71,6 +71,14 @@ class IptvOrgCatalog(context: Context) {
             normalized.region)
     }
 
+    /** Read persisted identity metadata without starting a network request while opening My TV. */
+    suspend fun cachedIdentity(id: String): ChannelIdentity? = withContext(Dispatchers.IO) {
+        if (loaded == null && cache.isFile && cache.length() <= maxBytes) {
+            runCatching { parse(cache.readText()) }.getOrNull()?.let(::install)
+        }
+        byId[id]
+    }
+
     suspend fun byCanonicalId(id: String): ChannelIdentity? {
         ensureLoaded()
         return byId[id]

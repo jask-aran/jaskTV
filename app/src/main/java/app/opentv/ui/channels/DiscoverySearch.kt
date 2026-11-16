@@ -73,6 +73,7 @@ internal fun DiscoveryResultRow(
             Text(hit.explanation, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall)
         }
+        AddToMyTvButton(hit.channel)
         IconButton(onClick = { showMapping = true }) {
             Icon(Icons.Filled.Link, contentDescription = "Map channel identity")
         }

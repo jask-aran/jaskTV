@@ -15,11 +15,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -28,6 +30,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarOutline
 import app.opentv.R
@@ -43,14 +46,15 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 @Composable
 private fun viewportProgrammes(
     rows: List<ChannelsViewModel.Row>, state: LazyListState,
-    window: PhoneGuideTimeline.Window, viewModel: ChannelsViewModel, nowNext: Boolean = false,
+    window: PhoneGuideTimeline.Window, viewModel: PhoneGuideData, nowNext: Boolean = false, leadingItems: Int = 0,
 ): Map<Any, List<Programme>> {
     val version by viewModel.phoneGuideVersion.collectAsState()
     var programmes by remember(rows, window, version, nowNext) { mutableStateOf(emptyMap<Any, List<Programme>>()) }
     LaunchedEffect(rows, state, window, version, nowNext) {
         snapshotFlow {
-            val first = state.firstVisibleItemIndex / 8 * 8
-            val last = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: first + 8
+            // Lazy indices include leading items (sessions, section headers); rows start after them.
+            val first = (state.firstVisibleItemIndex - leadingItems).coerceAtLeast(0) / 8 * 8
+            val last = ((state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: first + 8) - leadingItems).coerceAtLeast(0)
             first to (((last / 8 + 2) * 8).coerceAtMost(first + 40))
         }.distinctUntilChanged().collectLatest { (first, end) ->
             programmes = viewModel.phoneProgrammes(rows.subList(first.coerceAtMost(rows.size), end.coerceAtMost(rows.size)), window, nowNext)
@@ -63,7 +67,7 @@ private fun viewportProgrammes(
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 fun PhoneGuideChannelList(
-    rows: List<ChannelsViewModel.Row>, now: Long, viewModel: ChannelsViewModel,
+    rows: List<ChannelsViewModel.Row>, now: Long, viewModel: PhoneGuideData,
     onPlay: (ChannelsViewModel.Row) -> Unit, onDetails: (ChannelsViewModel.Row) -> Unit,
     onFavourite: (ChannelsViewModel.Row) -> Unit,
 ) {
@@ -75,24 +79,35 @@ fun PhoneGuideChannelList(
             val list = programmes[row.key].orEmpty()
             val current = row.copy(now = list.firstOrNull { it.isLiveAt(now) },
                 next = list.firstOrNull { it.startUtcMillis > now }, programmes = list)
-            ListItem(
-                headlineContent = { Text(row.primary.shownName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                supportingContent = { Column {
-                    Text(current.now?.title ?: stringResource(R.string.guide_no_info), maxLines = 1)
-                    current.next?.let { Text(it.title, maxLines = 1) }
-                } },
-                leadingContent = {
-                    coil.compose.AsyncImage(row.primary.logoUrl, contentDescription = null, modifier = Modifier.size(40.dp))
-                },
-                trailingContent = { Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { onFavourite(current) }) {
-                        Icon(if (row.primary.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
-                            contentDescription = stringResource(R.string.guide_favourites))
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                    .combinedClickable(onClick = { onPlay(current) }, onLongClick = { onDetails(current) })
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                coil.compose.AsyncImage(row.primary.logoUrl, contentDescription = null, modifier = Modifier.size(32.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(row.primary.shownName, style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(current.now?.title ?: stringResource(R.string.guide_no_info),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    current.next?.let {
+                        Text(it.title, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    TextButton(onClick = { onDetails(current) }) { Text(stringResource(R.string.phone_guide_details)) }
-                } },
-                modifier = Modifier.combinedClickable(onClick = { onPlay(current) }, onLongClick = { onDetails(current) }),
-            )
+                }
+                IconButton(onClick = { onFavourite(current) }, modifier = Modifier.size(40.dp)) {
+                    Icon(if (row.primary.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                        contentDescription = stringResource(R.string.guide_favourites), modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = { onDetails(current) }, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Filled.MoreVert, stringResource(R.string.phone_guide_details), Modifier.size(20.dp))
+                }
+            }
         }
     }
 }
@@ -100,13 +115,18 @@ fun PhoneGuideChannelList(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhoneTouchGuide(
-    rows: List<ChannelsViewModel.Row>, now: Long, viewModel: ChannelsViewModel,
+    rows: List<ChannelsViewModel.Row>, now: Long, viewModel: PhoneGuideData,
     onPlay: (ChannelsViewModel.Row) -> Unit,
     onProgramme: (ChannelsViewModel.Row, Programme) -> Unit,
+    /** Rows not yet in My TV (search matches): shown after a section header with an Add action. */
+    addable: List<ChannelsViewModel.Row> = emptyList(),
+    leadingCount: Int = 0,
+    leading: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {},
 ) {
     val zone = ZoneId.systemDefault()
     val today = PhoneGuideTimeline.date(now, zone)
-    var date by remember { mutableStateOf(today) }
+    var epochDay by rememberSaveable { mutableLongStateOf(today.toEpochDay()) }
+    val date = java.time.LocalDate.ofEpochDay(epochDay)
     val version by viewModel.phoneGuideVersion.collectAsState()
     var firstDate by remember { mutableStateOf(today) }
     var lastDate by remember { mutableStateOf(today) }
@@ -114,28 +134,28 @@ fun PhoneTouchGuide(
         val horizon = viewModel.phoneGuideHorizon()
         firstDate = horizon.start?.let { PhoneGuideTimeline.date(it, zone) } ?: today
         lastDate = horizon.end?.let { PhoneGuideTimeline.date(it - 1, zone) } ?: today
-        date = date.coerceIn(minOf(firstDate, today), maxOf(lastDate, today))
+        epochDay = date.coerceIn(minOf(firstDate, today), maxOf(lastDate, today)).toEpochDay()
     }
     val day = remember(date, zone) { PhoneGuideTimeline.day(date, zone) }
     val density = LocalDensity.current
     val baseScale = 240f // dp per elapsed hour, never a minimum programme width
-    var offset by remember(date) { mutableFloatStateOf(
-        if (date == today) PhoneGuideTimeline.position(now, day.start, baseScale).coerceAtLeast(0f) else 0f,
-    ) }
+    // Offset is elapsed hours from the day's start, not dp: the dp scale changes with viewport width.
+    fun hoursBeforeNow(dayStart: Long) = ((now - dayStart - PhoneGuideTimeline.HALF_HOUR).toFloat() / PhoneGuideTimeline.HOUR).coerceAtLeast(0f)
+    var offsetHours by rememberSaveable(epochDay) { mutableFloatStateOf(if (date == today) hoursBeforeNow(day.start) else 0f) }
     var detailRow by remember { mutableStateOf<ChannelsViewModel.Row?>(null) }
     val state = rememberLazyListState()
     fun time(millis: Long) = PhoneGuideTimeline.timeLabel(millis, zone)
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(enabled = date > firstDate, onClick = { date = date.minusDays(1) }) {
+            IconButton(enabled = date > firstDate, onClick = { epochDay = date.minusDays(1).toEpochDay() }) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, stringResource(R.string.phone_guide_previous_day))
             }
-            Text(date.format(DateTimeFormatter.ofPattern("EEE d MMM")), Modifier.weight(1f))
-            IconButton(enabled = date < lastDate, onClick = { date = date.plusDays(1) }) {
+            Text(date.format(DateTimeFormatter.ofPattern("EEE d MMM")) + " · " + time(now), Modifier.weight(1f))
+            IconButton(enabled = date < lastDate, onClick = { epochDay = date.plusDays(1).toEpochDay() }) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, stringResource(R.string.phone_guide_next_day))
             }
-            TextButton(onClick = { date = today; offset = PhoneGuideTimeline.position(now, PhoneGuideTimeline.day(today, zone).start, baseScale) }) {
+            TextButton(onClick = { epochDay = today.toEpochDay(); offsetHours = hoursBeforeNow(PhoneGuideTimeline.day(today, zone).start) }) {
                 Text(stringResource(R.string.phone_guide_now))
             }
         }
@@ -145,27 +165,29 @@ fun PhoneTouchGuide(
             // At most three elapsed hours visible, so a six-hour prefetch always covers it.
             val scale = maxOf(baseScale, viewportWidth / 3f)
             val totalWidth = PhoneGuideTimeline.position(day.end, day.start, scale)
-            val maxOffset = (totalWidth - viewportWidth).coerceAtLeast(0f)
-            LaunchedEffect(maxOffset) { offset = offset.coerceIn(0f, maxOffset) }
-            val left = offset.coerceIn(0f, maxOffset)
+            val maxOffset = (totalWidth - viewportWidth).coerceAtLeast(0f) / scale
+            LaunchedEffect(maxOffset) { offsetHours = offsetHours.coerceIn(0f, maxOffset) }
+            val left = offsetHours.coerceIn(0f, maxOffset) * scale
             val visible = PhoneGuideTimeline.Window(
                 day.start + (left / scale * PhoneGuideTimeline.HOUR).toLong(),
                 minOf(day.end, day.start + ((left + viewportWidth) / scale * PhoneGuideTimeline.HOUR).toLong()),
             )
             val window = PhoneGuideTimeline.prefetch(visible.start)
-            val programmes = viewportProgrammes(rows, state, window, viewModel)
+            val all = remember(rows, addable) { rows + addable }
+            val leadingItems = leadingCount
+            val programmes = viewportProgrammes(all, state, window, viewModel, leadingItems = leadingItems)
             val liveStart = now / 60_000 * 60_000
-            val liveProgrammes = viewportProgrammes(rows, state,
-                PhoneGuideTimeline.Window(liveStart, liveStart + 6 * PhoneGuideTimeline.HOUR), viewModel, nowNext = true)
+            val liveProgrammes = viewportProgrammes(all, state,
+                PhoneGuideTimeline.Window(liveStart, liveStart + 6 * PhoneGuideTimeline.HOUR), viewModel, nowNext = true, leadingItems = leadingItems)
             val horizontal = rememberScrollableState { delta ->
-                val old = offset.coerceIn(0f, maxOffset)
-                offset = (old - with(density) { delta.toDp().value }).coerceIn(0f, maxOffset)
-                with(density) { (old - offset).dp.toPx() }
+                val old = offsetHours.coerceIn(0f, maxOffset)
+                offsetHours = (old - with(density) { delta.toDp().value } / scale).coerceIn(0f, maxOffset)
+                with(density) { ((old - offsetHours) * scale).dp.toPx() }
             }
             Column {
                 Row(Modifier.height(40.dp)) {
                     Spacer(Modifier.width(channelWidth))
-                    Box(Modifier.weight(1f).fillMaxHeight().clipToBounds().scrollable(horizontal, Orientation.Horizontal)) {
+                    Box(Modifier.testTag("myTv.ruler").weight(1f).fillMaxHeight().clipToBounds().scrollable(horizontal, Orientation.Horizontal)) {
                         var tick = Math.floorDiv(visible.start, PhoneGuideTimeline.HALF_HOUR) * PhoneGuideTimeline.HALF_HOUR
                         while (tick < visible.end) {
                             val instant = tick
@@ -177,18 +199,31 @@ fun PhoneTouchGuide(
                     }
                 }
                 LazyColumn(state = state, modifier = Modifier.weight(1f)) {
-                    items(rows, key = { it.key }) { row ->
+                    leading()
+                    val rowItem: @Composable (ChannelsViewModel.Row, Boolean) -> Unit = { row, canAdd ->
                         val list = programmes[row.key].orEmpty()
                         val live = liveProgrammes[row.key].orEmpty()
                         val current = row.copy(programmes = list,
                             now = live.firstOrNull { it.isLiveAt(now) },
                             next = live.firstOrNull { it.startUtcMillis > now })
                         Row(Modifier.fillMaxWidth().height(76.dp)) {
-                            Text(row.primary.shownName, maxLines = 3, overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.width(channelWidth).fillMaxHeight()
-                                    .background(MaterialTheme.colorScheme.surfaceContainer).clickable { detailRow = current }.padding(8.dp))
-                            Box(Modifier.weight(1f).fillMaxHeight().clipToBounds().scrollable(horizontal, Orientation.Horizontal)) {
+                            Row(Modifier.width(channelWidth).fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.surfaceContainer).clickable { detailRow = current }.padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                row.primary.logoUrl?.let { logo ->
+                                    coil.compose.AsyncImage(logo, null, Modifier.size(24.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Column {
+                                    Text(row.primary.shownName, maxLines = if (canAdd) 2 else 3, overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelMedium)
+                                    if (canAdd) AddToMyTvButton(row.primary, compact = true)
+                                }
+                            }
+                            Box(Modifier.testTag("myTv.timelineRow").weight(1f).fillMaxHeight().clipToBounds().scrollable(horizontal, Orientation.Horizontal)) {
+                                if (list.none { it.startUtcMillis < visible.end && it.endUtcMillis > visible.start }) {
+                                    Text("Schedule unavailable", Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                                 list.forEach { programme ->
                                     PhoneGuideTimeline.clip(programme.startUtcMillis, programme.endUtcMillis, visible)?.let { clipped ->
                                         // Exact UTC geometry; tiny shows remain available in the channel detail sheet.
@@ -212,6 +247,15 @@ fun PhoneTouchGuide(
                         }
                         HorizontalDivider()
                     }
+                    items(rows, key = { it.key }) { rowItem(it, false) }
+                    // The header lives inside the first unsaved row so lazy indices still map 1:1 to rows.
+                    items(addable.size, key = { "add-" + addable[it].key }) { index ->
+                        Column {
+                            if (index == 0) Text(stringResource(R.string.jask_more_channels), Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp),
+                                style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            rowItem(addable[index], true)
+                        }
+                    }
                 }
             }
         }
@@ -219,7 +263,7 @@ fun PhoneTouchGuide(
     detailRow?.let { row ->
         ModalBottomSheet(onDismissRequest = { detailRow = null }) {
             Text(row.primary.shownName, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
-            TextButton(onClick = { detailRow = null; onPlay(row) }) { Text(stringResource(R.string.guide_watch_channel)) }
+            TextButton(enabled = row.variants.isNotEmpty(), onClick = { detailRow = null; onPlay(row) }) { Text(stringResource(R.string.guide_watch_channel)) }
             if (row.programmes.isEmpty()) {
                 Text(stringResource(R.string.guide_no_info_channel), modifier = Modifier.padding(16.dp))
             }

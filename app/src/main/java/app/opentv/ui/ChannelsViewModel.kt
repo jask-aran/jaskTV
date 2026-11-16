@@ -9,6 +9,8 @@ import app.opentv.core.AppText
 import app.opentv.core.AppSettings
 import app.opentv.data.model.shownName
 import android.app.Application
+import app.opentv.livetv.LiveChannelKeys
+import app.opentv.ui.channels.PhoneGuideData
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.opentv.core.ServiceLocator
@@ -43,7 +45,7 @@ import kotlinx.coroutines.withContext
 import app.opentv.ui.channels.PhoneGuideTimeline
 import app.opentv.data.db.PhoneGuideHorizon
 
-class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
+class ChannelsViewModel(app: Application) : AndroidViewModel(app), PhoneGuideData {
     private val graph = ServiceLocator.get(app)
     private val settings = graph.settings
 
@@ -122,7 +124,7 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
      * The category ids to hide from the guide *right now*: the ids behind every group the user
      * marked adult — unless the session is unlocked, in which case nothing is hidden.
      */
-    private val hiddenCategoryIds: StateFlow<Set<String>> =
+    internal val hiddenCategoryIds: StateFlow<Set<String>> =
         combine(categoryGroups, settings.hiddenCategories, settings.hiddenUnlocked) { groups, hidden, unlocked ->
             if (unlocked) emptySet()
             else groups.filter { it.matches(hidden) }.flatMap { it.ids }.toSet()
@@ -178,8 +180,9 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         val next: Programme?,
         /** Every programme for this channel inside the guide window, start-ordered. */
         val programmes: List<Programme>,
+        val identity: String? = null,
     ) {
-        val key: Any get() = if (primary.groupKey.isEmpty()) primary.id else primary.groupKey
+        val key: Any get() = identity ?: if (primary.groupKey.isEmpty()) primary.id else primary.groupKey
     }
 
     /**
@@ -233,22 +236,26 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setCompactGuide(compact: Boolean) { compactGuide.value = compact }
 
-    val phoneGuideVersion = graph.epgRepository.guideVersion
+    override val phoneGuideVersion = graph.epgRepository.guideVersion
 
-    suspend fun phoneGuideHorizon(): PhoneGuideHorizon = withContext(Dispatchers.IO) {
+    override suspend fun phoneGuideHorizon(): PhoneGuideHorizon = withContext(Dispatchers.IO) {
         graph.database.programmes().phoneHorizon()
     }
 
     /** Callers pass only a bounded viewport of logical rows, never the full channel catalogue. */
-    suspend fun phoneProgrammes(visibleRows: List<Row>, window: PhoneGuideTimeline.Window, nowNext: Boolean = false): Map<Any, List<Programme>> =
+    override suspend fun phoneProgrammes(visibleRows: List<Row>, window: PhoneGuideTimeline.Window, nowNext: Boolean): Map<Any, List<Programme>> =
         withContext(Dispatchers.IO) {
             val bounded = visibleRows.take(40)
             val candidates = bounded.flatMap { row -> row.variants.flatMap { it.epgCandidates } }.distinct()
+            val aliases = candidates.chunked(900).flatMap { graph.database.epgAliases().forIds(it) }
+            val trusted = bounded.associate { row -> row.key to row.variants.flatMap { channel ->
+                app.opentv.livetv.GuideEvidence.ids(channel, aliases)
+            }.distinct() }
             val dao = graph.database.programmes()
-            val index = (if (nowNext) dao.phoneNowNext(candidates, window.start)
-                else dao.phoneWindow(candidates, window.start, window.end)).groupBy { it.epgChannelId }
+            val index = (if (nowNext) dao.phoneNowNext(trusted.values.flatten().distinct(), window.start)
+                else dao.phoneWindow(trusted.values.flatten().distinct(), window.start, window.end)).groupBy { it.epgChannelId }
             bounded.associate { row ->
-                row.key to row.variants.asSequence().flatMap { it.epgCandidates.asSequence() }
+                row.key to trusted[row.key].orEmpty().asSequence()
                     .firstNotNullOfOrNull { index[it] }.orEmpty()
             }
         }
@@ -499,7 +506,13 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
                 else graph.catalogRepository.searchChannels(q)
                     // No EPG here — group channels into rows with no now/next. Finding and
                     // playing the channel is the job; guide detail would cost the slow query.
-                    .map { channels -> buildRows(channels, emptyMap(), System.currentTimeMillis()) }
+                    .combine(hiddenCategoryIds) { channels, hidden ->
+                        channels.filter { it.categoryId !in hidden }
+                            .groupBy { LiveChannelKeys.provisional(it) }.map { (identity, variants) ->
+                                val ordered = variants.sortedByDescending { it.qualityRank }
+                                Row(ordered.first(), ordered, null, null, emptyList(), identity)
+                            }
+                    }
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

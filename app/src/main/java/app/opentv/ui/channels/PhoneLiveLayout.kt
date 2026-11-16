@@ -12,10 +12,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -60,6 +62,8 @@ import app.opentv.data.model.Source
 import app.opentv.ui.ChannelsViewModel
 import app.opentv.ui.isPhoneLandscape
 
+private enum class LiveChannelFilter { ALL, RECENT, FAVOURITES }
+
 /**
  * Live TV on a phone. There's no room for the TV's category rail beside the list, so:
  *  - a filter field narrows the current list by name as you type;
@@ -88,7 +92,9 @@ fun PhoneLiveLayout(
     onSelectRecents: () -> Unit,
     onSelectFavourites: () -> Unit,
     onSelectCategory: (String?) -> Unit,
-    onOpenSearch: () -> Unit,
+    query: String,
+    onQuery: (String) -> Unit,
+    searchContent: @Composable () -> Unit,
     emptyContent: @Composable () -> Unit,
     layout: AppSettings.PhoneLiveLayout,
     onLayout: (AppSettings.PhoneLiveLayout) -> Unit,
@@ -96,83 +102,50 @@ fun PhoneLiveLayout(
     guideContent: @Composable () -> Unit,
 ) {
     var showSheet by remember { mutableStateOf(false) }
+    val request = app.opentv.ui.LocalJaskFilterRequest.current
+    androidx.compose.runtime.LaunchedEffect(request) { if (request > 0) showSheet = true }
     val categoryLabel = categories.firstOrNull { it.key == selectedCategory }?.label
     val compact = isPhoneLandscape()
 
     Column(Modifier.fillMaxSize()) {
-      PhoneLiveControls(compact) {
-        OutlinedButton(
-            onClick = onOpenSearch,
-            modifier = Modifier.then(if (compact) Modifier.width(260.dp) else Modifier.fillMaxWidth())
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-        ) {
-            Icon(Icons.Filled.Search, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Find channels or programmes")
-        }
-        Row(
-            Modifier.then(if (compact) Modifier else Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()))
-                .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(
-                selected = !recentsOnly && !favouritesOnly && selectedCategory != null,
-                onClick = { showSheet = true },
-                label = {
-                    Text(
-                        if (!recentsOnly && !favouritesOnly && categoryLabel != null) categoryLabel
-                        else stringResource(R.string.phone_live_categories),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
-            )
-            FilterChip(
-                selected = recentsOnly,
-                onClick = onSelectRecents,
-                label = { Text(stringResource(R.string.phone_live_recent)) },
-                leadingIcon = { Icon(Icons.Filled.History, contentDescription = null) },
-            )
-            FilterChip(
-                selected = favouritesOnly,
-                onClick = onSelectFavourites,
-                label = { Text(stringResource(R.string.guide_favourites)) },
-            )
-            FilterChip(
-                selected = !recentsOnly && !favouritesOnly && selectedCategory == null,
-                onClick = { onSelectCategory(null) },
-                label = { Text(stringResource(R.string.guide_all_channels)) },
-            )
-            // Order: provider's own → A–Z → by number, one tap each.
-            AssistChip(
-                onClick = {
-                    onSort(
-                        when (sort) {
-                            AppSettings.ChannelSort.PROVIDER -> AppSettings.ChannelSort.NAME
-                            AppSettings.ChannelSort.NAME -> AppSettings.ChannelSort.NUMBER
-                            AppSettings.ChannelSort.NUMBER -> AppSettings.ChannelSort.PROVIDER
-                        },
-                    )
-                },
-                leadingIcon = { Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null) },
-                label = {
-                    Text(
-                        stringResource(
-                            when (sort) {
-                                AppSettings.ChannelSort.PROVIDER -> R.string.phone_sort_provider
-                                AppSettings.ChannelSort.NAME -> R.string.phone_sort_name
-                                AppSettings.ChannelSort.NUMBER -> R.string.phone_sort_number
-                            },
-                        ),
-                    )
-                },
-            )
-        }
+      if (!app.opentv.ui.LocalJaskTouchShell.current) {
+      app.opentv.ui.CatalogueSearchField(query, onQuery,
+          stringResource(R.string.phone_search_all))
+      Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+          verticalAlignment = Alignment.CenterVertically) {
+          val filter = when {
+              recentsOnly -> LiveChannelFilter.RECENT
+              favouritesOnly -> LiveChannelFilter.FAVOURITES
+              else -> LiveChannelFilter.ALL
+          }
+          app.opentv.ui.SegmentedControl(
+              options = listOf(
+                  LiveChannelFilter.ALL to stringResource(R.string.vod_all),
+                  LiveChannelFilter.RECENT to stringResource(R.string.phone_live_recent),
+                  LiveChannelFilter.FAVOURITES to stringResource(R.string.guide_favourites).removePrefix("★ "),
+              ), selected = filter, onSelect = {
+                  when (it) {
+                      LiveChannelFilter.ALL -> onSelectCategory(null)
+                      LiveChannelFilter.RECENT -> onSelectRecents()
+                      LiveChannelFilter.FAVOURITES -> onSelectFavourites()
+                  }
+              }, modifier = Modifier.weight(1f),
+          )
+          Spacer(Modifier.width(12.dp))
+          TextButton(onClick = { showSheet = true }, contentPadding = PaddingValues(horizontal = 0.dp),
+              modifier = Modifier.height(34.dp).width(88.dp)) {
+              Text(categoryLabel ?: stringResource(R.string.phone_live_categories),
+                  style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                  overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+              Icon(Icons.Filled.ArrowDropDown, null)
+          }
       }
 
+      }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (rows.isEmpty()) {
+            if (query.isNotBlank()) {
+                searchContent()
+            } else if (rows.isEmpty()) {
                 emptyContent()
             } else listContent()
         }
@@ -183,6 +156,21 @@ fun PhoneLiveLayout(
             onDismissRequest = { showSheet = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
+            TextButton(onClick = {
+                onSort(when (sort) {
+                    AppSettings.ChannelSort.PROVIDER -> AppSettings.ChannelSort.NAME
+                    AppSettings.ChannelSort.NAME -> AppSettings.ChannelSort.NUMBER
+                    AppSettings.ChannelSort.NUMBER -> AppSettings.ChannelSort.PROVIDER
+                })
+            }, modifier = Modifier.padding(horizontal = 16.dp)) {
+                Icon(Icons.AutoMirrored.Filled.Sort, null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(when (sort) {
+                    AppSettings.ChannelSort.PROVIDER -> R.string.phone_sort_provider
+                    AppSettings.ChannelSort.NAME -> R.string.phone_sort_name
+                    AppSettings.ChannelSort.NUMBER -> R.string.phone_sort_number
+                }))
+            }
             CategorySheet(
                 sources = sources,
                 selectedSource = selectedSource,

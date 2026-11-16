@@ -7,6 +7,7 @@ package app.opentv.ui.channels
 
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material.icons.filled.History
 import app.opentv.ui.LayoutClass
 import app.opentv.ui.LocalLayoutClass
@@ -99,7 +100,8 @@ fun SearchScreen(
     viewModel: ChannelsViewModel = viewModel(),
     vodViewModel: VodViewModel = viewModel(),
 ) {
-    if (LocalLayoutClass.current == LayoutClass.PHONE) {
+    LaunchedEffect(Unit) { vodViewModel.ensureVodLoaded() }
+    if (LocalLayoutClass.current.isTouch) {
         PhoneSearchScreen(onPlayChannel, onOpenMovie, onOpenSeries, onBack, initialScope, viewModel, vodViewModel)
         return
     }
@@ -209,27 +211,39 @@ private fun PhoneSearchScreen(
     val movieResults by vodViewModel.movieResults.collectAsState()
     val seriesResults by vodViewModel.seriesResults.collectAsState()
     val showChannels = scope == "all" || scope == "channels"
+    val searchContext = LocalContext.current
+    val f1Schedule = remember(searchContext) { app.opentv.livetv.F1Schedule(searchContext) }
+    val f1Discovery = remember(searchContext) { app.opentv.livetv.F1Discovery(searchContext) }
+    val f1Query = showChannels && app.opentv.livetv.F1Schedule.recognizes(query)
+    var f1Loading by remember { mutableStateOf(false) }
+    var f1Stale by remember { mutableStateOf(false) }
+    var f1Sessions by remember { mutableStateOf(emptyList<app.opentv.livetv.F1Session>()) }
+    LaunchedEffect(f1Query) {
+        if (f1Query) {
+            f1Loading = true
+            try { val result = f1Schedule.upcoming(); f1Sessions = result.sessions; f1Stale = result.stale }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { f1Sessions = emptyList(); f1Stale = true }
+            finally { f1Loading = false }
+        }
+    }
+    val sessions = if (!f1Query) emptyList() else f1Sessions.filter {
+        when {
+            query.contains("qual", true) -> it.session.contains("qualifying", true)
+            query.contains("practice", true) -> it.session.contains("Practice")
+            query.contains("sprint", true) -> it.session.contains("Sprint")
+            else -> true
+        }
+    }.take(8)
+
     val (discoveryLoading, discoveryHits) = rememberBroadcastDiscovery(query, showChannels)
     val showMovies = scope == "all" || scope == "movies"
     val showSeries = scope == "all" || scope == "series"
 
-    // Origin tags on the film/series results (EN, ES, DE, 4K, NF…), most common first, as quick
-    // filters — the way to pick your language out of "a thousand Matrixes".
-    var tag by rememberSaveable { mutableStateOf<String?>(null) }
-    val movieTags = remember(movieResults) { movieResults.associate { it.id to it.sourceTag.orEmpty().split(' ') } }
-    val seriesTags = remember(seriesResults) { seriesResults.associate { it.id to it.sourceTag.orEmpty().split(' ') } }
-    val tagOptions = remember(movieTags, seriesTags, showMovies, showSeries) {
-        buildList {
-            if (showMovies) movieTags.values.forEach { addAll(it) }
-            if (showSeries) seriesTags.values.forEach { addAll(it) }
-        }.filter { it.isNotBlank() }.groupingBy { it }.eachCount()
-            .entries.sortedByDescending { it.value }.map { it.key }
-    }
-    LaunchedEffect(tagOptions) { if (tag != null && tag !in tagOptions) tag = null }
-    val movies = if (tag == null) movieResults else movieResults.filter { tag in movieTags[it.id].orEmpty() }
-    val shows = if (tag == null) seriesResults else seriesResults.filter { tag in seriesTags[it.id].orEmpty() }
+    val movies = movieResults
+    val shows = seriesResults
 
-    val anyResults = (showChannels && (channelResults.isNotEmpty() || discoveryHits.isNotEmpty())) ||
+    val anyResults = f1Query || (showChannels && (channelResults.isNotEmpty() || discoveryHits.isNotEmpty())) ||
         (showMovies && movies.isNotEmpty()) || (showSeries && shows.isNotEmpty())
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -243,7 +257,7 @@ private fun PhoneSearchScreen(
         viewModel.setSearchQuery(query)
         vodViewModel.setVodSearchQuery(query)
     }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus(); keyboard?.show() } }
 
     Column(Modifier.fillMaxSize().screenPadding()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -277,33 +291,16 @@ private fun PhoneSearchScreen(
                 keyboardActions = KeyboardActions(onSearch = { saveSearch(); keyboard?.hide() }),
                 modifier = Modifier.weight(1f).focusRequester(focus),
             )
-        }
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            listOf(
-                "all" to stringResource(R.string.phone_scope_all),
-                "channels" to stringResource(R.string.common_channels),
-                "movies" to stringResource(R.string.nav_movies),
-                "series" to stringResource(R.string.nav_shows),
-            ).forEach { (key, label) ->
-                FilterChip(selected = scope == key, onClick = { scope = key }, label = { Text(label) })
-            }
-        }
-        if (tagOptions.size > 1 && query.trim().length >= 2) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                tagOptions.forEach { t ->
-                    FilterChip(
-                        selected = tag == t,
-                        onClick = { tag = if (tag == t) null else t },
-                        label = { Text(t) },
-                    )
+            Box {
+                var scopeMenu by remember { mutableStateOf(false) }
+                TextButton(onClick = { scopeMenu = true }) { Text(if (scope == "all") "All" else "Scope") }
+                androidx.compose.material3.DropdownMenu(scopeMenu, onDismissRequest = { scopeMenu = false }) {
+                    listOf("all" to "All content", "movies" to "Movies", "series" to "Shows (provider inventory)", "channels" to "Live TV").forEach { (value, label) ->
+                        androidx.compose.material3.DropdownMenuItem(text = { Text(label) }, onClick = { scope = value; scopeMenu = false })
+                    }
                 }
             }
+
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
@@ -321,9 +318,18 @@ private fun PhoneSearchScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     // Scrolling the results is the cue to put the keyboard away.
                     modifier = Modifier.pointerInput(Unit) {
+
+
                         awaitPointerEventScope { while (true) { awaitPointerEvent(); keyboard?.hide() } }
                     },
                 ) {
+                    if (f1Query) {
+                        item { Text("Formula 1 · Jolpica", style = MaterialTheme.typography.titleMedium) }
+                        if (f1Loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                        if (!f1Loading && sessions.isEmpty()) item { Text(if (f1Stale) "Schedule unavailable offline" else "No upcoming sessions in the next 45 days") }
+                        if (f1Stale && sessions.isNotEmpty()) item { Text("Cached schedule · update unavailable", style = MaterialTheme.typography.bodySmall) }
+                        items(sessions, key = { it.id }) { session -> F1SessionRow(session, f1Discovery, onPlayChannel) }
+                    }
                     if (showChannels && discoveryHits.isNotEmpty()) {
                         item { SectionHeader("Programme and broadcaster candidates") }
                         items(discoveryHits, key = { "discovery-${it.channel.id}" }) { hit ->
@@ -480,6 +486,7 @@ private fun SearchResultRow(row: ChannelsViewModel.Row, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        AddToMyTvButton(row.primary)
     }
 }
 

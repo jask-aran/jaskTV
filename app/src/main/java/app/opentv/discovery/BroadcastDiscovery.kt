@@ -34,7 +34,7 @@ class BroadcastDiscovery(context: Context) {
     private val cache = mutableMapOf<String, Pair<Long, List<Pair<String, String>>>>()
     private val cacheMillis = 15 * 60_000L
 
-    suspend fun lookup(text: String): List<Hit> = withContext(Dispatchers.IO) {
+    suspend fun lookup(text: String, includeExternal: Boolean = false): List<Hit> = withContext(Dispatchers.IO) {
         val query = text.trim()
         if (query.length < 2) return@withContext emptyList()
         val now = System.currentTimeMillis()
@@ -87,7 +87,7 @@ class BroadcastDiscovery(context: Context) {
 
         // TheSportsDB is advisory. One free event result and two free broadcaster results may
         // be returned. An empty response is common, especially for generic sport queries.
-        val external = if (query.length >= 3) runCatching {
+        val external = if (includeExternal && query.length >= 3) runCatching {
             val key = query.lowercase(Locale.ROOT)
             val existing = synchronized(cache) { cache[key] }
             if (existing != null && now - existing.first < cacheMillis) existing.second
