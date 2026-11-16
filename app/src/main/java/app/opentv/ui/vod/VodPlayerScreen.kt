@@ -10,6 +10,12 @@ import androidx.activity.compose.BackHandler
 import app.opentv.ui.LocalLayoutClass
 import app.opentv.ui.player.PlayerGestureLayer
 import app.opentv.ui.player.ImmersiveSystemBars
+import app.opentv.ui.player.JaskPlayerPanel
+import app.opentv.ui.player.JaskPlayerScrims
+import app.opentv.ui.player.JaskPlayerTool
+import app.opentv.ui.player.JaskPlayerTopBar
+import app.opentv.ui.player.JaskScrubber
+import app.opentv.ui.player.JaskTransport
 import app.opentv.ui.player.PlayerChromeInsets
 import app.opentv.ui.player.BindPlayerPlayback
 import app.opentv.ui.player.PlayerDisplayControls
@@ -345,36 +351,16 @@ fun VodPlayerScreen(
             reveal()
         }
         if (touch) ImmersiveSystemBars(hidden = !controlsVisible || inPip)
-        if (touch && !inPip) {
-            AnimatedVisibility(
-                visible = controlsVisible && !inPip,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopStart),
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top))
-                        .padding(8.dp),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
-                }
-            }
-        }
 
         if (!inPip) when (val current = state) {
-            is PlaybackState.Buffering ->
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        // The control bar already shows the title; drawn twice they overlapped.
-                        if (!controlsVisible) {
-                            Spacer(Modifier.height(16.dp))
-                            Text(current.title, color = Color.White)
-                        }
-                    }
+            // With the controls up, the play button shows buffering instead.
+            is PlaybackState.Buffering -> if (!controlsVisible) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = Color.White)
+                    Spacer(Modifier.height(16.dp))
+                    Text(current.title, color = Color.White)
                 }
+            }
 
             is PlaybackState.Error ->
                 Box(
@@ -396,218 +382,64 @@ fun VodPlayerScreen(
             else -> Unit
         }
 
-        if (!inPip) AnimatedVisibility(
-            visible = controlsVisible && !inPip,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter),
-        ) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f))))
-                    // Keep the controls clear of the phone/tablet system nav bar (and the side nav
-                    // bar / display cutout in landscape). Zero on a TV, so the 10-foot layout is
-                    // unchanged; the gradient above stays full-bleed to the screen edge.
-                    .windowInsetsPadding(
-                        PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
-                    )
-                    .padding(horizontal = 28.dp, vertical = 20.dp),
-            ) {
-                if (vodPanel != VodPanel.NONE) {
-                    TrackPanel(
-                        panel = vodPanel,
-                        controller = controller,
-                        tracks = tracks,
-                        firstFocus = panelFocus,
-                        onDone = { vodPanel = VodPanel.NONE; interaction++ },
-                    )
-                    Spacer(Modifier.height(16.dp))
-                }
-
-                if (growingRec) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Filled.FiberManualRecord,
-                            contentDescription = null,
-                            tint = Color(0xFFE53935),
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            stringResource(R.string.rec_watching_live_badge),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = Color(0xFFE53935),
-                        )
-                    }
-                    Spacer(Modifier.height(4.dp))
-                }
-                Text(title, style = MaterialTheme.typography.headlineSmall, color = Color.White)
-                Spacer(Modifier.height(8.dp))
-
-                // Seek bar with times either side. Left/right on the remote scrubs.
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(formatDuration(if (scrubbing) scrubValue.toLong() else positionMs), color = Color.White)
-                    Spacer(Modifier.width(12.dp))
-                    Slider(
-                        value = if (scrubbing) scrubValue else positionMs.toFloat(),
-                        valueRange = 0f..(durationMs.takeIf { it > 0 }?.toFloat() ?: 1f),
-                        onValueChange = { scrubbing = true; scrubValue = it; interaction++ },
-                        onValueChangeFinished = {
-                            controller.seekTo(scrubValue.toLong())
-                            positionMs = scrubValue.toLong()
-                            scrubbing = false
-                            interaction++
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Text(formatDuration(durationMs), color = Color.White)
-                }
-
-                Spacer(Modifier.height(10.dp))
-
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    VodChip(Icons.Filled.FastRewind, stringResource(R.string.player_rewind)) {
-                        if (growingRec) seekRelative(-15_000) else controller.seekBackward(); interaction++
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    VodChip(
-                        icon = if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                        label = if (paused) stringResource(R.string.common_play) else stringResource(R.string.player_pause),
-                        focusRequester = barFocus,
-                    ) {
-                        controller.setPlaying(paused)
-                        interaction++
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    VodChip(Icons.Filled.FastForward, stringResource(R.string.player_forward)) {
-                        if (growingRec) seekRelative(15_000) else controller.seekForward(); interaction++
-                    }
-                    Spacer(Modifier.width(20.dp))
-                    VodChip(Icons.Filled.ClosedCaption, stringResource(R.string.player_subtitles)) {
-                        vodPanel = if (vodPanel == VodPanel.SUBTITLES) VodPanel.NONE else VodPanel.SUBTITLES
-                        interaction++
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    VodChip(Icons.Filled.Audiotrack, stringResource(R.string.player_audio)) {
-                        vodPanel = if (vodPanel == VodPanel.AUDIO) VodPanel.NONE else VodPanel.AUDIO
-                        interaction++
-                    }
-                    PlayerDisplayControls(settings, onMenuVisibilityChanged = { displayMenuOpen = it }) { interaction++ }
-                    if (activity?.pipSupported() == true) {
-                        VodChip(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pop_out)) {
-                            activity.enterPipNow()
-                            interaction++
+        if (!inPip) JaskTheme {
+            AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize()) {
+                    JaskPlayerScrims()
+                    JaskPlayerTopBar(title, onBack,
+                        Modifier.align(Alignment.TopCenter).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)),
+                        overline = if (growingRec) ({
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.FiberManualRecord, null, tint = Color(0xFFE53935), modifier = Modifier.size(12.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(stringResource(R.string.rec_watching_live_badge), style = MaterialTheme.typography.labelLarge, color = Color(0xFFFF8A80))
+                            }
+                        }) else null) {
+                        JaskPlayerTool(Icons.Filled.ClosedCaption, stringResource(R.string.player_subtitles), active = vodPanel == VodPanel.SUBTITLES) {
+                            vodPanel = if (vodPanel == VodPanel.SUBTITLES) VodPanel.NONE else VodPanel.SUBTITLES; interaction++
+                        }
+                        JaskPlayerTool(Icons.Filled.Audiotrack, stringResource(R.string.player_audio), active = vodPanel == VodPanel.AUDIO) {
+                            vodPanel = if (vodPanel == VodPanel.AUDIO) VodPanel.NONE else VodPanel.AUDIO; interaction++
+                        }
+                        PlayerDisplayControls(settings, onMenuVisibilityChanged = { displayMenuOpen = it }) { interaction++ }
+                        if (activity?.pipSupported() == true) JaskPlayerTool(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pop_out)) {
+                            activity.enterPipNow(); interaction++
                         }
                     }
+                    if (vodPanel != VodPanel.NONE) TrackPanel(vodPanel, controller, tracks, panelFocus,
+                        Modifier.align(Alignment.TopEnd).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top))
+                            .padding(top = 76.dp, end = 20.dp)) { vodPanel = VodPanel.NONE; interaction++ }
+                    JaskTransport(paused, { controller.setPlaying(paused); interaction++ }, barFocus, Modifier.align(Alignment.Center),
+                        buffering = state is PlaybackState.Buffering,
+                        backIcon = Icons.Filled.FastRewind, onBack = { if (growingRec) seekRelative(-15_000) else controller.seekBackward(); interaction++ },
+                        forwardIcon = Icons.Filled.FastForward, onForward = { if (growingRec) seekRelative(15_000) else controller.seekForward(); interaction++ })
+                    JaskScrubber(positionMs, durationMs, onSeek = { controller.seekTo(it); positionMs = it; interaction++ },
+                        Modifier.align(Alignment.BottomCenter).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                            .padding(horizontal = 28.dp, vertical = 18.dp),
+                        onInteraction = { interaction++ }, onScrubbing = { scrubbing = it })
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun VodChip(
-    icon: ImageVector,
-    label: String,
-    focusRequester: FocusRequester? = null,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val container = if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.14f)
-    val content = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White
-    Row(
-        modifier = Modifier
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(12.dp))
-            .background(container)
-            .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
-                else Modifier,
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = label, tint = content)
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.labelLarge, color = content)
     }
 }
 
 private enum class VodPanel { NONE, SUBTITLES, AUDIO }
 
 @Composable
-private fun TrackPanel(
-    panel: VodPanel,
-    controller: PlayerEngine,
-    tracks: List<PlayerTrack>,
-    firstFocus: FocusRequester,
-    onDone: () -> Unit,
-) {
-    val trackType =
-        if (panel == VodPanel.SUBTITLES) PlayerTrackType.TEXT else PlayerTrackType.AUDIO
+private fun TrackPanel(panel: VodPanel, controller: PlayerEngine, tracks: List<PlayerTrack>, firstFocus: FocusRequester,
+    modifier: Modifier = Modifier, onDone: () -> Unit) {
+    val trackType = if (panel == VodPanel.SUBTITLES) PlayerTrackType.TEXT else PlayerTrackType.AUDIO
     val tracksOfType = tracks.filter { it.type == trackType }
     val options = mutableListOf<Triple<String, Boolean, () -> Unit>>()
-
     if (panel == VodPanel.SUBTITLES) {
         val anySelected = tracksOfType.any { it.isSelected }
         options += Triple(stringResource(R.string.player_subtitles_off), !anySelected) { controller.disableText(); onDone() }
     }
     tracksOfType.filter { it.isSupported }.forEach { track ->
-        options += Triple(vodTrackLabel(track.label, track.language, options.size), track.isSelected) {
-            controller.selectTrack(track); onDone()
-        }
+        options += Triple(vodTrackLabel(track.label, track.language, options.size), track.isSelected) { controller.selectTrack(track); onDone() }
     }
-
-    Column(
-        Modifier
-            .widthIn(max = 420.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.Black.copy(alpha = 0.92f))
-            .padding(16.dp),
-    ) {
-        Text(
-            if (panel == VodPanel.SUBTITLES) stringResource(R.string.player_subtitles) else stringResource(R.string.player_audio),
-            style = MaterialTheme.typography.titleMedium,
-            color = Color.White.copy(alpha = 0.7f),
-        )
-        Spacer(Modifier.height(8.dp))
-        Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
-            if (options.isEmpty()) {
-                Text(stringResource(R.string.player_none_available), color = Color.White.copy(alpha = 0.6f), modifier = Modifier.padding(8.dp))
-            }
-            options.forEachIndexed { index, (label, selected, onClick) ->
-                TrackRow(label, selected, onClick, if (index == 0) firstFocus else null)
-            }
-        }
-    }
-}
-
-@Composable
-private fun TrackRow(label: String, selected: Boolean, onClick: () -> Unit, focusRequester: FocusRequester?) {
-    var focused by remember { mutableStateOf(false) }
-    val bg = if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f)
-    val fg = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MaterialTheme.typography.titleMedium, color = fg, modifier = Modifier.weight(1f))
-        if (selected) Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.common_selected), tint = fg)
-    }
+    JaskPlayerPanel(stringResource(if (panel == VodPanel.SUBTITLES) R.string.player_subtitles else R.string.player_audio), options,
+        stringResource(R.string.player_none_available), firstFocus, modifier)
 }
 
 private fun vodTrackLabel(label: String?, language: String?, index: Int): String {
@@ -616,13 +448,4 @@ private fun vodTrackLabel(label: String?, language: String?, index: Int): String
         return runCatching { java.util.Locale(language).displayLanguage.ifBlank { language } }.getOrDefault(language)
     }
     return "Track ${index + 1}"
-}
-
-private fun formatDuration(ms: Long): String {
-    if (ms <= 0) return "0:00"
-    val totalSec = ms / 1000
-    val h = totalSec / 3600
-    val m = (totalSec % 3600) / 60
-    val s = totalSec % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }

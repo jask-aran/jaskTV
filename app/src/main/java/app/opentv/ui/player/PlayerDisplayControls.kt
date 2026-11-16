@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.media3.common.util.UnstableApi
@@ -52,11 +53,10 @@ fun PlayerDisplayControls(
         onMenuVisibilityChanged(sizeMenu || orientationMenu)
         onDispose { onMenuVisibilityChanged(false) }
     }
-    Row {
+    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
         androidx.compose.foundation.layout.Box {
-            TextButton(onClick = { sizeMenu = true; onInteraction() }) {
-                Icon(Icons.Filled.AspectRatio, contentDescription = null, tint = Color.White)
-                Text(stringResource(R.string.player_display_size), color = Color.White)
+            app.opentv.ui.JaskGlassCircle(Icons.Filled.AspectRatio, stringResource(R.string.player_display_size), size = 44.dp) {
+                sizeMenu = true; onInteraction()
             }
             DropdownMenu(expanded = sizeMenu, onDismissRequest = { sizeMenu = false; onInteraction() }) {
                 listOf(
@@ -75,9 +75,8 @@ fun PlayerDisplayControls(
         // Rotation on a living-room TV is neither useful nor reliably supported.
         if (activity != null && !isRunningOnTelevision(context)) {
             androidx.compose.foundation.layout.Box {
-                TextButton(onClick = { orientationMenu = true; onInteraction() }) {
-                    Icon(Icons.Filled.ScreenRotation, contentDescription = null, tint = Color.White)
-                    Text(stringResource(R.string.player_display_orientation), color = Color.White)
+                app.opentv.ui.JaskGlassCircle(Icons.Filled.ScreenRotation, stringResource(R.string.player_display_orientation), size = 44.dp) {
+                    orientationMenu = true; onInteraction()
                 }
                 DropdownMenu(expanded = orientationMenu, onDismissRequest = { orientationMenu = false; onInteraction() }) {
                     listOf(

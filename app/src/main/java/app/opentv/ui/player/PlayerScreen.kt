@@ -5,6 +5,9 @@
  */
 package app.opentv.ui.player
 
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.font.FontWeight
+import app.opentv.ui.jaskFocusLift
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import app.opentv.ui.LocalLayoutClass
@@ -442,10 +445,10 @@ fun PlayerScreen(
         }
 
         if (!inPip) when (val current = state) {
-            is PlaybackState.Buffering -> {
+            is PlaybackState.Buffering -> if (!controlsVisible) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
+                        CircularProgressIndicator(color = Color.White)
                         Spacer(Modifier.height(16.dp))
                         Text(current.title, color = Color.White)
                     }
@@ -489,141 +492,58 @@ fun PlayerScreen(
             else -> ""
         }
 
-        if (touch && !inPip) {
-            AnimatedVisibility(
-                visible = controlsVisible && !inPip,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter),
-            ) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)))
-                        .windowInsetsPadding(
-                            PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top),
-                        )
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = { controller.stop(); onBack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Color.White)
-                    }
-                    Spacer(Modifier.weight(1f))
-                    if (queue.isNotEmpty()) {
-                        IconButton(onClick = { channelListVisible = true; interaction++ }) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.List,
-                                contentDescription = stringResource(R.string.common_channels),
-                                tint = Color.White,
-                            )
+        if (!inPip) app.opentv.ui.vod.JaskTheme {
+            AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize()) {
+                    JaskPlayerScrims()
+                    JaskPlayerTopBar(channelTitle, { controller.stop(); onBack() },
+                        Modifier.align(Alignment.TopCenter).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)),
+                        overline = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFE53935)))
+                                Spacer(Modifier.width(6.dp))
+                                Text("LIVE", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            }
+                        })
+                    if (panel != Panel.NONE) OptionPanel(panel, controller, settings, tracks, variants, currentId, { tuneTo(it) }, panelFocus,
+                        Modifier.align(Alignment.BottomEnd).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                            .padding(end = 24.dp, bottom = 104.dp)) { panel = Panel.NONE; interaction++ }
+                    // One row of round buttons: Left/Right move along it on a remote (Up/Down change channel).
+                    Row(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                        .padding(horizontal = 24.dp, vertical = 22.dp).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (queue.isNotEmpty()) JaskPlayerTool(Icons.AutoMirrored.Filled.List, stringResource(R.string.common_channels)) {
+                            channelListVisible = true; interaction++
                         }
-                    }
-                }
-            }
-        }
-
-        if (!inPip) AnimatedVisibility(
-            visible = controlsVisible && !inPip,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter),
-        ) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f))))
-                    // Keep the controls clear of the phone/tablet system nav bar (and the side nav
-                    // bar / display cutout in landscape). Zero on a TV, so the 10-foot layout is
-                    // unchanged; the gradient above stays full-bleed to the screen edge.
-                    .windowInsetsPadding(
-                        PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
-                    )
-                    .padding(horizontal = 28.dp, vertical = 20.dp),
-            ) {
-                // The open picker sits above the transport row.
-                if (panel != Panel.NONE) {
-                    OptionPanel(
-                        panel = panel,
-                        controller = controller,
-                        settings = settings,
-                        tracks = tracks,
-                        variants = variants,
-                        currentId = currentId,
-                        onTune = { tuneTo(it) },
-                        firstFocus = panelFocus,
-                        onDone = { panel = Panel.NONE; interaction++ },
-                    )
-                    Spacer(Modifier.height(16.dp))
-                }
-
-                if (channelTitle.isNotEmpty()) {
-                    Text(
-                        channelTitle,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                }
-
-                // Scrolls on a phone in landscape, where every chip doesn't fit across.
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (controller.isSeekable) {
-                        BarChip(Icons.Filled.FastRewind, stringResource(R.string.player_rewind), false) {
-                            controller.seekBackward(); interaction++
+                        if (controller.isSeekable) JaskPlayerTool(Icons.Filled.FastRewind, stringResource(R.string.player_rewind)) { controller.seekBackward(); interaction++ }
+                        Box(Modifier.jaskFocusLift(1.08f).size(60.dp).clip(CircleShape).background(Color.White).focusRequester(barFocus)
+                            .clickable { controller.setPlaying(paused); interaction++ }, contentAlignment = Alignment.Center) {
+                            Icon(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                                if (paused) stringResource(R.string.common_play) else stringResource(R.string.player_pause),
+                                tint = Color(0xFF141312), modifier = Modifier.size(32.dp))
+                            if (state is PlaybackState.Buffering) CircularProgressIndicator(Modifier.size(60.dp), color = Color(0xFF8A8A8A), strokeWidth = 3.dp)
                         }
-                        Spacer(Modifier.width(10.dp))
-                    }
-                    BarChip(
-                        icon = if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                        label = if (paused) stringResource(R.string.common_play) else stringResource(R.string.player_pause),
-                        selected = false,
-                        focusRequester = barFocus,
-                    ) {
-                        controller.setPlaying(paused)
-                        interaction++
-                    }
-                    if (controller.isSeekable) {
-                        Spacer(Modifier.width(10.dp))
-                        BarChip(Icons.Filled.FastForward, stringResource(R.string.player_forward), false) {
-                            controller.seekForward(); interaction++
+                        if (controller.isSeekable) JaskPlayerTool(Icons.Filled.FastForward, stringResource(R.string.player_forward)) { controller.seekForward(); interaction++ }
+                        JaskPlayerTool(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), active = panel == Panel.SUBTITLES) {
+                            panel = if (panel == Panel.SUBTITLES) Panel.NONE else Panel.SUBTITLES; interaction++
                         }
-                    }
-
-                    Spacer(Modifier.width(20.dp))
-                    BarChip(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), panel == Panel.SUBTITLES) {
-                        panel = if (panel == Panel.SUBTITLES) Panel.NONE else Panel.SUBTITLES; interaction++
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    BarChip(Icons.Filled.Audiotrack, stringResource(R.string.player_audio), panel == Panel.AUDIO) {
-                        panel = if (panel == Panel.AUDIO) Panel.NONE else Panel.AUDIO; interaction++
-                    }
-                    if (variants.size > 1) {
-                        Spacer(Modifier.width(10.dp))
-                        BarChip(Icons.Filled.HighQuality, stringResource(R.string.player_quality), panel == Panel.QUALITY) {
+                        JaskPlayerTool(Icons.Filled.Audiotrack, stringResource(R.string.player_audio), active = panel == Panel.AUDIO) {
+                            panel = if (panel == Panel.AUDIO) Panel.NONE else Panel.AUDIO; interaction++
+                        }
+                        if (variants.size > 1) JaskPlayerTool(Icons.Filled.HighQuality, stringResource(R.string.player_quality), active = panel == Panel.QUALITY) {
                             panel = if (panel == Panel.QUALITY) Panel.NONE else Panel.QUALITY; interaction++
                         }
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    PlayerDisplayControls(settings, onMenuVisibilityChanged = { displayMenuOpen = it }) { interaction++ }
-                    Spacer(Modifier.width(10.dp))
-                    val recordingThis = activeRecordings.any { it.channelId == currentId }
-                    BarChip(
-                        icon = Icons.Filled.FiberManualRecord,
-                        label = if (recordingThis) stringResource(R.string.common_stop) else stringResource(R.string.player_record),
-                        selected = recordingThis,
-                        iconTint = Color(0xFFE53935),
-                    ) { toggleRecord() }
-                    if (pipSupported) {
-                        Spacer(Modifier.width(10.dp))
-                        BarChip(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pop_out), false) {
-                            (context.findActivity() as? app.opentv.MainActivity)?.enterPipNow()
-                            interaction++
+                        PlayerDisplayControls(settings, onMenuVisibilityChanged = { displayMenuOpen = it }) { interaction++ }
+                        val recordingThis = activeRecordings.any { it.channelId == currentId }
+                        Box {
+                            JaskPlayerTool(Icons.Filled.FiberManualRecord,
+                                if (recordingThis) stringResource(R.string.common_stop) else stringResource(R.string.player_record), active = recordingThis) { toggleRecord() }
+                            // A red dot marks the record button, solid while this channel records.
+                            Box(Modifier.align(Alignment.TopEnd).size(12.dp).clip(CircleShape)
+                                .background(if (recordingThis) Color(0xFFE53935) else Color(0xFFE53935).copy(alpha = 0.45f)))
+                        }
+                        if (pipSupported) JaskPlayerTool(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pop_out)) {
+                            (context.findActivity() as? app.opentv.MainActivity)?.enterPipNow(); interaction++
                         }
                     }
                 }
@@ -644,7 +564,8 @@ fun PlayerScreen(
                 Modifier
                     .fillMaxHeight()
                     .width(380.dp)
-                    .background(Color.Black.copy(alpha = 0.72f))
+                    .background(Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.88f), Color.Black.copy(alpha = 0.55f))))
+                    .windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Start + WindowInsetsSides.Vertical))
                     .padding(vertical = 16.dp),
             ) {
                 Text(
@@ -707,19 +628,21 @@ private fun ChannelListRow(
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
-        focused -> MaterialTheme.colorScheme.primary
-        playing -> MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+        focused -> Color.White.copy(alpha = 0.18f)
+        playing -> Color.White.copy(alpha = 0.08f)
         else -> Color.Transparent
     }
-    val fg = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White
+    val fg = Color.White
     Row(
         Modifier
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused }
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(10.dp))
             .background(bg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .clickable(interactionSource = null, indication = null, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A "Last" tag, or the channel number if the provider gives one — a fixed-width slot so
@@ -753,6 +676,7 @@ private fun OptionPanel(
     currentId: Long?,
     onTune: (Channel) -> Unit,
     firstFocus: FocusRequester,
+    modifier: Modifier = Modifier,
     onDone: () -> Unit,
 ) {
     val offLabel = stringResource(R.string.player_subtitles_off)
@@ -773,32 +697,7 @@ private fun OptionPanel(
         Panel.NONE -> ""
     }
 
-    Column(
-        Modifier
-            .widthIn(max = 460.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.Black.copy(alpha = 0.92f))
-            .padding(16.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.7f))
-        Spacer(Modifier.height(8.dp))
-        Column(
-            Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            if (options.isEmpty()) {
-                Text(stringResource(R.string.player_none_available), color = Color.White.copy(alpha = 0.6f), modifier = Modifier.padding(8.dp))
-            }
-            options.forEachIndexed { index, option ->
-                OptionRow(
-                    label = option.label,
-                    selected = option.selected,
-                    onClick = option.onClick,
-                    focusRequester = if (index == 0) firstFocus else null,
-                )
-            }
-        }
-    }
+    JaskPlayerPanel(title, options.map { Triple(it.label, it.selected, it.onClick) }, stringResource(R.string.player_none_available), firstFocus, modifier)
 }
 
 private data class Option(val label: String, val selected: Boolean, val onClick: () -> Unit)
@@ -850,71 +749,6 @@ private fun trackLabel(label: String?, language: String?, index: Int): String {
         return runCatching { Locale(language).displayLanguage.ifBlank { language } }.getOrDefault(language)
     }
     return "Track ${index + 1}"
-}
-
-@Composable
-private fun OptionRow(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    focusRequester: FocusRequester?,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val bg = if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f)
-    val fg = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MaterialTheme.typography.titleMedium, color = fg, modifier = Modifier.weight(1f))
-        if (selected) {
-            Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.common_selected), tint = fg)
-        }
-    }
-}
-
-@Composable
-private fun BarChip(
-    icon: ImageVector,
-    label: String,
-    selected: Boolean,
-    focusRequester: FocusRequester? = null,
-    iconTint: Color? = null,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val container = when {
-        focused -> MaterialTheme.colorScheme.primary
-        selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-        else -> Color.White.copy(alpha = 0.14f)
-    }
-    val content = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White
-
-    Row(
-        modifier = Modifier
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(12.dp))
-            .background(container)
-            .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
-                else Modifier,
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = label, tint = if (focused) content else (iconTint ?: content))
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.labelLarge, color = content)
-    }
 }
 
 private const val CONTROLS_TIMEOUT_MILLIS = 5_000L
