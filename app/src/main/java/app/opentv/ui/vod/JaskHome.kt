@@ -1,6 +1,8 @@
 package app.opentv.ui.vod
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -54,7 +56,7 @@ private fun Modifier.bleed(side: androidx.compose.ui.unit.Dp) = layout { measura
 
 internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, onOpen: (HomeTitle) -> Unit) {
     if (home.featured.isNotEmpty()) item(key = "home-featured", span = { GridItemSpan(maxLineSpan) }) {
-        JaskFeatured(home.featured, Modifier.bleed(16.dp), onOpen)
+        JaskFeatured(home.featured, Modifier.bleed(16.dp), onOpen = onOpen)
     } else item(key = "home-top", span = { GridItemSpan(maxLineSpan) }) {
         Spacer(Modifier.statusBarsPadding().height(64.dp))
     }
@@ -86,7 +88,7 @@ internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, onOpen: (
 
 /** Swipeable full-bleed hero: backdrop, title, facts and synopsis; tap opens the page; advances every 14 seconds. */
 @Composable
-private fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, onOpen: (HomeTitle) -> Unit) {
+internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: String? = null, onOpen: (HomeTitle) -> Unit) {
     val wide = LocalLayoutClass.current != LayoutClass.PHONE
     val pager = rememberPagerState { titles.size }
     LaunchedEffect(pager.settledPage, titles.size) {
@@ -108,7 +110,7 @@ private fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, onOpen: (H
                     Text(t.title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(6.dp))
-                    Text(listOfNotNull(t.rank?.let { "#$it this week" }, t.year?.toString(), t.network, t.status, rating(t.rating)).joinToString("  ·  "),
+                    Text(listOfNotNull(caption ?: t.rank?.let { "#$it this week" }, t.year?.toString(), t.network, t.status, rating(t.rating)).joinToString("  ·  "),
                         color = Color(0xFFDADADA), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     t.overview?.let {
                         Spacer(Modifier.height(8.dp))
@@ -138,6 +140,84 @@ private fun JaskWideCard(t: HomeTitle, modifier: Modifier, onClick: () -> Unit) 
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOfNotNull(t.network, t.status, t.year?.toString().takeIf { t.network == null }, rating(t.rating)).joinToString("  ·  "), color = Color(0xFFD0D0D0),
                 style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        }
+    }
+}
+
+
+/**
+ * Search layout: the most relevant hit as the full-bleed hero, hits 2–10 as detailed rows (rank
+ * circle, facts, description), then the rest as posters. [hits] null = still searching.
+ */
+@Composable
+internal fun JaskSearchResults(hits: List<HomeTitle>?, emptyText: String, onOpen: (HomeTitle) -> Unit) {
+    val padding = app.opentv.ui.LocalJaskContentPadding.current
+    when {
+        hits == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { androidx.compose.material3.CircularProgressIndicator() }
+        hits.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding).padding(32.dp), contentAlignment = Alignment.Center) {
+            Text(emptyText, color = Color(0xFFBDBDBD), style = MaterialTheme.typography.bodyLarge)
+        }
+        else -> {
+            val phone = LocalLayoutClass.current == LayoutClass.PHONE
+            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                columns = if (phone) androidx.compose.foundation.lazy.grid.GridCells.Fixed(3) else androidx.compose.foundation.lazy.grid.GridCells.Adaptive(120.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = padding.calculateBottomPadding() + 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                item(key = "top", span = { GridItemSpan(maxLineSpan) }) {
+                    JaskFeatured(listOf(hits.first()), Modifier.bleed(16.dp), caption = "Top result", onOpen = onOpen)
+                }
+                items(hits.drop(1).take(9), key = { "row-" + it.key }, span = { GridItemSpan(maxLineSpan) }) { JaskHitRow(it) { onOpen(it) } }
+                if (hits.size > 10) {
+                    item(key = "more", span = { GridItemSpan(maxLineSpan) }) {
+                        Text("More results", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFF4F4F4), modifier = Modifier.padding(top = 8.dp))
+                    }
+                    items(hits.drop(10), key = { "grid-" + it.key }) { t ->
+                        JaskPosterCard(t.title, t.poster, PosterFacts(rating = t.rating, status = t.status, quality = t.quality,
+                            networkLogo = t.networkLogo, network = t.network)) { onOpen(t) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A detailed search hit: poster with its rank circle, title, facts and description. */
+@Composable
+private fun JaskHitRow(t: HomeTitle, onClick: () -> Unit) {
+    var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    Row(Modifier.fillMaxWidth().height(124.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E1C1B)).clickable(onClick = onClick)) {
+        Box(Modifier.fillMaxHeight().aspectRatio(2f / 3f).background(Color(0xFF282522)).onSizeChanged { size = it }) {
+            AsyncImage(t.poster, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            t.rank?.let { rank ->
+                PosterFrost(t.poster, size, CircleShape, Modifier.align(Alignment.TopStart).padding(5.dp).size(22.dp)) {
+                    Text("$rank", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.align(Alignment.Center))
+                }
+            }
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 9.dp)) {
+            Text(t.title, color = Color(0xFFF6F3EF), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                rating(t.rating)?.let { Text(it, color = Color(0xFFF5C518), style = MaterialTheme.typography.labelMedium) }
+                t.year?.let { Text("$it", color = Color(0xFFBDBDBD), style = MaterialTheme.typography.labelMedium) }
+                qualityBadge(t.quality)?.let {
+                    Text(it, color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.border(1.dp, Color.White.copy(alpha = .7f), RoundedCornerShape(3.dp)).padding(horizontal = 3.dp))
+                }
+                t.status?.let { Text(it, color = Color(0xFFBDBDBD), style = MaterialTheme.typography.labelMedium) }
+                if (!t.networkLogo.isNullOrBlank()) AsyncImage(t.networkLogo, t.network, contentScale = ContentScale.Fit,
+                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color(0xFFE0E0E0)), modifier = Modifier.height(11.dp).widthIn(max = 40.dp))
+                else t.network?.let { Text(it, color = Color(0xFFBDBDBD), style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+            }
+            t.overview?.takeIf(String::isNotBlank)?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, color = Color(0xFFB0B0B0), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

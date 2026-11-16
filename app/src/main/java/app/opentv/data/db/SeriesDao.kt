@@ -23,6 +23,10 @@ interface SeriesDao {
     @Query("SELECT s.*, g.groupKey, g.variantCount, g.bestQuality FROM (SELECT " + SERIES_KEY + " AS groupKey, MIN(id) AS representativeId, COUNT(*) AS variantCount, " + SERIES_QUALITY + " AS bestQuality FROM series WHERE (:sourceId IS NULL OR sourceId = :sourceId) AND (:categoryId IS NULL OR categoryId = :categoryId) AND (:query = '' OR instr(lower(name), lower(:query)) > 0) GROUP BY " + SERIES_KEY + ") g JOIN series s ON s.id = g.representativeId ORDER BY s.name COLLATE NOCASE, g.groupKey")
     fun browseGroups(sourceId: Long?, categoryId: String?, query: String = ""): PagingSource<Int, app.opentv.data.repo.SeriesBrowseGroup>
 
+    /** Up to [limit] show groups whose provider name contains [query] (search results; ranked in Kotlin). */
+    @Query("SELECT s.*, g.groupKey, g.variantCount, g.bestQuality FROM (SELECT " + SERIES_KEY + " AS groupKey, MIN(id) AS representativeId, COUNT(*) AS variantCount, " + SERIES_QUALITY + " AS bestQuality FROM series WHERE (:sourceId IS NULL OR sourceId = :sourceId) AND instr(lower(name), lower(:query)) > 0 GROUP BY " + SERIES_KEY + ") g JOIN series s ON s.id = g.representativeId LIMIT :limit")
+    suspend fun searchGroups(sourceId: Long?, query: String, limit: Int = 150): List<app.opentv.data.repo.SeriesBrowseGroup>
+
     /** Provider show groups for the given TMDB hints, with all their provider names. */
     @Query("SELECT s.*, g.groupKey, g.variantCount, g.names, g.bestQuality FROM (SELECT 'tv-hint:' || CAST(tmdbId AS INTEGER) AS groupKey, MIN(id) AS representativeId, COUNT(*) AS variantCount, group_concat(DISTINCT name) AS names, " + SERIES_QUALITY + " AS bestQuality FROM series WHERE trim(tmdbId) != '' AND trim(tmdbId) NOT GLOB '*[^0-9]*' AND CAST(tmdbId AS INTEGER) IN (:ids) GROUP BY CAST(tmdbId AS INTEGER)) g JOIN series s ON s.id = g.representativeId")
     suspend fun groupsForHints(ids: List<Int>): List<app.opentv.catalogue.HintGroup>

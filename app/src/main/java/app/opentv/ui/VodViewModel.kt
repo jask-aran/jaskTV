@@ -16,6 +16,8 @@ import app.opentv.catalogue.TmdbRankings
 import app.opentv.catalogue.RankedTitle
 import app.opentv.catalogue.CanonicalShow
 import app.opentv.catalogue.ShowMatching
+import app.opentv.catalogue.MovieMatching
+import app.opentv.ui.vod.cleanShowTitle
 import app.opentv.data.repo.VodBrowseRepository
 import app.opentv.data.repo.VodBrowseFilter
 import app.opentv.data.repo.VodCategoryKey
@@ -219,7 +221,8 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     data class HomeTitle(val key: String, val title: String, val poster: String?, val backdrop: String?, val year: Int?,
         val rating: Double?, val language: String?, val overview: String?, val rank: Int? = null,
         val movieId: Long? = null, val groupKey: String? = null, val variantCount: Int = 1,
-        val network: String? = null, val status: String? = null, val networkLogo: String? = null, val quality: Int = 0)
+        val network: String? = null, val status: String? = null, val networkLogo: String? = null, val quality: Int = 0,
+        val tmdbId: Int? = null)
     enum class HomeStyle { POSTERS, WIDE }
     data class HomeSection(val key: String, val title: String, val style: HomeStyle, val items: List<HomeTitle>)
     data class CatalogueHome(val featured: List<HomeTitle>, val sections: List<HomeSection>)
@@ -289,6 +292,57 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         if (checked.isNotEmpty()) runCatching { canonicalShows.putAll(checked) }
         return arrange(lists, local, "Airing now", "All shows")
     }
+
+    // ---- Search: ranked hits for the Movies/Shows search layout ------------------------------
+
+    /** 0 exact title, 1 starts with, 2 a word starts with, 3 contains, 4 matched only via a provider alias. */
+    private fun matchTier(title: String, query: String): Int {
+        val t = MovieMatching.titleKey(title)
+        val q = MovieMatching.titleKey(query)
+        return when {
+            q.isEmpty() -> 4
+            t == q -> 0
+            t.startsWith(q) -> 1
+            t.split(' ').any { it.startsWith(q) } || t.contains(" $q") -> 2
+            t.contains(q) -> 3
+            else -> 4
+        }
+    }
+
+    private fun rankHits(hits: List<HomeTitle>, query: String, trending: Set<Int>): List<HomeTitle> =
+        hits.sortedWith(compareBy<HomeTitle>({ matchTier(it.title, query) }, { if (it.tmdbId in trending) 0 else 1 })
+            .thenByDescending { it.rating ?: 0.0 }.thenBy { it.title.lowercase() })
+            .mapIndexed { i, t -> t.copy(rank = i + 1) }
+
+    private fun trendingIds(kind: TmdbRankings.Kind) = rankings.cached(kind)?.values?.flatten()?.map { it.id }?.toSet().orEmpty()
+
+    /** Movie search hits, most relevant first (rank = position). Empty when there is no query. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val movieSearch: StateFlow<List<HomeTitle>?> = combine(selectedVodSource, settledBrowseQuery, movieOptions) { source, query, options -> Triple(source, query, options) }
+        .flatMapLatest { (source, query, options) ->
+            if (query.isBlank()) kotlinx.coroutines.flow.flowOf(null)
+            else canonical.search(source, query, options.languages.sorted().joinToString("", transform = { "|$it|" }), options.includeUnknown)
+                .map { cards ->
+                    rankHits(cards.map { card -> val t = card.title
+                        HomeTitle("movie:${t.tmdbId}", t.title, t.posterUrl, t.backdropUrl, t.year, t.rating, t.originalLanguage, t.synopsis,
+                            movieId = card.movieId, quality = card.bestQuality, tmdbId = t.tmdbId)
+                    }, query, trendingIds(TmdbRankings.Kind.MOVIES))
+                }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val showSearch: StateFlow<List<HomeTitle>?> = combine(selectedVodSource, settledBrowseQuery) { source, query -> source to query }
+        .mapLatest { (source, query) ->
+            if (query.isBlank()) null
+            else rankHits(graph.database.series().searchGroups(source, query).map { group ->
+                val show = group.primary.tmdbHint()?.let { canonicalShows.validated(it) }
+                val s = show?.let(group.primary::withCanonical) ?: group.primary
+                HomeTitle(group.groupKey, cleanShowTitle(s.name), s.posterUrl, s.backdropUrl, s.year, s.rating,
+                    show?.originalLanguage, s.plot, groupKey = group.groupKey, variantCount = group.variantCount,
+                    network = show?.network, status = show?.statusLabel, networkLogo = show?.networkLogo, quality = group.bestQuality,
+                    tmdbId = show?.tmdbId)
+            }.distinctBy { it.key }, query, trendingIds(TmdbRankings.Kind.SHOWS))
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** Opens what a home card points at, choosing the version the same way the grid does. */
     suspend fun openHomeMovie(title: HomeTitle): Movie? = title.movieId?.let { defaultMovieVersion(canonicalVersions(it)) }

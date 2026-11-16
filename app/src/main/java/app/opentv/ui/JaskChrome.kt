@@ -65,6 +65,8 @@ internal class JaskBackdrop(val layer: androidx.compose.ui.graphics.layer.Graphi
     var origin by mutableStateOf(Offset.Zero)
 }
 private val LocalJaskBackdrop = staticCompositionLocalOf<JaskBackdrop?> { null }
+/** True inside a glass host's recorded page, where frost renders without blur (see [JaskGlassHost]). */
+private val LocalJaskInRecording = staticCompositionLocalOf { false }
 
 @Composable
 internal fun JaskChromeFrame(
@@ -238,7 +240,11 @@ internal fun JaskGlassHost(modifier: Modifier = Modifier, background: @Composabl
                         layer.record { this@drawWithContent.drawContent() }
                         drawLayer(layer)
                     } else drawContent()
-                }, content = background)
+                }) {
+                // Glass inside the recorded page must not sample this layer: it would draw itself
+                // recursively (a native stack overflow in the renderer). It gets the unblurred look.
+                CompositionLocalProvider(LocalJaskBackdrop provides null, LocalJaskInRecording provides true) { background() }
+            }
             content()
         }
     }
@@ -285,8 +291,9 @@ internal fun JaskFrostSurface(modifier: Modifier = Modifier, shape: androidx.com
     // Blur a region larger than the surface by the blur radius, then clip: the edges always have
     // real content to sample, so artwork scrolling past no longer shimmers at the rim.
     val margin = (radius * 1.5f).toInt()
+    val inRecording = LocalJaskInRecording.current
     Box(modifier.onGloballyPositioned { origin = it.positionInRoot() }.clip(shape)
-        .background(if (glass) Color(0xFF141312) else Color(0xE62A2A2A))) {
+        .background(when { glass -> Color(0xFF141312); inRecording -> Color(0x8C2C2A28); else -> Color(0xE62A2A2A) })) {
         if (glass) Canvas(Modifier.matchParentSize().layout { measurable, constraints ->
                 val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(
                     constraints.maxWidth + 2 * margin, constraints.maxHeight + 2 * margin))
@@ -295,7 +302,7 @@ internal fun JaskFrostSurface(modifier: Modifier = Modifier, shape: androidx.com
             translate(source!!.origin.x - origin.x + margin, source.origin.y - origin.y + margin) { drawLayer(source.layer) }
         }
         // Glass: a thin neutral tint keeps the blurred artwork visible; the fallback stays opaque enough to read.
-        if (glass) Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(
+        if (glass || inRecording) Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(
             Color.White.copy(alpha = .14f), Color.Black.copy(alpha = .28f)))))
         // Specular rim: bright along the top edge, fading out down the sides.
         Box(Modifier.matchParentSize().border(1.dp, Brush.verticalGradient(listOf(

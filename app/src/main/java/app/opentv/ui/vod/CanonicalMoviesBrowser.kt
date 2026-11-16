@@ -9,6 +9,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.runtime.*
@@ -71,6 +77,13 @@ private fun CanonicalMoviesContent(vm: VodViewModel, onOpen: (Movie) -> Unit,
         val header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(Int) -> Unit)? = if (h != null && shell && query.isBlank()) { columns ->
             jaskHome(h, columns) { title -> scope.launch { vm.openHomeMovie(title)?.let(onOpen) } }
         } else null
+        val hits by vm.movieSearch.collectAsState()
+        if (shell && query.isNotBlank()) {
+            JaskSearchResults(hits, stringResource(R.string.jask_no_matches, query.trim())) { title ->
+                scope.launch { vm.openHomeMovie(title)?.let(onOpen) }
+            }
+            return@Column
+        }
         PagedVodGrid(vm.canonicalMoviePages.collectAsLazyPagingItems(), "$source/$query/$options", { it.title.tmdbId }, if (query.isNotBlank()) stringResource(R.string.jask_no_matches, query.trim()) else stringResource(if (vm.metadataConfigured) R.string.vod_paging_empty else R.string.catalogue_empty),
             header = header) { card ->
             JaskPosterCard(card.title.title, card.title.posterUrl, PosterFacts(rating = card.title.rating, quality = card.bestQuality)) {
@@ -179,52 +192,84 @@ internal fun JaskPosterCard(title: String, poster: String?, chips: List<String>,
 @Composable
 internal fun JaskPosterCard(title: String, poster: String?, facts: PosterFacts, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    var cardSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     val shape = RoundedCornerShape(8.dp)
     Column(Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }.clickable(onClick = onClick).padding(2.dp)) {
         Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(shape).background(Color(0xFF282522))
+            .onSizeChanged { cardSize = it }
             .then(if (focused) Modifier.border(3.dp, JaskAccent, shape) else Modifier)) {
             AsyncImage(poster, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             facts.rank?.let { rank ->
-                Text("$rank", color = Color.Black, fontWeight = androidx.compose.ui.text.font.FontWeight.Black,
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 18.sp),
-                    modifier = Modifier.align(androidx.compose.ui.Alignment.TopStart)
-                        .clip(RoundedCornerShape(bottomEnd = 9.dp)).background(Color(0xFFF4F4F4)).padding(horizontal = 8.dp, vertical = 3.dp))
+                PosterFrost(poster, cardSize, CircleShape, Modifier.align(androidx.compose.ui.Alignment.TopStart).padding(5.dp).size(24.dp)) {
+                    Text("$rank", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp, lineHeight = 12.sp),
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center))
+                }
             }
-            if (facts.noSource) Icon(Icons.Outlined.ErrorOutline, "No source", tint = Color(0xFFFFB4A9),
-                modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(5.dp).size(18.dp)
-                    .background(Color(0xB3000000), RoundedCornerShape(50)).padding(1.dp))
-            else qualityBadge(facts.quality)?.let { q ->
-                Text(q, color = Color.White, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 10.sp, letterSpacing = 0.4.sp),
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(5.dp)
-                        .background(Color(0x99000000), RoundedCornerShape(3.dp))
-                        .border(1.dp, Color.White.copy(alpha = .75f), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp, vertical = 1.dp))
-            }
-            Row(Modifier.align(androidx.compose.ui.Alignment.BottomStart).fillMaxWidth().padding(5.dp),
-                verticalAlignment = androidx.compose.ui.Alignment.Bottom) {
-                FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    facts.rating?.takeIf { it > 0 }?.let { r ->
-                        Row(Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xB3000000)).padding(horizontal = 4.dp, vertical = 2.dp),
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Star, null, tint = Color(0xFFF5C518), modifier = Modifier.size(10.dp))
-                            Spacer(Modifier.width(2.dp))
-                            Text(String.format(Locale.getDefault(), "%.1f", r), color = Color(0xFFF2F2F2),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp))
+            val quality = qualityBadge(facts.quality)
+            val logo = facts.networkLogo?.takeIf(String::isNotBlank)
+            if (facts.noSource || quality != null || logo != null) {
+                PosterFrost(poster, cardSize, RoundedCornerShape(50), Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(5.dp).height(20.dp)) {
+                    Row(Modifier.fillMaxHeight().padding(horizontal = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        if (facts.noSource) Icon(Icons.Outlined.ErrorOutline, "No source", tint = Color(0xFFFFB4A9), modifier = Modifier.size(13.dp))
+                        else quality?.let {
+                            Text(it, color = Color.White, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 10.sp, letterSpacing = 0.3.sp),
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                modifier = Modifier.border(1.dp, Color.White.copy(alpha = .8f), RoundedCornerShape(3.dp)).padding(horizontal = 3.dp))
+                        }
+                        // Network logos drawn as white silhouettes so dark marks (HBO, ABC) read on glass.
+                        logo?.let {
+                            AsyncImage(it, facts.network, contentScale = ContentScale.Fit,
+                                colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color.White),
+                                modifier = Modifier.height(10.dp).widthIn(max = 34.dp))
                         }
                     }
-                    facts.status?.let { JaskPosterChip(it) }
-                    facts.extra.forEach { JaskPosterChip(it) }
                 }
-                if (!facts.networkLogo.isNullOrBlank()) {
-                    Box(Modifier.padding(start = 3.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xE6F4F4F4)).padding(horizontal = 4.dp, vertical = 3.dp)) {
-                        AsyncImage(facts.networkLogo, facts.network, contentScale = ContentScale.Fit,
-                            modifier = Modifier.height(12.dp).widthIn(max = 38.dp))
+            }
+            FlowRow(Modifier.align(androidx.compose.ui.Alignment.BottomStart).padding(5.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                facts.rating?.takeIf { it > 0 }?.let { r ->
+                    Row(Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xB3000000)).padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Star, null, tint = Color(0xFFF5C518), modifier = Modifier.size(10.dp))
+                        Spacer(Modifier.width(2.dp))
+                        Text(String.format(Locale.getDefault(), "%.1f", r), color = Color(0xFFF2F2F2),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp))
                     }
-                } else facts.network?.let { JaskPosterChip(it) }
+                }
+                facts.status?.let { JaskPosterChip(it) }
+                // Until TMDB supplies a logo, the network name stays as a chip.
+                if (logo == null) facts.network?.let { JaskPosterChip(it) }
+                facts.extra.forEach { JaskPosterChip(it) }
             }
         }
         Text(title, color = Color(0xFFF6F3EF), style = MaterialTheme.typography.labelLarge,
             maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
+    }
+}
+
+/**
+ * Frosted badge over a poster. Cards live inside the page that the shell's glass records, so they
+ * can't sample that layer; instead the badge blurs its own slice of the same (cached) poster image.
+ * API < 31 has no blur and shows the translucent tint only.
+ */
+@Composable
+internal fun PosterFrost(image: String?, cardSize: androidx.compose.ui.unit.IntSize, shape: androidx.compose.ui.graphics.Shape,
+    modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
+    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    Box(modifier.onPlaced { origin = it.positionInParent() }.clip(shape)) {
+        if (cardSize.width > 0) androidx.compose.ui.layout.Layout({
+            AsyncImage(image, null, contentScale = ContentScale.Crop, modifier = Modifier.blur(10.dp, BlurredEdgeTreatment.Unbounded))
+        }, Modifier.matchParentSize()) { measurables, constraints ->
+            val placeable = measurables.first().measure(androidx.compose.ui.unit.Constraints.fixed(cardSize.width, cardSize.height))
+            layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(-origin.x.toInt(), -origin.y.toInt()) }
+        }
+        Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(
+            listOf(Color.White.copy(alpha = .16f), Color.Black.copy(alpha = .38f)))))
+        Box(Modifier.matchParentSize().border(1.dp, androidx.compose.ui.graphics.Brush.verticalGradient(
+            listOf(Color.White.copy(alpha = .45f), Color.White.copy(alpha = .08f))), shape))
+        content()
     }
 }
 

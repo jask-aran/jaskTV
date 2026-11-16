@@ -158,6 +158,20 @@ fun SeriesScreen(
         LaunchedEffect(request) { if (request > 0) filters = true }
         val home by viewModel.showHome.collectAsState()
         val homeScope = rememberCoroutineScope()
+        val hits by viewModel.showSearch.collectAsState()
+        if (query.isNotBlank()) {
+            JaskSearchResults(hits, stringResource(R.string.jask_no_matches, query.trim())) { title ->
+                homeScope.launch { viewModel.openHomeShow(title)?.let(onOpenSeries) }
+            }
+            if (filters) JaskFilterSheet(onDismiss = { filters = false }, onApply = { filters = false },
+                onReset = { viewModel.selectVodSource(null); viewModel.selectSeriesCategory(null) }) {
+                LazyColumn(Modifier.heightIn(max = 440.dp)) {
+                    item { TextButton(onClick = { viewModel.selectVodSource(null) }) { Text(stringResource(R.string.catalogue_all_sources)) } }
+                    items(sources, key = { it.id }) { provider -> TextButton(onClick = { viewModel.selectVodSource(provider.id) }) { Text(provider.name) } }
+                }
+            }
+            return
+        }
         val h = home
         val header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(Int) -> Unit)? = if (h != null && query.isBlank()) { columns ->
             jaskHome(h, columns) { title -> homeScope.launch { viewModel.openHomeShow(title)?.let(onOpenSeries) } }
