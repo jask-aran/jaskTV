@@ -575,4 +575,7 @@
     <string name="upd_retry">Нов опит</string>
     <string name="upd_update">Актуализиране</string>
     <string name="vod_remove_continue">Премахване от Продължете гледането</string>
+    <string name="nav_media_simple">Филми и Сериали</string>
+    <string name="nav_saved_simple">Библиотека</string>
+    <string name="provider_filters">Филтри на доставчика</string>
 </resources>

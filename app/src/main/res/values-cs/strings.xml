@@ -575,4 +575,7 @@
     <string name="upd_retry">Zkusit znovu</string>
     <string name="upd_update">Aktualizovat</string>
     <string name="vod_remove_continue">Odebrat z Pokračovat ve sledování</string>
+    <string name="nav_media_simple">Filmy a Seriály</string>
+    <string name="nav_saved_simple">Knihovna</string>
+    <string name="provider_filters">Filtry poskytovatele</string>
 </resources>

@@ -575,4 +575,7 @@
     <string name="upd_retry">重试</string>
     <string name="upd_update">更新</string>
     <string name="vod_remove_continue">从“继续观看”中移除</string>
+    <string name="nav_media_simple">电影与剧集</string>
+    <string name="nav_saved_simple">媒体库</string>
+    <string name="provider_filters">提供商筛选</string>
 </resources>

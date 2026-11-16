@@ -25,6 +25,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
+import app.opentv.ui.CompactBottomNavigation
+import androidx.compose.ui.test.onNodeWithText
 import app.opentv.ui.BrowsingViewport
 import app.opentv.ui.PhoneLandscapeRail
 import app.opentv.ui.Tab
@@ -147,6 +149,23 @@ class BrowsingViewportTest {
         compose.runOnIdle { assertThat(calls.last()).isEqualTo(settings) }
     }
 
+    @Test fun `compact navigation keeps every destination tappable in 56 dp`() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val selected = mutableStateOf(Tab.LIVE)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.testTag("navigation")) {
+                    CompactBottomNavigation(Tab.entries, selected.value) { selected.value = it }
+                }
+            }
+        }
+        compose.onNodeWithTag("navigation").assertHeightIsEqualTo(56.dp)
+        for (tab in Tab.entries) {
+            compose.onNodeWithText(context.getString(tab.labelRes)).assertIsDisplayed().performClick()
+            compose.runOnIdle { assertThat(selected.value).isEqualTo(tab) }
+        }
+    }
+
     @Test fun `very short landscape keeps settings and last tab reachable by scrolling`() {
         val context = ApplicationProvider.getApplicationContext<Application>()
         var settingsOpened = false
@@ -167,11 +186,11 @@ class BrowsingViewportTest {
         }
         compose.onNodeWithContentDescription(context.getString(R.string.nav_settings))
             .performScrollTo().assertIsDisplayed().performClick()
-        compose.onNodeWithContentDescription(context.getString(R.string.nav_downloads))
+        compose.onNodeWithContentDescription(context.getString(R.string.nav_saved_simple))
             .performScrollTo().assertIsDisplayed().performClick()
         compose.runOnIdle {
             assertThat(settingsOpened).isTrue()
-            assertThat(selected).isEqualTo(Tab.DOWNLOADS)
+            assertThat(selected).isEqualTo(Tab.LIBRARY)
         }
     }
 }

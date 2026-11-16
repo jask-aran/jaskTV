@@ -575,4 +575,7 @@
     <string name="upd_retry">Thử lại</string>
     <string name="upd_update">Cập nhật</string>
     <string name="vod_remove_continue">Xóa khỏi Xem tiếp</string>
+    <string name="nav_media_simple">Phim và Phim bộ</string>
+    <string name="nav_saved_simple">Thư viện</string>
+    <string name="provider_filters">Bộ lọc nhà cung cấp</string>
 </resources>

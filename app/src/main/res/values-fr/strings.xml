@@ -575,4 +575,7 @@
     <string name="upd_retry">Réessayer</string>
     <string name="upd_update">Mettre à jour</string>
     <string name="vod_remove_continue">Retirer de Reprendre la lecture</string>
+    <string name="nav_media_simple">Films et Séries</string>
+    <string name="nav_saved_simple">Bibliothèque</string>
+    <string name="provider_filters">Filtres du fournisseur</string>
 </resources>

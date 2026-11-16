@@ -148,12 +148,23 @@ class CanonicalMoviesTest {
         assertThat(db.movies().count()).isEqualTo(1)
     }
 
+    @Test fun `background checkpoint is atomic when a later link fails validation`() = runTest {
+        val movie = movieFixture(1, "Inception", 2010)
+        val valid = MovieIdentityMatch(movie.sourceId, movie.streamId, movie.identityEvidence(), 27205, 1.0, "fixture", false, "")
+        var rejected = false
+        try { dao.recordBatch(listOf(title() to valid, title() to valid.copy(streamId = "bad", confidence = 2.0))) }
+        catch (_: IllegalArgumentException) { rejected = true }
+        assertThat(rejected).isTrue()
+        assertThat(dao.title(27205)).isNull()
+        assertThat(dao.match(movie.sourceId,movie.streamId)).isNull()
+    }
+
     @Test fun `two remakes are distinct and canonical search is local`() = runTest {
         val a = movieFixture(1, "Provider gibberish", 1982)
         val b = movieFixture(2, "Provider gibberish", 2011)
         db.movies().upsertAll(listOf(a,b))
         link(a, title(1, "The Thing", 1982)); link(b, title(2, "The Thing", 2011))
         assertThat(page(query = "thing").map { it.title.year }).containsExactly(1982,2011)
-        assertThat(page(query = "gibberish")).isEmpty()
+        assertThat(page(query = "gibberish")).hasSize(2) // provider aliases resolve to canonical cards
     }
 }

@@ -204,7 +204,7 @@ class MainActivity : ComponentActivity() {
                 // A living-room screen defaults to dark; a phone/tablet follows the system.
                 AppSettings.ThemeMode.SYSTEM -> isTelevision || isSystemInDarkTheme()
             }
-            OpenTvTheme(darkTheme = darkTheme) {
+            OpenTvTheme(darkTheme = darkTheme, phone = !isTelevision) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -431,7 +431,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
                 )
             }
 
-            browsingDestination(Routes.HOME) {
+            browsingDestination(Routes.HOME, edgeToEdgeOnTouch = true) {
                 MainScreen(
                     isTelevision = isTelevision,
                     hasSources = sourcesUi.sources.isNotEmpty(),
@@ -484,6 +484,8 @@ private fun OpenTvApp(isTelevision: Boolean) {
                         navController.navigate(Routes.vodPlayer(key, url, title, ua))
                     },
                     activeProfileName = activeProfileName,
+                    vodViewModel = vodViewModel,
+                    onOpenGuide = { navController.navigate(Routes.EPG_SETTINGS) },
                 )
             }
 
@@ -496,6 +498,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
 
             browsingDestination(Routes.SEARCH) { entry ->
                 SearchScreen(
+                    vodViewModel = vodViewModel,
                     initialScope = entry.arguments?.getString("scope") ?: "all",
                     onOpenMovie = { movie -> navController.navigate(Routes.movieDetail(movie.id)) },
                     onPlayChannel = { channel -> navController.navigate(Routes.player(channel.id)) },
@@ -583,7 +586,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
                 )
             }
 
-            browsingDestination(Routes.SERIES_DETAIL) { entry ->
+            browsingDestination(Routes.SERIES_DETAIL, edgeToEdgeOnTouch = true) { entry ->
                 val seriesId = entry.arguments?.getString("seriesId")?.toLongOrNull() ?: return@browsingDestination
                 SeriesDetailScreen(
                     seriesId = seriesId,
@@ -599,7 +602,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
                 )
             }
 
-            browsingDestination(Routes.MOVIE_DETAIL) { entry ->
+            browsingDestination(Routes.MOVIE_DETAIL, edgeToEdgeOnTouch = true) { entry ->
                 val movieId = entry.arguments?.getString("movieId")?.toLongOrNull() ?: return@browsingDestination
                 MovieDetailScreen(
                     movieId = movieId,

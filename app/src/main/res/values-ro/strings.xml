@@ -575,4 +575,7 @@
     <string name="upd_retry">Reîncearcă</string>
     <string name="upd_update">Actualizează</string>
     <string name="vod_remove_continue">Elimină din Continuă vizionarea</string>
+    <string name="nav_media_simple">Filme și Seriale</string>
+    <string name="nav_saved_simple">Bibliotecă</string>
+    <string name="provider_filters">Filtre furnizor</string>
 </resources>

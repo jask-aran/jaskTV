@@ -575,4 +575,7 @@
     <string name="upd_retry">再試行</string>
     <string name="upd_update">アップデート</string>
     <string name="vod_remove_continue">「続きを見る」から削除</string>
+    <string name="nav_media_simple">映画・TV番組</string>
+    <string name="nav_saved_simple">ライブラリ</string>
+    <string name="provider_filters">プロバイダーのフィルター</string>
 </resources>

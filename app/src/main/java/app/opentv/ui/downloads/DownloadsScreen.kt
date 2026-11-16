@@ -33,6 +33,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -241,6 +242,7 @@ fun DownloadControl(
     mediaKey: String,
     buildDownload: () -> Download,
     compact: Boolean = false,
+    small: Boolean = false,
 ) {
     val context = LocalContext.current
     val graph = remember { ServiceLocator.get(context) }
@@ -258,16 +260,21 @@ fun DownloadControl(
     }
     val state = item?.state
     if (compact) {
+        // small: quieter, tighter icon for list rows (episode lists), so it doesn't dominate the row.
+        val box = if (small) 36.dp else 48.dp
+        val icon = if (small) 18.dp else 24.dp
         when (state) {
-            DownloadRepository.State.DONE ->
-                Icon(Icons.Filled.DownloadDone, stringResource(R.string.dl_downloaded), tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(12.dp))
+            DownloadRepository.State.DONE -> Box(Modifier.size(box), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.DownloadDone, stringResource(R.string.dl_downloaded), Modifier.size(icon),
+                    tint = if (small) LocalContentColor.current.copy(alpha = 0.7f) else MaterialTheme.colorScheme.primary)
+            }
             DownloadRepository.State.RUNNING, DownloadRepository.State.QUEUED, DownloadRepository.State.PAUSED ->
-                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(progress = { item?.progress ?: 0f }, modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
+                Box(Modifier.size(box), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(progress = { item?.progress ?: 0f }, modifier = Modifier.size(icon), strokeWidth = if (small) 2.dp else 3.dp)
                 }
-            else -> IconButton(onClick = start) {
-                Icon(Icons.Filled.Download, contentDescription = stringResource(R.string.dl_download))
+            else -> IconButton(onClick = start, modifier = Modifier.size(box)) {
+                Icon(Icons.Filled.Download, contentDescription = stringResource(R.string.dl_download), modifier = Modifier.size(icon),
+                    tint = if (small) LocalContentColor.current.copy(alpha = 0.55f) else LocalContentColor.current)
             }
         }
         return

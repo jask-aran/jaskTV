@@ -575,4 +575,7 @@
     <string name="upd_retry">Újra</string>
     <string name="upd_update">Frissítés</string>
     <string name="vod_remove_continue">Eltávolítás a Folytatás listából</string>
+    <string name="nav_media_simple">Filmek és Sorozatok</string>
+    <string name="nav_saved_simple">Könyvtár</string>
+    <string name="provider_filters">Szolgáltatói szűrők</string>
 </resources>

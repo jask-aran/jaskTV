@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">jaskTV</string>
 
     <!-- ============================ Common / reused ============================ -->
@@ -628,4 +628,44 @@
     <string name="settings_auto_rotate_subtitle">On (default): menus and lists follow Android’s rotation setting. Off: keep phone navigation in portrait. Player rotation is controlled separately.</string>
     <string name="nav_media_simple">Movies &amp; Shows</string>
     <string name="nav_saved_simple">Library</string>
+    <string name="provider_filters">Provider filters</string>
+    <!-- English fallback for the new catalogue; reviewed translations are still pending. -->
+    <string tools:ignore="MissingTranslation" name="catalogue_back">Movies catalogue</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_all_languages">All languages</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_filters">Filter and sort</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_inventory">Provider inventory</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_search">Search movies</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_original_language">Original language</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_unknown">Include unknown languages</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_sort">Sort by</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_sort_title">Title</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_sort_year">Release year</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_sort_rating">TMDB rating</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_sort_added">Provider added date</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_all_sources">All sources</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_apply">Apply</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_reset">Reset</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_versions">Available versions</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_version_info">%1$s · %2$s · Audio unknown</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_empty">No matched movies here yet. Add a TMDB key in Settings to identify your movies, or open Provider inventory.</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_quality_unknown">Quality unknown</string>
+    <string tools:ignore="MissingTranslation" name="catalogue_quality_hint">%1$s (inferred)</string>
+    <string tools:ignore="MissingTranslation" name="jask_account">Account</string>
+    <string tools:ignore="MissingTranslation" name="jask_search_live">Search channels</string>
+    <string tools:ignore="MissingTranslation" name="jask_search_movies">Search movies</string>
+    <string tools:ignore="MissingTranslation" name="jask_search_shows">Search shows</string>
+    <string tools:ignore="MissingTranslation" name="jask_search_library">Search your library</string>
+    <string tools:ignore="MissingTranslation" name="jask_no_matches">Nothing matches “%1$s”</string>
+    <string tools:ignore="MissingTranslation" name="jask_more_channels">More channels</string>
+    <string tools:ignore="MissingTranslation" name="jask_add">Add</string>
+    <string tools:ignore="MissingTranslation" name="jask_watchlist">Watchlist</string>
+    <string tools:ignore="MissingTranslation" name="jask_library_empty">Star a movie or show to add it to your watchlist. Anything you start watching appears here too.</string>
+    <string tools:ignore="MissingTranslation" name="jask_show_chip">Show</string>
+    <string tools:ignore="MissingTranslation" name="jask_library_downloads">Downloads</string>
+    <string tools:ignore="MissingTranslation" name="jask_library_classic">Saved channels and collections</string>
+    <string tools:ignore="MissingTranslation" name="jask_remove_from_continue">Remove from Continue watching</string>
+    <string tools:ignore="MissingTranslation" name="jask_sources">Add source</string>
+    <string tools:ignore="MissingTranslation" name="jask_inventory">Shows provider inventory</string>
+    <string tools:ignore="MissingTranslation" name="jask_shows_pending">Your shows are available in Provider inventory.</string>
+    <string tools:ignore="MissingTranslation" name="jask_guide_sources">TV guide sources</string>
 </resources>

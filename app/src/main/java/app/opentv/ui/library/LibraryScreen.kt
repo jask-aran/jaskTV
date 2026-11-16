@@ -135,6 +135,7 @@ fun LibraryScreen(
     var mapChannel by remember { mutableStateOf<Channel?>(null) }
 
     Column(Modifier.fillMaxSize()) {
+        if (!app.opentv.ui.LocalJaskTouchShell.current) {
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -155,6 +156,20 @@ fun LibraryScreen(
                 Text("Collection")
             }
         }
+        }
+        var libraryFilters by remember { mutableStateOf(false) }
+        val filterRequest = app.opentv.ui.LocalJaskFilterRequest.current
+        LaunchedEffect(filterRequest) { if (filterRequest > 0) libraryFilters = true }
+        if (libraryFilters) AlertDialog(onDismissRequest = { libraryFilters = false },
+            title = { Text("Library") }, confirmButton = { TextButton(onClick = { libraryFilters = false }) { Text("Done") } },
+            text = { Column {
+                listOf("All", "Channels", "Movies", "Shows", "Downloads").forEach { name ->
+                    TextButton(onClick = { section = name; libraryFilters = false }) { Text(name) }
+                }
+                collections.forEach { collection -> TextButton(onClick = { section = "collection:${collection.id}"; libraryFilters = false }) { Text(collection.name) } }
+                TextButton(onClick = { sort = when (sort) { "Name" -> "Rating"; "Rating" -> "Year"; else -> "Name" } }) { Text("Sort: $sort") }
+                TextButton(onClick = { libraryFilters = false; creating = true }) { Text("New collection") }
+            } })
         if (collectionId != null) {
             val selected = collections.firstOrNull { it.id == collectionId }
             if (selected != null) Row(
@@ -170,7 +185,7 @@ fun LibraryScreen(
                     Icon(Icons.Filled.Delete, contentDescription = "Delete collection")
                 }
             }
-        } else if (section != "Downloads") {
+        } else if (section != "Downloads" && !app.opentv.ui.LocalJaskTouchShell.current) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                 TextButton(onClick = { sorting = true }) { Text("Sort: $sort") }
                 DropdownMenu(expanded = sorting, onDismissRequest = { sorting = false }) {

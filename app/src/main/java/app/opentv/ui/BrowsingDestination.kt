@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -23,10 +25,15 @@ import androidx.navigation.compose.composable
  */
 fun NavGraphBuilder.browsingDestination(
     route: String,
+    edgeToEdgeOnTouch: Boolean = false,
     content: @Composable (NavBackStackEntry) -> Unit,
 ) {
     composable(route) { entry ->
-        BrowsingViewport { content(entry) }
+        // Touch shell and media pages draw under the system bars (they pad their own chrome and
+        // content); only side cutouts/three-button bars are kept clear. TV keeps the full safe area.
+        if (edgeToEdgeOnTouch && LocalLayoutClass.current.isTouch)
+            BrowsingViewport(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)) { content(entry) }
+        else BrowsingViewport { content(entry) }
     }
 }
 

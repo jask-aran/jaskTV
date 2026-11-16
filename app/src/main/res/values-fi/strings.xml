@@ -575,4 +575,7 @@
     <string name="upd_retry">Yritä uudelleen</string>
     <string name="upd_update">Päivitä</string>
     <string name="vod_remove_continue">Poista Jatka katselua -listalta</string>
+    <string name="nav_media_simple">Elokuvat ja Sarjat</string>
+    <string name="nav_saved_simple">Kirjasto</string>
+    <string name="provider_filters">Palveluntarjoajan suodattimet</string>
 </resources>

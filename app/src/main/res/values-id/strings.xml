@@ -575,4 +575,7 @@
     <string name="upd_retry">Coba lagi</string>
     <string name="upd_update">Perbarui</string>
     <string name="vod_remove_continue">Hapus dari Lanjutkan menonton</string>
+    <string name="nav_media_simple">Film &amp; Acara TV</string>
+    <string name="nav_saved_simple">Koleksi</string>
+    <string name="provider_filters">Filter penyedia</string>
 </resources>

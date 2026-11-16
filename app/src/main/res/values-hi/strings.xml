@@ -575,4 +575,7 @@
     <string name="upd_retry">फिर से कोशिश करें</string>
     <string name="upd_update">अपडेट करें</string>
     <string name="vod_remove_continue">देखना जारी रखें से हटाएँ</string>
+    <string name="nav_media_simple">फ़िल्में और शोज़</string>
+    <string name="nav_saved_simple">लाइब्रेरी</string>
+    <string name="provider_filters">प्रदाता फ़िल्टर</string>
 </resources>

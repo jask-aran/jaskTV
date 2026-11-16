@@ -575,4 +575,7 @@
     <string name="upd_retry">Prøv igjen</string>
     <string name="upd_update">Oppdater</string>
     <string name="vod_remove_continue">Fjern fra Fortsett å se</string>
+    <string name="nav_media_simple">Filmer og Serier</string>
+    <string name="nav_saved_simple">Bibliotek</string>
+    <string name="provider_filters">Leverandørfiltre</string>
 </resources>

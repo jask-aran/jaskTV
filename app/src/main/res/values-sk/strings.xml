@@ -575,4 +575,7 @@
     <string name="upd_retry">Skúsiť znova</string>
     <string name="upd_update">Aktualizovať</string>
     <string name="vod_remove_continue">Odstrániť z Pokračovať v pozeraní</string>
+    <string name="nav_media_simple">Filmy a Seriály</string>
+    <string name="nav_saved_simple">Knižnica</string>
+    <string name="provider_filters">Filtre poskytovateľa</string>
 </resources>

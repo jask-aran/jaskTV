@@ -152,6 +152,27 @@ class VodBrowsePagingTest {
         assertThat(page(db.series().browse(1, "missing")).data).isEmpty()
     }
 
+    @Test fun `inline search filters both catalogues without losing scope grouping or literal punctuation`() = runTest {
+        db.movies().upsertAll(listOf(
+            movieFixture(1, "The Matrix HD").copy(categoryId = "7"),
+            movieFixture(2, "The Matrix 4K").copy(categoryId = "7"),
+            movieFixture(3, "The Matrix HD").copy(sourceId = 2, categoryId = "7"),
+            movieFixture(4, "100% Real HD").copy(categoryId = "8"),
+        ))
+        val matches = page(db.movies().browseGroups(1, "7", "MATRIX")).data.single()
+        assertThat(matches.primary.id).isEqualTo(2)
+        assertThat(matches.variantCount).isEqualTo(2)
+        assertThat(page(db.movies().browseGroups(1, "8", "matrix")).data).isEmpty()
+        assertThat(page(db.movies().browseGroups(null, null, "%")).data.single().primary.id).isEqualTo(4)
+        fun show(id: Long, source: Long) = Series(id = id, sourceId = source, seriesId = "$id",
+            name = "The Office", categoryId = "7", posterUrl = null, rating = null,
+            year = null, plot = null, addedMillis = 10)
+        db.series().upsertAll(listOf(show(1, 1), show(2, 2)))
+        assertThat(page(db.series().browse(1, "7", "OFFICE")).data.map { it.id }).containsExactly(1L)
+        assertThat(page(db.series().browse(1, "7", "missing")).data).isEmpty()
+        assertThat(page(db.series().browse(null, null, "%")).data).isEmpty()
+    }
+
     @Test fun `new sync invalidates logical group paging source`() = runTest {
         db.movies().upsertAll(listOf(movieFixture(1, "Film HD")))
         val source = db.movies().browseGroups(null, null)

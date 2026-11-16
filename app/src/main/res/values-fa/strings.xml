@@ -575,4 +575,7 @@
     <string name="upd_retry">تلاش دوباره</string>
     <string name="upd_update">به‌روزرسانی</string>
     <string name="vod_remove_continue">حذف از ادامهٔ تماشا</string>
+    <string name="nav_media_simple">فیلم‌ها و سریال‌ها</string>
+    <string name="nav_saved_simple">کتابخانه</string>
+    <string name="provider_filters">فیلترهای ارائه‌دهنده</string>
 </resources>

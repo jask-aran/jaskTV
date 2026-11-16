@@ -575,4 +575,7 @@
     <string name="upd_retry">إعادة المحاولة</string>
     <string name="upd_update">تحديث</string>
     <string name="vod_remove_continue">إزالة من متابعة المشاهدة</string>
+    <string name="nav_media_simple">الأفلام والمسلسلات</string>
+    <string name="nav_saved_simple">المكتبة</string>
+    <string name="provider_filters">فلاتر المزوّد</string>
 </resources>

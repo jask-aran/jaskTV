@@ -575,4 +575,7 @@
     <string name="upd_retry">Pokušaj ponovno</string>
     <string name="upd_update">Ažuriraj</string>
     <string name="vod_remove_continue">Ukloni iz Nastavi gledati</string>
+    <string name="nav_media_simple">Filmovi i Serije</string>
+    <string name="nav_saved_simple">Biblioteka</string>
+    <string name="provider_filters">Filtri pružatelja</string>
 </resources>

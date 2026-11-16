@@ -5,13 +5,24 @@
  */
 package app.opentv.ui
 
+import app.opentv.data.repo.providerBrowseKey
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.cachedIn
+import androidx.paging.map
+import app.opentv.catalogue.tmdbHint
+import app.opentv.catalogue.TmdbRankings
+import app.opentv.catalogue.RankedTitle
+import app.opentv.catalogue.CanonicalShow
+import app.opentv.catalogue.ShowMatching
 import app.opentv.data.repo.VodBrowseRepository
 import app.opentv.data.repo.VodBrowseFilter
 import app.opentv.data.repo.VodCategoryKey
+import app.opentv.data.repo.providerBrowseKey
+import app.opentv.catalogue.CatalogueSort
+import app.opentv.catalogue.identityEvidence
+import app.opentv.catalogue.withCanonical
 import app.opentv.R
 import app.opentv.core.AppText
 import app.opentv.core.ServiceLocator
@@ -25,7 +36,6 @@ import app.opentv.data.model.StremioStream
 import app.opentv.data.model.StreamKind
 import app.opentv.data.parser.displayTitle
 import app.opentv.data.parser.VodTitleCleaner
-import app.opentv.data.repo.GenreGroup
 import app.opentv.data.repo.MovieVariantGroup
 import app.opentv.data.repo.PersonTitle
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +61,36 @@ import kotlinx.coroutines.withContext
 class VodViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = ServiceLocator.get(app)
     private val settings = graph.settings
+    val metadataConfigured get() = settings.tmdbApiKey.value.isNotBlank()
+    private val canonical = graph.database.canonicalMovies()
+    private val cataloguePrefs = app.getSharedPreferences("jask_catalogue", android.content.Context.MODE_PRIVATE)
+    data class MovieOptions(val languages: Set<String> = emptySet(), val includeUnknown: Boolean = true,
+        val sort: CatalogueSort = CatalogueSort.TITLE)
+    val movieOptions = MutableStateFlow(MovieOptions(
+        cataloguePrefs.getStringSet("languages", emptySet())!!.toSet(),
+        cataloguePrefs.getBoolean("unknown", true),
+        runCatching { CatalogueSort.valueOf(cataloguePrefs.getString("sort", "TITLE")!!) }
+            .getOrDefault(CatalogueSort.TITLE)))
+    val catalogueLanguages = canonical.languages().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    fun applyMovieOptions(options: MovieOptions) {
+        cataloguePrefs.edit().putStringSet("languages", options.languages).putBoolean("unknown", options.includeUnknown)
+            .putString("sort", options.sort.name).apply()
+        movieOptions.value = options
+    }
+    suspend fun canonicalMovie(id: Long): Movie? {
+        val raw = graph.database.movies().byId(id) ?: return null
+        val link = canonical.match(raw.sourceId, raw.streamId) ?: return raw
+        if (!link.manual && link.evidence != raw.identityEvidence()) return raw
+        return link.tmdbId?.let { canonical.title(it) }?.let { raw.withCanonical(it) } ?: raw
+    }
+    suspend fun rawMovieName(id: Long): String = graph.database.movies().byId(id)?.name.orEmpty()
+    suspend fun canonicalVersions(id: Long): List<Movie> {
+        val raw = graph.database.movies().byId(id) ?: return emptyList()
+        val link = canonical.match(raw.sourceId, raw.streamId) ?: return emptyList()
+        if (!link.manual && link.evidence != raw.identityEvidence()) return emptyList()
+        val title = link.tmdbId?.let { canonical.title(it) } ?: return emptyList()
+        return canonical.versions(title.tmdbId).map { it.withCanonical(title) }
+    }
 
     /** One card in the Continue Watching shelf — a movie or episode with somewhere left to go. */
     data class ResumeItem(
@@ -131,17 +171,133 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         ) { raw, sourceId -> if (sourceId == null) raw else raw.filter { it.sourceId == sourceId } }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val browseInput = MutableStateFlow("")
+    val browseQuery = browseInput.asStateFlow()
+    fun setBrowseQuery(text: String) { browseInput.value = text }
+
+    @OptIn(FlowPreview::class)
+    private val settledBrowseQuery = browseInput.map { it.trim() }.debounce(200).distinctUntilChanged()
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val moviePages = combine(selectedVodSource, movieCategory) { source, token ->
+    val canonicalMoviePages = combine(selectedVodSource, settledBrowseQuery, movieOptions) { source, query, options ->
+        Triple(source, query, options)
+    }.flatMapLatest { (source, query, options) ->
+        androidx.paging.Pager(androidx.paging.PagingConfig(pageSize = 48, initialLoadSize = 96,
+            enablePlaceholders = false, maxSize = 480)) {
+            canonical.browse(source, query, options.languages.sorted().joinToString("", transform = { "|$it|" }),
+                options.includeUnknown, options.sort.name)
+        }.flow
+    }.cachedIn(viewModelScope)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val moviePages = combine(selectedVodSource, movieCategory, settledBrowseQuery) { source, token, query ->
         VodBrowseFilter(source, token?.let(VodCategoryKey::fromToken)
-            ?.takeIf { source == null || it.sourceId == source })
+            ?.takeIf { source == null || it.sourceId == source }, query)
     }.distinctUntilChanged().flatMapLatest(browseRepository::movies).cachedIn(viewModelScope)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val seriesPages = combine(selectedVodSource, seriesCategory) { source, token ->
+    val seriesPages = combine(selectedVodSource, seriesCategory, settledBrowseQuery) { source, token, query ->
         VodBrowseFilter(source, token?.let(VodCategoryKey::fromToken)
-            ?.takeIf { source == null || it.sourceId == source })
-    }.distinctUntilChanged().flatMapLatest(browseRepository::series).cachedIn(viewModelScope)
+            ?.takeIf { source == null || it.sourceId == source }, query)
+    }.distinctUntilChanged().flatMapLatest(browseRepository::groupedSeries)
+        .map { page -> page.map { group ->
+            val show = group.primary.tmdbHint()?.let { canonicalShows.validated(it) }
+            ShowCard(group.copy(primary = show?.let(group.primary::withCanonical) ?: group.primary), show)
+        } }
+        .cachedIn(viewModelScope)
+
+    private val canonicalShows = graph.database.canonicalShows()
+
+    /** A Shows grid card: the provider group, with TMDB metadata when its hint was validated. */
+    data class ShowCard(val group: app.opentv.data.repo.SeriesBrowseGroup, val show: CanonicalShow?)
+
+    /** Validated TMDB metadata (network, status) for a show page; null when unknown. */
+    suspend fun canonicalShow(series: Series): CanonicalShow? = series.tmdbHint()?.let { canonicalShows.validated(it) }
+
+    // ---- Movies/Shows home: TMDB rankings limited to titles available here --------------------
+
+    data class HomeTitle(val key: String, val title: String, val poster: String?, val backdrop: String?, val year: Int?,
+        val rating: Double?, val language: String?, val overview: String?, val rank: Int? = null,
+        val movieId: Long? = null, val groupKey: String? = null, val variantCount: Int = 1,
+        val network: String? = null, val status: String? = null)
+    enum class HomeStyle { POSTERS, WIDE }
+    data class HomeSection(val key: String, val title: String, val style: HomeStyle, val items: List<HomeTitle>)
+    data class CatalogueHome(val featured: List<HomeTitle>, val sections: List<HomeSection>)
+
+    private val rankings = TmdbRankings(graph.httpClient, settings, java.io.File(getApplication<Application>().filesDir, "rankings"))
+
+    /** Cached rankings first (instant), then refreshed ones when the cache is older than six hours. */
+    val movieHome: StateFlow<CatalogueHome?> = kotlinx.coroutines.flow.flow {
+        rankings.cached(TmdbRankings.Kind.MOVIES)?.let { emit(buildMovieHome(it)) }
+        rankings.lists(TmdbRankings.Kind.MOVIES)?.let { emit(buildMovieHome(it)) }
+    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Lazily, null)
+
+    val showHome: StateFlow<CatalogueHome?> = kotlinx.coroutines.flow.flow {
+        rankings.cached(TmdbRankings.Kind.SHOWS)?.let { emit(buildShowHome(it)) }
+        rankings.lists(TmdbRankings.Kind.SHOWS)?.let { emit(buildShowHome(it)) }
+    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Lazily, null)
+
+    private fun arrange(lists: Map<String, List<RankedTitle>>, local: Map<Int, HomeTitle>,
+        newTitle: String, kindTitle: String): CatalogueHome {
+        val used = HashSet<String>()
+        fun pick(list: String, count: Int, need: (HomeTitle) -> Boolean = { true }) = lists[list].orEmpty()
+            .mapNotNull { local[it.id] }.distinctBy { it.key }.withIndex()
+            .map { (i, t) -> if (list == TmdbRankings.TRENDING) t.copy(rank = i + 1) else t }
+            .filter { it.key !in used && need(it) }.take(count).also { picked -> used += picked.map { it.key } }
+        val featured = pick(TmdbRankings.TRENDING, 5) { it.backdrop != null }
+        val sections = listOf(
+            HomeSection("trending", "Trending this week", HomeStyle.POSTERS, pick(TmdbRankings.TRENDING, 6)),
+            HomeSection("new", newTitle, HomeStyle.WIDE, pick(TmdbRankings.NEW, 4) { it.backdrop != null }),
+            HomeSection("popular", "Popular", HomeStyle.POSTERS, pick(TmdbRankings.POPULAR, 6)),
+        ).filter { it.items.isNotEmpty() }
+        return CatalogueHome(featured, sections + HomeSection("all", kindTitle, HomeStyle.POSTERS, emptyList()))
+    }
+
+    private suspend fun buildMovieHome(lists: Map<String, List<RankedTitle>>): CatalogueHome {
+        val ids = lists.values.flatten().map { it.id }.distinct()
+        val local = ids.chunked(500).flatMap { canonical.availableByIds(it) }.associate { card ->
+            val t = card.title
+            t.tmdbId to HomeTitle("movie:${t.tmdbId}", t.title, t.posterUrl, t.backdropUrl, t.year, t.rating, t.originalLanguage,
+                t.synopsis, movieId = card.movieId)
+        }
+        return arrange(lists, local, "New releases", "All movies")
+    }
+
+    private suspend fun buildShowHome(lists: Map<String, List<RankedTitle>>): CatalogueHome {
+        val ranked = lists.values.flatten().distinctBy { it.id }.associateBy { it.id }
+        val ids = ranked.keys.toList()
+        val groups = ids.chunked(500).flatMap { graph.database.series().groupsForHints(it) }
+            .associateBy { it.primary.tmdbId!!.trim().toInt() }
+        val known = ids.chunked(500).flatMap { canonicalShows.byIds(it) }.associateBy { it.tmdbId }
+        val checked = mutableListOf<CanonicalShow>()
+        val local = groups.mapNotNull { (id, group) ->
+            val item = ranked[id] ?: return@mapNotNull null
+            val show = known[id] ?: run {
+                // Same name check as CanonicalShowWorker, using the list entry instead of a detail request.
+                val ok = ShowMatching.accepts(group.names.orEmpty().split(',').map(String::trim),
+                    group.primary.year, item.title, item.originalTitle, item.year)
+                CanonicalShow(id, ok, item.title.takeIf { ok }, item.originalTitle.takeIf { ok && it.isNotBlank() },
+                    item.year.takeIf { ok }, item.language.takeIf { ok }, item.poster.takeIf { ok }, item.backdrop.takeIf { ok },
+                    item.overview.takeIf { ok }, null, item.rating.takeIf { ok }, null, System.currentTimeMillis()).also { checked += it }
+            }
+            if (!show.validated) return@mapNotNull null
+            id to HomeTitle("show:$id", show.title ?: item.title, show.posterUrl ?: item.poster, show.backdropUrl ?: item.backdrop,
+                show.year, show.rating ?: item.rating, show.originalLanguage, show.synopsis ?: item.overview,
+                groupKey = group.groupKey, variantCount = group.variantCount, network = show.network, status = show.statusLabel)
+        }.toMap()
+        if (checked.isNotEmpty()) runCatching { canonicalShows.putAll(checked) }
+        return arrange(lists, local, "Airing now", "All shows")
+    }
+
+    /** Opens what a home card points at, choosing the version the same way the grid does. */
+    suspend fun openHomeMovie(title: HomeTitle): Movie? = title.movieId?.let { defaultMovieVersion(canonicalVersions(it)) }
+    suspend fun openHomeShow(title: HomeTitle): Series? = title.groupKey?.let { key ->
+        defaultSeriesVersion(seriesBrowseVariants(key))?.let { withCanonicalShow(it) }
+    }
+
+    /** TMDB title/art for a show whose provider hint was validated; the provider row otherwise. */
+    suspend fun withCanonicalShow(series: Series): Series =
+        series.tmdbHint()?.let { canonicalShows.validated(it) }?.let(series::withCanonical) ?: series
 
     fun selectMovieCategory(id: String?) { movieCategory.value = id }
 
@@ -152,6 +308,54 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         groupKey, VodBrowseFilter(selectedVodSource.value,
             movieCategory.value?.let(VodCategoryKey::fromToken)),
     )
+
+    suspend fun seriesBrowseVariants(groupKey: String) = graph.database.series().browseVariants(groupKey, selectedVodSource.value)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun seriesPositions(series: Series): kotlinx.coroutines.flow.Flow<List<PlaybackPosition>> = settings.activeProfileId
+        .flatMapLatest { graph.playbackPositions.observeSeries(it, series.sourceId, series.seriesId) }
+
+    private val seasonPosterCache = java.util.concurrent.ConcurrentHashMap<Long, Map<Int, String>>()
+    suspend fun seasonPosters(series: Series): Map<Int, String> =
+        seasonPosterCache[series.id] ?: graph.catalogRepository.seasonPosters(series).also { seasonPosterCache[series.id] = it }
+
+    /** Every provider version of this show (all sources), for the detail page's Source control. */
+    suspend fun seriesVersions(series: Series): List<Series> =
+        graph.database.series().browseVariants(series.providerBrowseKey(), null)
+            .ifEmpty { listOf(series) }
+
+    /**
+     * Which version a tap opens: the one you were watching, then the provider chosen in filters,
+     * then the highest quality inferred from the provider's title, then provider order.
+     */
+    suspend fun defaultMovieVersion(versions: List<Movie>): Movie? {
+        if (versions.isEmpty()) return null
+        versions.firstOrNull { resumePosition("movie:${it.id}")?.let { p -> !p.isFinished } == true }?.let { return it }
+        val pool = selectedVodSource.value?.let { s -> versions.filter { it.sourceId == s } }?.ifEmpty { null } ?: versions
+        val names = pool.associate { it.id to rawMovieName(it.id) }
+        return pool.maxWithOrNull(compareBy<Movie> { languageFit(names[it.id].orEmpty()) }
+            .thenBy { app.opentv.data.parser.MovieBrowseKey.from(names[it.id].orEmpty(), it.year).qualityRank }) ?: pool.first()
+    }
+
+    suspend fun defaultSeriesVersion(versions: List<Series>): Series? {
+        if (versions.isEmpty()) return null
+        val profile = settings.activeProfileId.value
+        versions.mapNotNull { v -> graph.playbackPositions.lastSeriesActivity(profile, v.sourceId, v.seriesId)?.let { v to it } }
+            .maxByOrNull { it.second }?.let { return it.first }
+        val pool = selectedVodSource.value?.let { s -> versions.filter { it.sourceId == s } }?.ifEmpty { null } ?: versions
+        return pool.maxByOrNull { languageFit(it.name) } ?: pool.first()
+    }
+
+    /**
+     * Inferred from the provider's name tags only ("(DE)", "EN -", "|FR|"): 2 = tagged with the
+     * device language, 1 = no language tag, 0 = tagged with another language.
+     */
+    private fun languageFit(name: String): Int {
+        val device = java.util.Locale.getDefault().language.uppercase(java.util.Locale.ROOT)
+        val tags = LANGUAGE_TAG.findAll(name).map { it.groupValues.drop(1).first(String::isNotEmpty).uppercase(java.util.Locale.ROOT) }
+            .filter { it in KNOWN_LANGUAGE_TAGS }.toList()
+        return when { tags.isEmpty() -> 1; device in tags || (device == "EN" && tags.any { it == "UK" || it == "US" }) -> 2; else -> 0 }
+    }
 
     /** True when at least one Stremio add-on is configured — gates the "add-on sources" button. */
     val hasAddons: StateFlow<Boolean> =
@@ -181,99 +385,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         if (selectedVodSource.value == sourceId) return
         movieCategory.value = null
         seriesCategory.value = null
-        _recommendedMovies.value = emptyList()
-        _movieGenreRows.value = emptyList()
-        _seriesGenreRows.value = emptyList()
         vodSource.value = sourceId
-    }
-
-    // ---- Netflix-style home rows ----------------------------------------------------------------
-    // "Recently added" is reactive: it fills in live as a VOD sync lands. The computed feeds
-    // (recommended, by-genre) are held in the StateFlows below and (re)built by [loadHomeFeeds] from
-    // one bounded recent sample — guarded against redundant reads on tab reopens.
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val recentlyAddedMovies: StateFlow<List<Movie>> =
-        selectedVodSource.flatMapLatest { graph.database.movies().observeBrowseRecent(it, 40) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val recentlyAddedSeries: StateFlow<List<Series>> =
-        selectedVodSource.flatMapLatest { graph.database.series().observeBrowseRecent(it, 40) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private val _recommendedMovies = MutableStateFlow<List<Movie>>(emptyList())
-    val recommendedMovies: StateFlow<List<Movie>> = _recommendedMovies.asStateFlow()
-
-    private val _movieGenreRows = MutableStateFlow<List<GenreGroup<Movie>>>(emptyList())
-    val movieGenreRows: StateFlow<List<GenreGroup<Movie>>> = _movieGenreRows.asStateFlow()
-
-    private val _seriesGenreRows = MutableStateFlow<List<GenreGroup<Series>>>(emptyList())
-    val seriesGenreRows: StateFlow<List<GenreGroup<Series>>> = _seriesGenreRows.asStateFlow()
-
-    /** The (profile, catalogue) the computed rows were last built for — the redundant-reload guard. */
-    private data class HomeFeedsKey(val profileId: Long, val movieCount: Int, val seriesCount: Int, val sourceId: Long?)
-
-    @Volatile private var loadedHomeFeeds: HomeFeedsKey? = null
-
-    /** Serialises [loadHomeFeeds] so two near-simultaneous calls (screen open + the profile emit in
-     *  `init`) can't both start the heavy scan — the second waits, sees the guard satisfied, returns.
-     *  MUST be declared before the `init` block below: `activeProfileId` is a StateFlow, so its
-     *  `collect` fires synchronously during construction, and Kotlin initialises properties top to
-     *  bottom — declared after `init`, this mutex would still be null when the first collect runs. */
-    private val homeFeedsMutex = Mutex()
-
-    init {
-        // The home feeds are per profile (Recommended) and per catalogue (the genre rows). Rebuild
-        // them when the active profile changes — and once at start. Routed through the guarded
-        // [loadHomeFeeds] so a profile switch triggers exactly one library scan, and re-opening the
-        // tab with the same profile and an unchanged catalogue triggers none. Reads an empty result
-        // until a VOD sync has populated the catalogue; [ensureVodLoaded] re-runs it once one has.
-        viewModelScope.launch {
-            combine(settings.activeProfileId, selectedVodSource) { _, _ -> Unit }.collect { loadHomeFeeds() }
-        }
-    }
-
-    /** Builds bounded curated shelves from at most 2,000 recent titles per kind and provider.
-     * Complete discovery belongs to the paged grids, never an unbounded Home catalogue read. */
-    fun loadHomeFeeds() {
-        viewModelScope.launch {
-            homeFeedsMutex.withLock {
-                val profileId = settings.activeProfileId.value
-                val sourceId = selectedVodSource.value
-                val movieCount = runCatching { graph.catalogRepository.movieCount() }.getOrDefault(0)
-                val seriesCount = runCatching { graph.catalogRepository.seriesCount() }.getOrDefault(0)
-
-                // Already built for this profile and this exact catalogue? Then a tab re-open or a
-                // recomposition must not trigger another full-library scan. Only a profile change or
-                // a catalogue whose size moved gets past here.
-                val prev = loadedHomeFeeds
-                if (prev != null && prev.profileId == profileId &&
-                    prev.movieCount == movieCount && prev.seriesCount == seriesCount && prev.sourceId == sourceId
-                ) return@withLock
-
-                // Room suspending queries run off the main thread; reuse each sample for all rows.
-                // Home is a bounded sample, not another route to materialising the catalogue.
-                val allMovies = graph.database.movies().browseFeedSample(sourceId, 2_000)
-                val allSeries = graph.database.series().browseFeedSample(sourceId, 2_000)
-                if (selectedVodSource.value != sourceId || settings.activeProfileId.value != profileId) return@withLock
-
-                val recommended = runCatching {
-                    graph.catalogRepository.recommendedMoviesFrom(allMovies, profileId)
-                }.getOrDefault(emptyList())
-                val movieGenres = runCatching {
-                    graph.catalogRepository.moviesByGenreFrom(allMovies)
-                }.getOrDefault(emptyList())
-                val seriesGenres = runCatching {
-                    graph.catalogRepository.seriesByGenreFrom(allSeries)
-                }.getOrDefault(emptyList())
-                if (selectedVodSource.value != sourceId || settings.activeProfileId.value != profileId) return@withLock
-                _recommendedMovies.value = recommended
-                _movieGenreRows.value = movieGenres
-                _seriesGenreRows.value = seriesGenres
-                loadedHomeFeeds = HomeFeedsKey(profileId, movieCount, seriesCount, sourceId)
-            }
-        }
     }
 
     /**
@@ -301,11 +413,16 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     val vodLoading: StateFlow<Boolean> = _vodLoading.asStateFlow()
 
     @Volatile private var vodRequested = false
+    private val vodSyncMutex = Mutex()
+    private val _vodFailed = MutableStateFlow(false)
+    val vodFailed = _vodFailed.asStateFlow()
 
     /** How long a fetched VOD catalogue is trusted before a warm launch re-syncs it. */
     private val VOD_TTL_MILLIS = 12L * 60 * 60 * 1000  // 12 hours
 
     fun ensureVodLoaded() {
+        app.opentv.catalogue.CanonicalMovieWorker.enqueue(getApplication())
+        app.opentv.catalogue.CanonicalShowWorker.enqueue(getApplication())
         if (vodRequested) return
         vodRequested = true
         viewModelScope.launch { syncVodIfStale(force = false) }
@@ -321,41 +438,47 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { syncVodIfStale(force = true) }
     }
 
-    private suspend fun syncVodIfStale(force: Boolean) {
+    private suspend fun syncVodIfStale(force: Boolean) = vodSyncMutex.withLock {
         val now = System.currentTimeMillis()
 
         // Warm-launch fast path. The catalogue is persisted in Room, so once it has been fetched
         // there is no reason to re-download and re-upsert a 40k-title list on every launch — that
         // was both the multi-minute "Loading movies & shows…" and the bandwidth hog that starved
-        // the live preview into buffering. When we synced recently and already have rows, skip the
-        // network entirely and just (re)build the home shelves off what is stored.
+        // the live preview into buffering. Reuse the local catalogue only when every enabled
+        // content kind has rows; movies alone must not mask a missing Shows catalogue.
         if (!force) {
             val haveCatalogue = runCatching {
-                graph.catalogRepository.movieCount() + graph.catalogRepository.seriesCount()
-            }.getOrDefault(0) > 0
+                (!settings.moviesEnabled.value || graph.catalogRepository.movieCount() > 0) &&
+                    (!settings.seriesEnabled.value || graph.catalogRepository.seriesCount() > 0)
+            }.getOrDefault(false)
             val last = settings.vodSyncedAtMillis
             val fresh = last > 0 && now - last < VOD_TTL_MILLIS
             if (haveCatalogue && fresh) {
-                loadHomeFeeds()
-                return
+                return@withLock
             }
         }
 
         _vodLoading.value = true
-        val synced = StatusBus.during(AppText.get(R.string.msg_loading_vod)) {
-            runCatching {
+        _vodFailed.value = false
+        val synced = try {
+            StatusBus.during(AppText.get(R.string.msg_loading_vod)) {
+                var complete = true
                 for (source in graph.sourceRepository.enabled()) {
-                    graph.catalogRepository.syncVod(source, now)
+                    if (!graph.catalogRepository.syncVod(source, now)) complete = false
                 }
-            }.isSuccess
+                complete
+            }
+        } finally {
+            _vodLoading.value = false
         }
-        _vodLoading.value = false
-        // Stamp the cache only when the fetch actually succeeded, so a failed sync retries on the
-        // next open instead of being remembered as "fresh" and leaving the user with no catalogue.
+        _vodFailed.value = !synced
+        // An automatic attempt stays latched even on failure. Navigation must not start
+        // another full provider import; the explicit Retry/Refresh action remains available.
+        vodRequested = true
+        // A partial import must never suppress retries for the next twelve hours.
         if (synced) settings.vodSyncedAtMillis = now
-        if (synced) loadedHomeFeeds = null
-        // The catalogue may have grown — recompute the computed home rows off the fresh data.
-        loadHomeFeeds()
+        app.opentv.catalogue.CanonicalMovieWorker.enqueue(getApplication())
+        app.opentv.catalogue.CanonicalShowWorker.enqueue(getApplication())
     }
 
     // ---- VOD search (shared by the unified search screen) --------------------------------------
@@ -367,7 +490,10 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     val movieResults: StateFlow<List<Movie>> =
         vodSearchInput.map { it.trim() }.debounce(200).distinctUntilChanged()
             .flatMapLatest { q ->
-                if (q.length < 2) flowOf(emptyList()) else graph.catalogRepository.searchMovies(q)
+                if (q.length < 2) flowOf(emptyList()) else canonical.search(null, q).mapLatest { cards ->
+                    val assets = graph.database.movies().byIds(cards.map { it.movieId }).associateBy { it.id }
+                    cards.mapNotNull { card -> assets[card.movieId]?.withCanonical(card.title) }
+                }
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -375,7 +501,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     val seriesResults: StateFlow<List<Series>> =
         vodSearchInput.map { it.trim() }.debounce(200).distinctUntilChanged()
             .flatMapLatest { q ->
-                if (q.length < 2) flowOf(emptyList()) else graph.catalogRepository.searchSeries(q)
+                if (q.length < 2) flowOf(emptyList()) else graph.catalogRepository.searchSeries(q).map { shows -> shows.distinctBy { it.providerBrowseKey() } }
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -417,10 +543,16 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     // another title loads cleanly without two screens fighting over one shared StateFlow.
 
     /** Loads a movie, lazily enriching backdrop/cast/genre on first open. See CatalogRepository.movieDetail. */
-    suspend fun movieDetail(id: Long): Movie? = graph.catalogRepository.movieDetail(id)
+    suspend fun movieDetail(id: Long): Movie? {
+        val versions = canonicalVersions(id)
+        return versions.firstOrNull { it.id == id } ?: graph.catalogRepository.movieDetail(id)
+    }
+
+    /** The provider's own detail call; canonical titles don't store cast or director, the provider row may. */
+    suspend fun movieCredits(id: Long): Movie? = graph.catalogRepository.movieDetail(id)
 
     /** Loads a series, lazily enriching backdrop/cast/genre on first open. See CatalogRepository.seriesDetail. */
-    suspend fun seriesDetail(id: Long): Series? = graph.catalogRepository.seriesDetail(id)
+    suspend fun seriesDetail(id: Long): Series? = graph.catalogRepository.seriesDetail(id)?.let { withCanonicalShow(it) }
 
     /** "More like this" for the movie detail screen. */
     suspend fun moreLikeThis(movie: Movie): List<Movie> = graph.catalogRepository.moreLikeThis(movie)
@@ -452,3 +584,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun userAgentForSource(sourceId: Long): String =
         graph.sourceRepository.byId(sourceId)?.userAgent ?: "OpenTV/0.1 (Android)"
 }
+
+private val LANGUAGE_TAG = Regex("""\(([A-Za-z]{2})\)|^([A-Za-z]{2})\s*[-|:]|\|([A-Za-z]{2})\|""")
+private val KNOWN_LANGUAGE_TAGS = setOf("EN", "UK", "US", "DE", "FR", "ES", "IT", "NL", "PT", "PL", "TR", "AR", "RU", "SE", "SV", "NO", "DK", "DA", "FI",
+    "GR", "EL", "HU", "CZ", "CS", "RO", "BG", "HR", "SR", "AL", "IN", "HI", "JP", "JA", "KR", "KO", "CN", "ZH", "TH", "VI", "IR", "FA", "LAT", "MX", "BR")

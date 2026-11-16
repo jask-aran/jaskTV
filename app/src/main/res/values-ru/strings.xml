@@ -575,4 +575,7 @@
     <string name="upd_retry">Повторить</string>
     <string name="upd_update">Обновить</string>
     <string name="vod_remove_continue">Убрать из «Продолжить просмотр»</string>
+    <string name="nav_media_simple">Фильмы и Сериалы</string>
+    <string name="nav_saved_simple">Библиотека</string>
+    <string name="provider_filters">Фильтры провайдера</string>
 </resources>

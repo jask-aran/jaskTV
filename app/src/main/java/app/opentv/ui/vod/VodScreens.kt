@@ -7,6 +7,7 @@ package app.opentv.ui.vod
 
 import androidx.compose.runtime.saveable.rememberSaveable
 import app.opentv.data.parser.ChannelNameNormalizer
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Close
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
@@ -22,6 +23,7 @@ import app.opentv.ui.isPhoneLandscape
 import app.opentv.ui.LayoutClass
 import app.opentv.ui.LocalLayoutClass
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -48,6 +50,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -89,211 +92,154 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.activity.compose.BackHandler
 import coil.compose.AsyncImage
 
-/**
- * Movies: a modern, row-based home — Continue Watching, Recommended, Recently added and a row per
- * genre, each a horizontally-scrolling shelf of poster cards. A category chip strip along the top
- * keeps whole-category browsing one press away without a permanent rail eating the width. Clicking
- * a film opens its detail page rather than playing straight away, the streaming-app convention.
- */
+/** Search and browse the local catalogue in place, using the same paged poster grid. */
 @Composable
 fun MoviesScreen(
     onOpenMovie: (Movie) -> Unit,
-    onResume: (mediaKey: String, url: String, title: String) -> Unit,
+    onResume: (String, String, String) -> Unit,
     onOpenSearch: () -> Unit,
     hasSources: Boolean,
     isSyncing: Boolean,
     viewModel: VodViewModel = viewModel(),
+    kindControl: @Composable () -> Unit = {},
+    searchVisible: Boolean = true,
+    onCloseSearch: () -> Unit = {},
 ) {
+    var inventory by rememberSaveable { mutableStateOf(false) }
+    if (!inventory) {
+        CanonicalMoviesBrowser(viewModel, onOpenMovie, kindControl, onInventory = { inventory = true })
+        LaunchedEffect(hasSources) { if (hasSources) viewModel.ensureVodLoaded() }
+        return
+    }
+    BackHandler { inventory = false }
     val categories by viewModel.movieCategories.collectAsState()
-    // Films only here; episodes belong on the Series tab.
-    val allResume by viewModel.continueWatching.collectAsState()
-    val recommended by viewModel.recommendedMovies.collectAsState()
-    val recentlyAdded by viewModel.recentlyAddedMovies.collectAsState()
-    val genreRows by viewModel.movieGenreRows.collectAsState()
-    val vodLoading by viewModel.vodLoading.collectAsState()
     val sources by viewModel.sources.collectAsState()
-    val selectedSource by viewModel.selectedVodSource.collectAsState()
-    val resume = remember(allResume, selectedSource) {
-        allResume.filter { it.mediaKey.startsWith("movie:") && (selectedSource == null || it.sourceId == selectedSource) }
-    }
-
-    // Pull the movie library the first time this tab is opened, not at login; refresh the computed
-    // home rows (recommended, by-genre) on open too — cheap, and covers a library already on disk.
-    LaunchedEffect(Unit) {
-        if (hasSources) viewModel.ensureVodLoaded()
-    }
-
-    // Category is a provider-scoped token held by the VM; Home/All mode is navigation-saveable.
-    val browseCategory by viewModel.selectedMovieCategory.collectAsState()
-    var browseAll by rememberSaveable { mutableStateOf(true) }
-    BackHandler(browseCategory != null) {
-        browseAll = true; viewModel.selectMovieCategory(null)
-    }
-
-    val hasMovies by viewModel.hasMovies.collectAsState()
-    val hasContent = resume.isNotEmpty() || recommended.isNotEmpty() ||
-        recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
-
+    val source by viewModel.selectedVodSource.collectAsState()
+    val category by viewModel.selectedMovieCategory.collectAsState()
+    val query by viewModel.browseQuery.collectAsState()
+    LaunchedEffect(hasSources) { if (hasSources) viewModel.ensureVodLoaded() }
+    BackHandler(category != null) { viewModel.selectMovieCategory(null) }
     Column(Modifier.fillMaxSize()) {
-      BrowseControls {
-        SearchAffordance(onOpenSearch)
-        if (sources.size > 1) {
-            ProviderChips(
-                sources = sources,
-                selected = selectedSource,
-                onSelectAll = { viewModel.selectVodSource(null) },
-                onSelectSource = viewModel::selectVodSource,
-            )
-        }
-        CategoryChips(
-            // Providers decorate category names with superscripts ("⁴ᴷ ³⁸⁴⁰ᴾ"); fold them to plain text.
-            entries = categories.map { category ->
-                val name = ChannelNameNormalizer.foldSuperscripts(category.name)
-                val provider = sources.firstOrNull { it.id == category.sourceId }?.name
-                VodCategoryKey(category.sourceId, category.id).token to
-                    if (selectedSource == null && sources.size > 1 && provider != null) "$name · $provider" else name
-            },
-            selected = browseCategory,
-            homeSelected = browseCategory == null && !browseAll,
-            onSelectHome = { browseAll = true; viewModel.selectMovieCategory(null) },
-            onSelectCategory = { id -> browseAll = false; viewModel.selectMovieCategory(id) },
-            loadCounts = viewModel::movieCategoryCounts,
-        )
-        BrowseAllButton(browseAll && browseCategory == null) {
-            browseAll = true; viewModel.selectMovieCategory(null)
-        }
-      }
-        // Weighted so the shelves fill the space under the fixed search + chips header, exactly and
-        // unambiguously — the same reason Live TV weights its guide grid.
+        TextButton(onClick = { inventory = false }) { Text(stringResource(R.string.catalogue_back)) }
+        CatalogueControls(query, viewModel::setBrowseQuery, sources, source,
+            viewModel::selectVodSource, categories, category,
+            { viewModel.selectMovieCategory(null) }, viewModel::selectMovieCategory,
+            viewModel::movieCategoryCounts, onOpenSearch, kindControl, searchVisible, onCloseSearch)
+        CatalogueSyncState(viewModel)
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                browseCategory != null || browseAll -> PagedMovieGrid(
-                    viewModel.moviePages.collectAsLazyPagingItems(), "$selectedSource/$browseCategory", onOpenMovie,
-                    viewModel::movieBrowseVariants, sources.associate { it.id to it.name })
-                !hasContent -> when {
-                    // Not a confirmed-empty library (still answering, or rows exist and the
-                    // shelves are building): show progress, never "no films".
-                    vodLoading || isSyncing || hasMovies == null -> LoadingVod(stringResource(R.string.vod_loading_movies))
-                    hasMovies == true -> BrowseAllButton(false) { browseAll = true }
-                    hasSources -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_no_movies_provider))
-                    else -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_no_movies_add))
-                }
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
-                    if (recommended.isNotEmpty()) item(key = "rec") {
-                        MoviePosterRow(stringResource(R.string.vod_recommended), recommended, onOpenMovie)
-                    }
-                    if (recentlyAdded.isNotEmpty()) item(key = "recent") {
-                        MoviePosterRow(stringResource(R.string.vod_recently_added), recentlyAdded, onOpenMovie)
-                    }
-                    items(genreRows, key = { "g:${it.genre}" }) { group ->
-                        MoviePosterRow(group.genre, group.items, onOpenMovie)
-                    }
-                }
-            }
+            PagedMovieGrid(viewModel.moviePages.collectAsLazyPagingItems(),
+                "$source/$category/$query", onOpenMovie, viewModel::movieBrowseVariants,
+                sources.associate { it.id to it.name })
         }
     }
 }
 
-/**
- * Shows: the same row-based home as Movies (Continue Watching, Recently added, genre rows) with the
- * category chip strip for whole-category browsing. A show opens its detail page — where episodes are
- * fetched on demand, since pulling every episode of every series up front is what makes a first sync
- * take forever.
- */
 @Composable
 fun SeriesScreen(
     onOpenSeries: (Series) -> Unit,
-    onResume: (mediaKey: String, url: String, title: String) -> Unit,
+    onResume: (String, String, String) -> Unit,
     onOpenSearch: () -> Unit,
     hasSources: Boolean,
     isSyncing: Boolean,
     viewModel: VodViewModel = viewModel(),
+    kindControl: @Composable () -> Unit = {},
+    searchVisible: Boolean = true,
+    onCloseSearch: () -> Unit = {},
 ) {
     val categories by viewModel.seriesCategories.collectAsState()
-    // Episodes only here; films belong on the Films tab.
-    val allResume by viewModel.continueWatching.collectAsState()
-    val recentlyAdded by viewModel.recentlyAddedSeries.collectAsState()
-    val genreRows by viewModel.seriesGenreRows.collectAsState()
-    val vodLoading by viewModel.vodLoading.collectAsState()
     val sources by viewModel.sources.collectAsState()
-    val selectedSource by viewModel.selectedVodSource.collectAsState()
-    val resume = remember(allResume, selectedSource) {
-        allResume.filter { it.mediaKey.startsWith("ep:") && (selectedSource == null || it.sourceId == selectedSource) }
-    }
-
-    LaunchedEffect(Unit) {
-        if (hasSources) viewModel.ensureVodLoaded()
-    }
-
-    // Saveable: opening a title and coming back must land in the same category, not the shelves.
-    val browseCategory by viewModel.selectedSeriesCategory.collectAsState()
-    var browseAll by rememberSaveable { mutableStateOf(true) }
-    BackHandler(browseCategory != null) {
-        browseAll = true; viewModel.selectSeriesCategory(null)
-    }
-
-    val hasSeries by viewModel.hasSeries.collectAsState()
-    val hasContent = resume.isNotEmpty() || recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
-
-    Column(Modifier.fillMaxSize()) {
-      BrowseControls {
-        SearchAffordance(onOpenSearch)
-        if (sources.size > 1) {
-            ProviderChips(
-                sources = sources,
-                selected = selectedSource,
-                onSelectAll = { viewModel.selectVodSource(null) },
-                onSelectSource = viewModel::selectVodSource,
-            )
-        }
-        CategoryChips(
-            // Providers decorate category names with superscripts ("⁴ᴷ ³⁸⁴⁰ᴾ"); fold them to plain text.
-            entries = categories.map { category ->
-                val name = ChannelNameNormalizer.foldSuperscripts(category.name)
-                val provider = sources.firstOrNull { it.id == category.sourceId }?.name
-                VodCategoryKey(category.sourceId, category.id).token to
-                    if (selectedSource == null && sources.size > 1 && provider != null) "$name · $provider" else name
-            },
-            selected = browseCategory,
-            homeSelected = browseCategory == null && !browseAll,
-            onSelectHome = { browseAll = true; viewModel.selectSeriesCategory(null) },
-            onSelectCategory = { id -> browseAll = false; viewModel.selectSeriesCategory(id) },
-            loadCounts = viewModel::seriesCategoryCounts,
-        )
-        BrowseAllButton(browseAll && browseCategory == null) {
-            browseAll = true; viewModel.selectSeriesCategory(null)
-        }
-      }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                browseCategory != null || browseAll -> PagedSeriesGrid(
-                    viewModel.seriesPages.collectAsLazyPagingItems(), "$selectedSource/$browseCategory", onOpenSeries)
-                !hasContent -> when {
-                    vodLoading || isSyncing || hasSeries == null -> LoadingVod(stringResource(R.string.vod_loading_shows))
-                    hasSeries == true -> BrowseAllButton(false) { browseAll = true }
-                    hasSources -> EmptyVod(stringResource(R.string.vod_no_shows), stringResource(R.string.vod_no_shows_provider))
-                    else -> EmptyVod(stringResource(R.string.vod_no_shows), stringResource(R.string.vod_no_shows_add))
-                }
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
-                    if (recentlyAdded.isNotEmpty()) item(key = "recent") {
-                        SeriesPosterRow(stringResource(R.string.vod_recently_added), recentlyAdded, onOpenSeries)
-                    }
-                    items(genreRows, key = { "g:${it.genre}" }) { group ->
-                        SeriesPosterRow(group.genre, group.items, onOpenSeries)
-                    }
-                }
+    val source by viewModel.selectedVodSource.collectAsState()
+    val category by viewModel.selectedSeriesCategory.collectAsState()
+    val query by viewModel.browseQuery.collectAsState()
+    LaunchedEffect(hasSources) { if (hasSources) viewModel.ensureVodLoaded() }
+    if (app.opentv.ui.LocalJaskTouchShell.current) {
+        var filters by remember { mutableStateOf(false) }
+        val request = app.opentv.ui.LocalJaskFilterRequest.current
+        LaunchedEffect(request) { if (request > 0) filters = true }
+        val home by viewModel.showHome.collectAsState()
+        val homeScope = rememberCoroutineScope()
+        val h = home
+        val header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(Int) -> Unit)? = if (h != null && query.isBlank()) { columns ->
+            jaskHome(h, columns) { title -> homeScope.launch { viewModel.openHomeShow(title)?.let(onOpenSeries) } }
+        } else null
+        PagedSeriesGrid(viewModel.seriesPages.collectAsLazyPagingItems(), "$source/$category/$query", onOpenSeries, viewModel::seriesBrowseVariants, pickDefault = viewModel::defaultSeriesVersion,
+            emptyText = if (query.isNotBlank()) stringResource(R.string.jask_no_matches, query.trim()) else null,
+            header = header)
+        if (filters) JaskFilterSheet(onDismiss = { filters = false }, onApply = { filters = false },
+            onReset = { viewModel.selectVodSource(null); viewModel.selectSeriesCategory(null) }) {
+            LazyColumn(Modifier.heightIn(max = 440.dp)) {
+                item { TextButton(onClick = { viewModel.selectVodSource(null) }) { Text(stringResource(R.string.catalogue_all_sources)) } }
+                items(sources, key = { it.id }) { provider -> TextButton(onClick = { viewModel.selectVodSource(provider.id) }) { Text(provider.name) } }
             }
         }
+        return
+    }
+    BackHandler(category != null) { viewModel.selectSeriesCategory(null) }
+    Column(Modifier.fillMaxSize()) {
+        CatalogueControls(query, viewModel::setBrowseQuery, sources, source,
+            viewModel::selectVodSource, categories, category,
+            { viewModel.selectSeriesCategory(null) }, viewModel::selectSeriesCategory,
+            viewModel::seriesCategoryCounts, onOpenSearch, kindControl, searchVisible, onCloseSearch)
+        CatalogueSyncState(viewModel)
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            PagedSeriesGrid(viewModel.seriesPages.collectAsLazyPagingItems(),
+                "$source/$category/$query", onOpenSeries, viewModel::seriesBrowseVariants)
+        }
+    }
+}
+
+@Composable
+private fun CatalogueControls(
+    query: String, onQuery: (String) -> Unit, sources: List<Source>, source: Long?,
+    onSource: (Long?) -> Unit, categories: List<app.opentv.data.model.Category>,
+    category: String?, onAll: () -> Unit, onCategory: (String) -> Unit,
+    counts: suspend () -> Map<String, Int>, onOpenSearch: () -> Unit,
+    kindControl: @Composable () -> Unit,
+    searchVisible: Boolean, onCloseSearch: () -> Unit,
+) {
+    val categoryControl: @Composable () -> Unit = {
+        CategoryChips(
+            entries = categories.map {
+                val name = ChannelNameNormalizer.foldSuperscripts(it.name)
+                val provider = sources.firstOrNull { s -> s.id == it.sourceId }?.name
+                VodCategoryKey(it.sourceId, it.id).token to
+                    if (source == null && sources.size > 1) "$name · $provider" else name
+            },
+            selected = category, homeSelected = category == null,
+            onSelectHome = onAll, onSelectCategory = onCategory, loadCounts = counts,
+            sources = sources, selectedSource = source, onSelectSource = onSource,
+        )
+    }
+    if (LocalLayoutClass.current == LayoutClass.PHONE) {
+        if (searchVisible) app.opentv.ui.CatalogueSearchField(query, onQuery,
+            stringResource(R.string.vod_search_hint), onClose = onCloseSearch, autoFocus = true)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            kindControl()
+            Spacer(Modifier.weight(1f))
+            categoryControl()
+        }
+    } else {
+        SearchAffordance(onOpenSearch)
+        BrowseControls {
+            kindControl()
+            if (sources.size > 1) ProviderChips(sources, source,
+                onSelectAll = { onSource(null) }, onSelectSource = { onSource(it) })
+            categoryControl()
+        }
+    }
+}
+
+@Composable
+private fun CatalogueSyncState(viewModel: VodViewModel) {
+    val loading by viewModel.vodLoading.collectAsState()
+    val failed by viewModel.vodFailed.collectAsState()
+    if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+    if (failed) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.vod_paging_error), modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = viewModel::refreshVod) { Text(stringResource(R.string.vod_paging_retry)) }
     }
 }
 
@@ -306,16 +252,6 @@ private fun BrowseControls(content: @Composable () -> Unit) {
     } else Column { content() }
 }
 
-@Composable
-private fun BrowseAllButton(selected: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick, enabled = !selected, modifier = Modifier.padding(horizontal = 8.dp)) {
-        Text(stringResource(R.string.vod_paging_see_all))
-    }
-}
-
-// ---- Shared shelves ----------------------------------------------------------------------------
-
-/** A titled horizontal shelf of movie poster cards. Shared by the home and the detail's "more like this". */
 @Composable
 internal fun MoviePosterRow(title: String, movies: List<Movie>, onOpenMovie: (Movie) -> Unit) {
     Column(Modifier.fillMaxWidth()) {
@@ -403,7 +339,7 @@ internal fun PosterCard(
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(4.dp),
+            .padding(if (isPhone()) 0.dp else 4.dp),
     ) {
         Box(
             Modifier
@@ -422,20 +358,20 @@ internal fun PosterCard(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
-            rating?.takeIf { it > 0.0 }?.let {
+            rating?.takeIf { it > 0.0 && !isPhone() }?.let {
                 Badge(
                     text = "★ ${formatRating(it)}",
                     modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
                 )
             }
-            qualityBadge?.let {
+            qualityBadge?.takeIf { !isPhone() }?.let {
                 Badge(
                     text = it,
                     highlight = true,
                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
                 )
             }
-            tagBadge?.let {
+            tagBadge?.takeIf { !isPhone() }?.let {
                 Badge(text = it, modifier = Modifier.align(Alignment.TopStart).padding(6.dp))
             }
             progress?.let {
@@ -447,20 +383,19 @@ internal fun PosterCard(
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            title,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
+            if (isPhone() && subtitle != null) title.removeSuffix(" ($subtitle)") else title,
+            style = if (isPhone()) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+            color = if (isPhone() || focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = if (isPhone()) 2 else 1,
             overflow = TextOverflow.Ellipsis,
         )
-        subtitle?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        }
+        val metadata = if (isPhone()) listOfNotNull(
+            tagBadge?.takeIf { it.isNotBlank() }, subtitle, qualityBadge,
+        ).distinct().joinToString(" · ") else subtitle.orEmpty()
+        if (metadata.isNotBlank()) Text(metadata,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+
     }
 }
 
@@ -593,9 +528,12 @@ private fun CategoryChips(
     onSelectHome: () -> Unit,
     onSelectCategory: (String) -> Unit,
     loadCounts: (suspend () -> Map<String, Int>)? = null,
+    sources: List<Source> = emptyList(), selectedSource: Long? = null,
+    onSelectSource: (Long?) -> Unit = {},
 ) {
     if (LocalLayoutClass.current == LayoutClass.PHONE) {
-        PhoneCategoryPicker(entries, selected, homeSelected, onSelectHome, onSelectCategory, loadCounts)
+        PhoneCategoryPicker(entries, selected, homeSelected, onSelectHome, onSelectCategory, loadCounts,
+            sources, selectedSource, onSelectSource)
         return
     }
     LazyRow(
@@ -611,7 +549,7 @@ private fun CategoryChips(
                 modifier = Modifier.padding(end = 4.dp),
             )
         }
-        item(key = "all") { Chip(stringResource(R.string.vod_paging_home), homeSelected, onSelectHome) }
+        item(key = "all") { Chip(stringResource(R.string.vod_all), homeSelected, onSelectHome) }
         items(entries, key = { it.first }) { (id, name) ->
             Chip(name, selected == id) { onSelectCategory(id) }
         }
@@ -631,31 +569,17 @@ private fun PhoneCategoryPicker(
     onSelectHome: () -> Unit,
     onSelectCategory: (String) -> Unit,
     loadCounts: (suspend () -> Map<String, Int>)?,
+    sources: List<Source>, selectedSource: Long?, onSelectSource: (Long?) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     var counts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
-    LaunchedEffect(open) { if (open && loadCounts != null) counts = runCatching { loadCounts() }.getOrDefault(emptyMap()) }
+    LaunchedEffect(open, selectedSource) { if (open && loadCounts != null) counts = runCatching { loadCounts() }.getOrDefault(emptyMap()) }
     val selectedName = entries.firstOrNull { it.first == selected }?.second
     val compact = isPhoneLandscape()
-    Row(
-        Modifier.then(if (compact) Modifier else Modifier.fillMaxWidth())
-            .padding(horizontal = if (compact) 4.dp else 16.dp, vertical = if (compact) 0.dp else 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        FilterChip(
-            selected = selectedName != null,
-            onClick = { open = true },
-            label = {
-                Text(
-                    selectedName ?: stringResource(R.string.vod_categories),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 220.dp),
-                )
-            },
-            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
-        )
-        FilterChip(selected = homeSelected, onClick = onSelectHome, label = { Text(stringResource(R.string.vod_paging_home)) })
+    IconButton(onClick = { open = true }, modifier = Modifier.size(34.dp)) {
+        Icon(Icons.Filled.Tune, stringResource(R.string.provider_filters), Modifier.size(20.dp),
+            tint = if (selected != null || selectedSource != null) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (open) {
         ModalBottomSheet(
@@ -667,6 +591,11 @@ private fun PhoneCategoryPicker(
                 if (filter.isBlank()) entries else entries.filter { it.second.contains(filter.trim(), ignoreCase = true) }
             }
             Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+                Text(stringResource(R.string.provider_filters), style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+                if (sources.size > 1) ProviderChips(sources, selectedSource,
+                    onSelectAll = { onSelectSource(null) }, onSelectSource = { onSelectSource(it) })
+
                 OutlinedTextField(
                     value = filter,
                     onValueChange = { filter = it },
@@ -679,7 +608,7 @@ private fun PhoneCategoryPicker(
                     if (filter.isBlank()) {
                         item(key = "all") {
                             ListItem(
-                                headlineContent = { Text(stringResource(R.string.vod_paging_home)) },
+                                headlineContent = { Text(stringResource(R.string.vod_all)) },
                                 colors = ListItemDefaults.colors(
                                     containerColor = if (homeSelected) MaterialTheme.colorScheme.primaryContainer
                                     else MaterialTheme.colorScheme.surfaceContainerLow,

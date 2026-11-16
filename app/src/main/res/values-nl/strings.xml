@@ -575,4 +575,7 @@
     <string name="upd_retry">Opnieuw</string>
     <string name="upd_update">Updaten</string>
     <string name="vod_remove_continue">Verwijderen uit Verder kijken</string>
+    <string name="nav_media_simple">Films en Series</string>
+    <string name="nav_saved_simple">Bibliotheek</string>
+    <string name="provider_filters">Providerfilters</string>
 </resources>

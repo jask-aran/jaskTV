@@ -575,4 +575,7 @@
     <string name="upd_retry">Tekrar dene</string>
     <string name="upd_update">Güncelle</string>
     <string name="vod_remove_continue">İzlemeye devam et\'ten kaldır</string>
+    <string name="nav_media_simple">Filmler ve Diziler</string>
+    <string name="nav_saved_simple">Kitaplık</string>
+    <string name="provider_filters">Sağlayıcı filtreleri</string>
 </resources>

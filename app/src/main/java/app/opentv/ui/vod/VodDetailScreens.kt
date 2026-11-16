@@ -5,6 +5,9 @@
  */
 package app.opentv.ui.vod
 
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.IconButton
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -58,6 +61,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -104,7 +108,10 @@ fun MovieDetailScreen(
     onOpenPerson: (String) -> Unit,
     onBack: () -> Unit = {},
     viewModel: VodViewModel = viewModel(),
-) {
+) = JaskTheme {
+    val providers by viewModel.sources.collectAsState()
+    var versionNames by remember(movieId) { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    var versions by remember(movieId) { mutableStateOf<List<Movie>>(emptyList()) }
     var movie by remember(movieId) { mutableStateOf<Movie?>(null) }
     var moreLike by remember(movieId) { mutableStateOf<List<Movie>>(emptyList()) }
     var resumeExists by remember(movieId) { mutableStateOf(false) }
@@ -117,15 +124,17 @@ fun MovieDetailScreen(
     var showCollectionPicker by remember(movieId) { mutableStateOf(false) }
 
     LaunchedEffect(movieId) {
+        versions = viewModel.canonicalVersions(movieId)
+        versionNames = versions.associate { it.id to viewModel.rawMovieName(it.id) }
         val loaded = viewModel.movieDetail(movieId)
         movie = loaded
         if (loaded != null) {
             resumeExists = viewModel.resumePosition("movie:${loaded.id}")?.let { !it.isFinished } == true
-            moreLike = viewModel.moreLikeThis(loaded)
+            moreLike = if (versions.isEmpty()) viewModel.moreLikeThis(loaded) else emptyList()
         }
     }
 
-    val m = movie ?: run { LoadingDetail(); return }
+    val m = movie ?: run { LoadingDetail(); return@JaskTheme }
 
     // Land focus on the primary action once the page is up, so a d-pad has somewhere to be.
     LaunchedEffect(m.id) {
@@ -133,9 +142,75 @@ fun MovieDetailScreen(
         runCatching { playFocus.requestFocus() }
     }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    if (LocalLayoutClass.current.isTouch) {
+        val tint = rememberArtworkTint(m.backdropUrl ?: m.posterUrl)
+        var progress by remember(m.id) { mutableStateOf<Float?>(null) }
+        var minutesLeft by remember(m.id) { mutableStateOf<Long?>(null) }
+        LaunchedEffect(m.id, resumeExists) {
+            val position = viewModel.resumePosition("movie:${m.id}")?.takeIf { !it.isFinished && it.durationMillis > 0 }
+            progress = position?.let { it.positionMillis.toFloat() / it.durationMillis }
+            minutesLeft = position?.let { ((it.durationMillis - it.positionMillis) / 60_000L).coerceAtLeast(1) }
+        }
+        // Canonical titles carry no credits; the provider's detail call may. Fetched after the page is up.
+        var credits by remember(m.id) { mutableStateOf<Pair<String?, String?>?>(null) }
+        LaunchedEffect(m.id) {
+            credits = runCatching { viewModel.movieCredits(m.id) }.getOrNull()?.let { it.cast to it.director }
+        }
+        val pool = versions.ifEmpty { listOf(m) }
+        val selected = pool.indexOfFirst { it.id == m.id }.coerceAtLeast(0)
+        val unknownSource = stringResource(R.string.rec_source_unknown)
+        val qualityUnknown = stringResource(R.string.catalogue_quality_unknown)
+        val quality = { v: Movie -> app.opentv.data.parser.MovieBrowseKey.from(versionNames[v.id].orEmpty(), v.year).qualityLabel }
+        val providerName = { v: Movie -> providers.firstOrNull { it.id == v.sourceId }?.name ?: unknownSource }
+        var sourceSheet by remember { mutableStateOf(false) }
+        val list = androidx.compose.foundation.lazy.rememberLazyListState()
+        var heroHeight by remember { mutableStateOf(0) }
+        app.opentv.ui.JaskSurfaceHost(Modifier.fillMaxSize(), background = { Box(Modifier.fillMaxSize().jaskPageBackground(tint, list, heroHeight)) {
+            LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 32.dp +
+                androidx.compose.foundation.layout.WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())) {
+                item(key = "hero") {
+                    JaskHero(m.displayTitle, m.backdropUrl, m.posterUrl, listOfNotNull(
+                        m.year?.toString(), m.durationSeconds?.takeIf { it > 0 }?.let { formatRuntime(it) },
+                        m.rating?.takeIf { it > 0.0 }?.let { (if (versions.isEmpty()) "★ " else "TMDB ") + formatRating(it) }),
+                        tint, onBack, Modifier.onSizeChanged { heroHeight = it.height }) {
+                        val playLabel = stringResource(if (resumeExists) R.string.vod_resume else R.string.vod_watch_now)
+                        JaskPlayPill(minutesLeft?.takeIf { resumeExists }?.let { "$playLabel · " + if (it >= 60) "${it / 60}h ${it % 60}m" else "${it}m" } ?: playLabel, progress) { onPlay(m) }
+                        JaskSourceButton(quality(m).ifBlank { providerName(m) }, pool.size) { sourceSheet = true }
+                        app.opentv.ui.JaskGlassCircle(if (m.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                            stringResource(R.string.jask_watchlist), active = m.favourite) {
+                            viewModel.toggleMovieFavourite(m); movie = m.copy(favourite = !m.favourite)
+                        }
+                        JaskGlassDownload {
+                            DownloadControl(mediaKey = "movie:${m.id}", compact = true, buildDownload = {
+                                Download(mediaKey = "movie:${m.id}", kind = KIND_MOVIE, title = m.displayTitle,
+                                    posterUrl = m.posterUrl, tag = m.sourceTag, sourceUrl = m.streamUrl, systemId = 0, createdMillis = 0)
+                            })
+                        }
+                        if (hasAddons) app.opentv.ui.JaskGlassCircle(Icons.Filled.Extension, stringResource(R.string.vod_addon_sources)) {
+                            addonLoading = true
+                            scope.launch { addonStreams = viewModel.addonStreams(m); addonLoading = false }
+                        }
+                    }
+                }
+                item(key = "synopsis") { JaskSynopsis(m.plot) }
+                item(key = "credits") { JaskCredits(m.genre, m.cast ?: credits?.first, m.director ?: credits?.second) }
+                item(key = "review-scores") { ExternalReviews(movie = m) }
+            }
+        } }) {
+            app.opentv.ui.JaskBarScrim(Modifier.align(Alignment.BottomCenter), top = false)
+            if (sourceSheet) SourceSheet(pool.map { version ->
+                val q = quality(version)
+                SourceOption(providerName(version), listOf(if (q.isBlank()) qualityUnknown else "$q (inferred)", versionNames[version.id].orEmpty())
+                    .filter(String::isNotBlank).joinToString(" · "))
+            }, selected, { index ->
+                val version = pool[index]
+                movie = version
+                scope.launch { resumeExists = viewModel.resumePosition("movie:${version.id}")?.let { !it.isFinished } == true }
+            }) { sourceSheet = false }
+        }
+    } else LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
-            DetailBackdrop(title = m.displayTitle, backdropUrl = m.backdropUrl, posterUrl = m.posterUrl, meta = movieMeta(m), onBack = onBack) {
+            DetailBackdrop(title = m.displayTitle, backdropUrl = m.backdropUrl, posterUrl = m.posterUrl, meta = if (versions.isEmpty()) movieMeta(m) else movieMeta(m).replace("★", "TMDB"), onBack = onBack) {
                 DetailButton(
                     icon = Icons.Filled.PlayArrow,
                     label = stringResource(if (resumeExists) R.string.vod_resume else R.string.vod_watch_now),
@@ -171,6 +246,25 @@ fun MovieDetailScreen(
                             addonStreams = viewModel.addonStreams(m)
                             addonLoading = false
                         }
+                    }
+                }
+            }
+        }
+        if (versions.size > 1) {
+            item(key = "versions") {
+                val unknownSource = stringResource(R.string.rec_source_unknown)
+                val qualityUnknown = stringResource(R.string.catalogue_quality_unknown)
+                val options = versions.map { version ->
+                    val quality = app.opentv.data.parser.MovieBrowseKey.from(versionNames[version.id].orEmpty(), version.year).qualityLabel
+                    SourceOption(providers.firstOrNull { it.id == version.sourceId }?.name ?: unknownSource,
+                        listOf(if (quality.isBlank()) qualityUnknown else "$quality (inferred)", versionNames[version.id].orEmpty())
+                            .filter(String::isNotBlank).joinToString(" · "))
+                }
+                SourcePicker(options, versions.indexOfFirst { it.id == m.id }) { index ->
+                    val version = versions[index]
+                    movie = version
+                    scope.launch {
+                        resumeExists = viewModel.resumePosition("movie:${version.id}")?.let { !it.isFinished } == true
                     }
                 }
             }
@@ -314,19 +408,22 @@ fun SeriesDetailScreen(
     var moreLike by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
     val favFocus = remember { FocusRequester() }
     var showCollectionPicker by remember(seriesId) { mutableStateOf(false) }
+    var versions by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
+    val providers by viewModel.sources.collectAsState()
 
     LaunchedEffect(seriesId) {
         val loaded = viewModel.seriesDetail(seriesId)
         series = loaded
         if (loaded != null) {
             viewModel.loadEpisodes(loaded)
+            versions = viewModel.seriesVersions(loaded)
             moreLike = viewModel.moreLikeThisSeries(loaded)
         }
     }
 
     val s = series
-    val episodes by (s?.let { viewModel.episodes(it) } ?: viewModel.noEpisodes)
-        .collectAsState(initial = emptyList())
+    val episodesFlow = remember(s?.sourceId, s?.seriesId) { s?.let { viewModel.episodes(it) } ?: viewModel.noEpisodes }
+    val episodes by episodesFlow.collectAsState(initial = emptyList())
 
     if (s == null) { LoadingDetail(); return }
 
@@ -343,7 +440,84 @@ fun SeriesDetailScreen(
             .toSortedMap()
     }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    if (LocalLayoutClass.current.isTouch) {
+        val tint = rememberArtworkTint(s.backdropUrl ?: s.posterUrl)
+        val positionsFlow = remember(s.sourceId, s.seriesId) { viewModel.seriesPositions(s) }
+        val positions by positionsFlow.collectAsState(initial = emptyList())
+        val byKey = remember(positions) { positions.associateBy { it.mediaKey } }
+        var seasonPosters by remember(s.id) { mutableStateOf<Map<Int, String>>(emptyMap()) }
+        LaunchedEffect(s.id) { seasonPosters = runCatching { viewModel.seasonPosters(s) }.getOrDefault(emptyMap()) }
+        // Specials (season 0) go last, as most players order them.
+        val ordered = remember(seasons) { seasons.entries.sortedBy { if (it.key == 0) Int.MAX_VALUE else it.key }.flatMap { it.value } }
+        val next = remember(ordered, positions) { nextEpisode(ordered, positions) }
+        val title = cleanShowTitle(s.name)
+        fun play(ep: app.opentv.data.model.Episode) {
+            val shown = episodeDisplayTitle(ep.title, s.name)
+            onPlayEpisode("ep:${ep.id}", ep.streamUrl, "S${ep.season}E${ep.episodeNumber} · $shown")
+        }
+        var tmdbShow by remember(s.id) { mutableStateOf<app.opentv.catalogue.CanonicalShow?>(null) }
+        LaunchedEffect(s.id) { tmdbShow = viewModel.canonicalShow(s) }
+        val seasonOrder = remember(seasons) { seasons.keys.sortedBy { if (it == 0) Int.MAX_VALUE else it } }
+        var chosenSeason by remember(s.id) { mutableStateOf<Int?>(null) }
+        val shownSeason = chosenSeason?.takeIf { it in seasons } ?: next?.first?.season ?: seasonOrder.firstOrNull()
+        val summaries = remember(seasons, positions, seasonPosters) {
+            seasonOrder.map { n ->
+                val eps = seasons[n].orEmpty()
+                SeasonSummary(n, eps.size, eps.count { byKey["ep:${it.id}"]?.isFinished == true }, seasonPosters[n])
+            }
+        }
+        val unknownSource = stringResource(R.string.rec_source_unknown)
+        val pool = versions.ifEmpty { listOf(s) }
+        val providerName = { v: Series -> providers.firstOrNull { it.id == v.sourceId }?.name ?: unknownSource }
+        var sourceSheet by remember { mutableStateOf(false) }
+        val list = androidx.compose.foundation.lazy.rememberLazyListState()
+        var heroHeight by remember { mutableStateOf(0) }
+        app.opentv.ui.JaskSurfaceHost(Modifier.fillMaxSize(), background = { Box(Modifier.fillMaxSize().jaskPageBackground(tint, list, heroHeight)) {
+            LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 32.dp +
+                androidx.compose.foundation.layout.WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())) {
+                item(key = "hero") {
+                    JaskHero(title, s.backdropUrl, s.posterUrl, listOfNotNull(s.year?.toString(),
+                        seasons.keys.count { it > 0 }.takeIf { it > 0 }?.let { if (it == 1) "1 season" else "$it seasons" },
+                        tmdbShow?.network, tmdbShow?.statusLabel,
+                        s.rating?.takeIf { it > 0.0 }?.let { "★ " + formatRating(it) }),
+                        tint, onBack, Modifier.onSizeChanged { heroHeight = it.height }) {
+                        if (next == null) JaskPlayPill(stringResource(R.string.vod_loading_episodes)) {}
+                        else {
+                            val (ep, pos) = next
+                            val resuming = pos != null && !pos.isFinished && pos.positionMillis > 0
+                            JaskPlayPill((if (resuming) "Resume" else "Play") + " S${ep.season} · E${ep.episodeNumber}",
+                                pos?.takeIf { resuming && it.durationMillis > 0 }?.let { it.positionMillis.toFloat() / it.durationMillis }) { play(ep) }
+                        }
+                        JaskSourceButton(providerName(s), pool.size) { sourceSheet = true }
+                        app.opentv.ui.JaskGlassCircle(if (s.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                            stringResource(R.string.jask_watchlist), active = s.favourite) {
+                            viewModel.toggleSeriesFavourite(s); series = s.copy(favourite = !s.favourite)
+                        }
+                    }
+                }
+                item(key = "synopsis") { JaskSynopsis(s.plot) }
+                item(key = "credits") { JaskCredits(s.genre, s.cast, null) }
+                if (episodes.isEmpty()) item(key = "eploading") {
+                    Text(stringResource(R.string.vod_loading_episodes), color = Color(0xFFBDBDBD), modifier = Modifier.padding(16.dp))
+                }
+                if (shownSeason != null) {
+                    item(key = "seasons") { JaskSeasonStrip(summaries, shownSeason, s.posterUrl) { chosenSeason = it } }
+                    items(seasons[shownSeason].orEmpty(), key = { it.id }) { ep ->
+                        JaskEpisodeRow(ep, s.name, byKey["ep:${ep.id}"], isNext = next?.first?.id == ep.id, onPlay = { play(ep) }) {
+                            DownloadControl(mediaKey = "ep:${ep.id}", buildDownload = { episodeDownload(s, ep) }, compact = true, small = true)
+                        }
+                    }
+                }
+            }
+        } }) {
+            app.opentv.ui.JaskBarScrim(Modifier.align(Alignment.BottomCenter), top = false)
+            if (sourceSheet) SourceSheet(pool.map { v -> SourceOption(providerName(v), v.name) }, pool.indexOfFirst { it.id == s.id }.coerceAtLeast(0), { index ->
+                val version = pool[index]
+                downloadScope.launch { series = viewModel.withCanonicalShow(version) }
+                viewModel.loadEpisodes(version)
+            }) { sourceSheet = false }
+        }
+    } else LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
             DetailBackdrop(title = s.displayTitle, backdropUrl = s.backdropUrl, posterUrl = s.posterUrl, meta = seriesMeta(s), onBack = onBack) {
                 DetailButton(
@@ -358,6 +532,15 @@ fun SeriesDetailScreen(
                 DetailButton(icon = Icons.Filled.Folder, label = "Save to collection") {
                     showCollectionPicker = true
                 }
+            }
+        }
+        if (versions.size > 1) item(key = "versions") {
+            val unknownSource = stringResource(R.string.rec_source_unknown)
+            SourcePicker(versions.map { v -> SourceOption(providers.firstOrNull { it.id == v.sourceId }?.name ?: unknownSource, v.name) },
+                versions.indexOfFirst { it.id == s.id }) { index ->
+                val version = versions[index]
+                series = version
+                viewModel.loadEpisodes(version)
             }
         }
         item(key = "info") {
@@ -895,4 +1078,51 @@ private fun formatRuntime(seconds: Int): String {
     val hours = totalMinutes / 60
     val minutes = totalMinutes % 60
     return if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
+}
+
+internal data class SourceOption(val provider: String, val detail: String)
+
+/** One compact row naming the playing source; tapping lists the other provider versions. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+internal fun SourcePicker(options: List<SourceOption>, selected: Int, onSelect: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val current = options.getOrNull(selected) ?: options.firstOrNull() ?: return
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+        .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+        .background(MaterialTheme.colorScheme.surfaceVariant)
+        .clickable { open = true }.padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Source · ${current.provider}", style = MaterialTheme.typography.labelLarge)
+            if (current.detail.isNotBlank()) Text(current.detail, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+        Text("${options.size} sources", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (open) SourceSheet(options, selected, onSelect) { open = false }
+}
+
+/** Bottom sheet listing every provider version; picking one closes it. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+internal fun SourceSheet(options: List<SourceOption>, selected: Int, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
+    app.opentv.ui.JaskSheet(onDismiss) {
+        Text("Choose a source", style = MaterialTheme.typography.titleMedium, color = Color.White,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        LazyColumn {
+            items(options.size) { index ->
+                val option = options[index]
+                Row(Modifier.fillMaxWidth().clickable { onDismiss(); onSelect(index) }.padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(option.provider, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+                        if (option.detail.isNotBlank()) Text(option.detail, style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFC8C8C8), maxLines = 2)
+                    }
+                    if (index == selected) Text("✓", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                }
+            }
+        }
+    }
 }

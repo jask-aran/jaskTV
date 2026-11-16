@@ -5,6 +5,9 @@
  */
 package app.opentv.ui
 
+import androidx.compose.material.icons.filled.DownloadForOffline
+import androidx.compose.material.icons.filled.Tune
+
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
@@ -50,6 +53,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -79,9 +83,16 @@ import app.opentv.ui.channels.HomeScreen
 import app.opentv.ui.recordings.RecordingsScreen
 import app.opentv.ui.downloads.DownloadsScreen
 import androidx.compose.material.icons.filled.Download
+import androidx.lifecycle.viewmodel.compose.viewModel
 import app.opentv.ui.vod.MoviesScreen
 import app.opentv.ui.vod.SeriesScreen
 import app.opentv.ui.library.LibraryScreen
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.outlined.LiveTv
+import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.FilterChip
 import androidx.compose.material.icons.filled.Star
 
@@ -118,7 +129,67 @@ fun MainScreen(
     onPlayRecording: (Recording) -> Unit,
     onPlayCatchup: (mediaKey: String, url: String, title: String, ua: String) -> Unit,
     activeProfileName: String,
+    vodViewModel: VodViewModel = viewModel(),
+    onOpenGuide: () -> Unit = onOpenSettings,
 ) {
+    if (LocalLayoutClass.current.isTouch) {
+        app.opentv.ui.vod.JaskTheme {
+            var destination by rememberSaveable { mutableStateOf(JaskDestination.MOVIES) }
+            var filterRequest by remember { mutableStateOf(0) }
+            var showInventory by rememberSaveable { mutableStateOf(false) }
+            // The header search field filters the current destination in place; there is no search route.
+            val browseQuery by vodViewModel.browseQuery.collectAsState()
+            var liveQuery by rememberSaveable { mutableStateOf("") }
+            var libraryQuery by rememberSaveable { mutableStateOf("") }
+            val query = when (destination) {
+                JaskDestination.MOVIES, JaskDestination.SHOWS -> browseQuery
+                JaskDestination.LIVE -> liveQuery
+                JaskDestination.LIBRARY -> libraryQuery
+            }
+            val setQuery: (String) -> Unit = { text -> when (destination) {
+                JaskDestination.MOVIES, JaskDestination.SHOWS -> vodViewModel.setBrowseQuery(text)
+                JaskDestination.LIVE -> liveQuery = text
+                JaskDestination.LIBRARY -> libraryQuery = text
+            } }
+            fun clearQueries() { vodViewModel.setBrowseQuery(""); liveQuery = ""; libraryQuery = "" }
+            BackHandler(query.isNotEmpty()) { setQuery("") }
+            BackHandler(query.isEmpty() && destination != JaskDestination.MOVIES) { destination = JaskDestination.MOVIES }
+            val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+            CompositionLocalProvider(LocalJaskFilterRequest provides filterRequest) {
+                JaskChromeFrame(destination, { if (it != destination) clearQueries(); focusManager.clearFocus()
+                        destination = it; showInventory = false; filterRequest = 0 },
+                    query = query, onQuery = setQuery, onFilter = { filterRequest++ },
+                    accountMenu = listOf(
+                        JaskMenuItem(activeProfileName) { onOpenProfiles() },
+                        JaskMenuItem(stringResource(R.string.nav_settings)) { onOpenSettings() },
+                        JaskMenuItem(stringResource(R.string.jask_guide_sources)) { onOpenGuide() },
+                        JaskMenuItem(stringResource(R.string.jask_sources)) { onAddSource() },
+                        JaskMenuItem(stringResource(R.string.phone_refresh), enabled = !isSyncing) {
+                            if (destination == JaskDestination.MOVIES || destination == JaskDestination.SHOWS) vodViewModel.refreshVod() else onRefresh()
+                        },
+                        JaskMenuItem(stringResource(R.string.jask_inventory)) { showInventory = true; destination = JaskDestination.SHOWS },
+                    ),
+                    // Library has no filters (they're inline); its header button opens Downloads.
+                    filterIcon = if (destination == JaskDestination.LIBRARY) androidx.compose.material.icons.Icons.Filled.DownloadForOffline
+                        else androidx.compose.material.icons.Icons.Filled.Tune,
+                    filterLabel = if (destination == JaskDestination.LIBRARY) stringResource(R.string.jask_library_downloads) else null) {
+                    when (destination) {
+                        JaskDestination.MOVIES -> MoviesScreen(onOpenMovie, onResume, {},
+                            hasSources, isSyncing, vodViewModel)
+                        JaskDestination.SHOWS -> SeriesScreen(onOpenSeries, onResume, {}, hasSources, isSyncing, vodViewModel)
+                        JaskDestination.LIVE -> Box(Modifier.fillMaxSize().padding(LocalJaskContentPadding.current)) {
+                            app.opentv.ui.channels.MyTvScreen(query = liveQuery, onPlay = onPlayChannel)
+                        }
+                        JaskDestination.LIBRARY -> Box(Modifier.fillMaxSize()) {
+                            app.opentv.ui.library.JaskLibrary(libraryQuery, vodViewModel, onPlayChannel, onOpenMovie, onOpenSeries, onResume)
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
     // Content-type toggles: a switched-off type has its tab hidden here (and its sync skipped in
     // CatalogRepository). Recordings is never a content type, so it always stays — which also means
     // there is always at least one tab and never a blank shell, even with all three types off.
@@ -140,12 +211,17 @@ fun MainScreen(
 
     // Saveable so it survives leaving for the player or a detail page: Back from an episode used
     // to land on Live TV because this state was rebuilt from scratch when the shell came back.
-    var tab by rememberSaveable { mutableStateOf(homeTab) }
+    var tab by rememberSaveable { mutableStateOf(if (Tab.VOD in visibleTabs) Tab.VOD else homeTab) }
+    var catalogueSearchVisible by rememberSaveable { mutableStateOf(false) }
     var vodSection by rememberSaveable { mutableStateOf("Movies") }
     LaunchedEffect(moviesEnabled, seriesEnabled) {
         if (!moviesEnabled && seriesEnabled) vodSection = "Shows"
         else if (!seriesEnabled) vodSection = "Movies"
     }
+
+    val vodLoading by vodViewModel.vodLoading.collectAsState()
+    val refreshing = isSyncing || vodLoading
+    val refreshAction: () -> Unit = if (tab == Tab.VOD) vodViewModel::refreshVod else onRefresh
 
     // If the selected tab gets hidden (its type toggled off while it's open), drop back to the
     // home tab so the content area never tries to show a tab that's no longer there.
@@ -190,23 +266,29 @@ fun MainScreen(
                 onSearchLive = { onOpenSearch("channels") },
             )
             Tab.VOD -> Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (moviesEnabled) FilterChip(selected = vodSection == "Movies",
-                        onClick = { vodSection = "Movies" }, label = { Text("Movies") })
-                    if (seriesEnabled) FilterChip(selected = vodSection == "Shows",
-                        onClick = { vodSection = "Shows" }, label = { Text("Shows") })
+                val kindControl: @Composable () -> Unit = {
+                    SegmentedControl(
+                        options = buildList {
+                            if (moviesEnabled) add("Movies" to stringResource(R.string.nav_movies))
+                            if (seriesEnabled) add("Shows" to stringResource(R.string.nav_shows))
+                        }, selected = vodSection, onSelect = { vodSection = it },
+                        modifier = Modifier.width(176.dp),
+                    )
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when {
                         vodSection == "Movies" && moviesEnabled -> MoviesScreen(
                             onOpenMovie = onOpenMovie, onResume = onResume,
                             onOpenSearch = { onOpenSearch("movies") },
-                            hasSources = hasSources, isSyncing = isSyncing)
+                            hasSources = hasSources, isSyncing = isSyncing, viewModel = vodViewModel, kindControl = kindControl,
+                            searchVisible = catalogueSearchVisible,
+                            onCloseSearch = { catalogueSearchVisible = false; vodViewModel.setBrowseQuery("") })
                         seriesEnabled -> SeriesScreen(
                             onOpenSeries = onOpenSeries, onResume = onResume,
                             onOpenSearch = { onOpenSearch("series") },
-                            hasSources = hasSources, isSyncing = isSyncing)
+                            hasSources = hasSources, isSyncing = isSyncing, viewModel = vodViewModel, kindControl = kindControl,
+                            searchVisible = catalogueSearchVisible,
+                            onCloseSearch = { catalogueSearchVisible = false; vodViewModel.setBrowseQuery("") })
                     }
                 }
             }
@@ -233,38 +315,24 @@ fun MainScreen(
         // including either rail, content and bottom navigation (not just the background).
         Row(Modifier.fillMaxSize()) {
             if (landscape) {
-                PhoneLandscapeRail(visibleTabs, tab, { tab = it }, isSyncing, onRefresh,
-                    scopedSearch, onOpenSettings, onOpenProfiles, activeProfileName)
+                PhoneLandscapeRail(visibleTabs, tab, { tab = it }, refreshing, refreshAction,
+                    scopedSearch, onOpenSettings, onOpenProfiles, activeProfileName, showSearch = false)
             }
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 if (!landscape) PhoneTopBar(
-                    isSyncing = isSyncing,
-                    onRefresh = onRefresh,
-                    onOpenSearch = scopedSearch,
+                    title = stringResource(tab.labelRes),
+                    onSearch = if (tab == Tab.VOD && !catalogueSearchVisible)
+                        ({ catalogueSearchVisible = true }) else null,
+                    isSyncing = refreshing,
+                    onRefresh = refreshAction,
                     onOpenSettings = onOpenSettings,
                     onOpenProfiles = onOpenProfiles,
                     activeProfileName = activeProfileName,
                 )
                 Box(Modifier.weight(1f).fillMaxWidth()) { content() }
-                StatusBar()
-                if (!landscape) NavigationBar {
-                    visibleTabs.forEach { t ->
-                        NavigationBarItem(
-                            selected = tab == t,
-                            onClick = { tab = t },
-                            icon = { Icon(t.icon, contentDescription = null) },
-                            // Five tabs on a narrow phone: keep "Grabaciones" whole.
-                            label = {
-                                Text(
-                                    stringResource(t.labelRes),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                        )
-                    }
-                }
+                // The toolbar carries phone sync activity.
+                if (!landscape) CompactBottomNavigation(visibleTabs, tab) { tab = it }
+
             }
         }
         return
@@ -297,6 +365,7 @@ internal fun PhoneLandscapeRail(
     tabs: List<Tab>, current: Tab, onSelect: (Tab) -> Unit,
     isSyncing: Boolean, onRefresh: () -> Unit, onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit, onOpenProfiles: () -> Unit, activeProfileName: String,
+    showSearch: Boolean = true,
 ) {
     Row(
         Modifier.width(112.dp).fillMaxHeight().padding(horizontal = 4.dp),
@@ -314,7 +383,7 @@ internal fun PhoneLandscapeRail(
             }
         }
         Column(Modifier.width(48.dp).fillMaxHeight().verticalScroll(rememberScrollState())) {
-            IconButton(onClick = onOpenSearch, modifier = Modifier.size(48.dp)) {
+            if (showSearch) IconButton(onClick = onOpenSearch, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.nav_search))
             }
             IconButton(onClick = onRefresh, enabled = !isSyncing, modifier = Modifier.size(48.dp)) {
@@ -333,40 +402,75 @@ internal fun PhoneLandscapeRail(
     }
 }
 
+/** Compact phone navigation; the surrounding BrowsingViewport owns system insets. */
+@Composable
+internal fun CompactBottomNavigation(tabs: List<Tab>, current: Tab, onSelect: (Tab) -> Unit) {
+    Box(Modifier.fillMaxWidth().height(56.dp).background(MaterialTheme.colorScheme.surface)) {
+      Box(Modifier.fillMaxWidth().height(0.5.dp).background(MaterialTheme.colorScheme.outlineVariant))
+      Row(Modifier.fillMaxSize()) {
+        tabs.forEach { tab ->
+            val selected = current == tab
+            val color = if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            Column(Modifier.weight(1f).fillMaxHeight()
+                .selectable(selected, role = Role.Tab, onClick = { onSelect(tab) }),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center) {
+                val icon = if (selected) tab.icon else when (tab) {
+                    Tab.LIVE -> Icons.Outlined.LiveTv
+                    Tab.VOD -> Icons.Outlined.Movie
+                    Tab.LIBRARY -> Icons.Outlined.StarOutline
+                }
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.height(3.dp))
+                Text(stringResource(tab.labelRes), color = color,
+                    style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            }
+        }
+    }
+}
+}
+
 @Composable
 private fun PhoneTopBar(
+    title: String,
+    onSearch: (() -> Unit)? = null,
     isSyncing: Boolean,
     onRefresh: () -> Unit,
-    onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenProfiles: () -> Unit,
     activeProfileName: String,
 ) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            Icons.Filled.Tv,
-            contentDescription = null,
-            modifier = Modifier.size(28.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Wordmark(Modifier.weight(1f))
-        // Re-sync every provider: new channels, films and series, plus the guide. Spins while any
-        // sync (manual or scheduled) runs, so a second tap can't stack another one.
-        IconButton(onClick = onRefresh, enabled = !isSyncing) {
-            if (isSyncing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            else Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.phone_refresh))
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().height(58.dp).padding(start = 20.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+        if (onSearch != null) IconButton(onClick = onSearch, modifier = Modifier.size(44.dp)) {
+            Icon(Icons.Filled.Search, stringResource(R.string.nav_search), Modifier.size(22.dp),
+                tint = MaterialTheme.colorScheme.primary)
         }
-        IconButton(onClick = onOpenSearch) {
-            Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.nav_search))
+        IconButton(onClick = onOpenProfiles, modifier = Modifier.size(44.dp)) {
+            Box(Modifier.size(28.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.Person, activeProfileName, Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
-        IconButton(onClick = onOpenProfiles) {
-            Icon(Icons.Filled.Person, contentDescription = activeProfileName)
-        }
-        IconButton(onClick = onOpenSettings) {
-            Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.nav_settings))
+        Box {
+            IconButton(onClick = { menu = true }, modifier = Modifier.size(44.dp)) {
+                if (isSyncing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 1.5.dp)
+                else Icon(Icons.Filled.MoreVert, stringResource(R.string.nav_settings),
+                    Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.phone_refresh)) },
+                    enabled = !isSyncing, onClick = { menu = false; onRefresh() },
+                    leadingIcon = { Icon(Icons.Filled.Refresh, null) })
+                DropdownMenuItem(text = { Text(stringResource(R.string.nav_settings)) },
+                    onClick = { menu = false; onOpenSettings() },
+                    leadingIcon = { Icon(Icons.Filled.Settings, null) })
+            }
         }
     }
 }
@@ -533,13 +637,7 @@ private fun RailItem(
 @Composable
 private fun Wordmark(modifier: Modifier = Modifier) {
     Column(modifier) {
-        Text(
-            "jaskTV",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.ExtraBold,
-            maxLines = 1,
-        )
+        JaskWordmark(Modifier.height(22.dp), tint = MaterialTheme.colorScheme.primary)
         Text(
             "PHONE + TV",
             style = MaterialTheme.typography.labelSmall,

@@ -575,4 +575,7 @@
     <string name="upd_retry">Επανάληψη</string>
     <string name="upd_update">Ενημέρωση</string>
     <string name="vod_remove_continue">Κατάργηση από τη Συνέχεια παρακολούθησης</string>
+    <string name="nav_media_simple">Ταινίες και Σειρές</string>
+    <string name="nav_saved_simple">Βιβλιοθήκη</string>
+    <string name="provider_filters">Φίλτρα παρόχου</string>
 </resources>

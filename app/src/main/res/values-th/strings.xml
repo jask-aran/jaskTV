@@ -575,4 +575,7 @@
     <string name="upd_retry">ลองอีกครั้ง</string>
     <string name="upd_update">อัปเดต</string>
     <string name="vod_remove_continue">ลบออกจากดูต่อ</string>
+    <string name="nav_media_simple">ภาพยนตร์และซีรีส์</string>
+    <string name="nav_saved_simple">คลัง</string>
+    <string name="provider_filters">ตัวกรองผู้ให้บริการ</string>
 </resources>

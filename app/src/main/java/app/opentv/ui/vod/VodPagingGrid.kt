@@ -15,6 +15,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -110,46 +112,80 @@ private fun MovieVariantsDialog(
 }
 
 @Composable
-internal fun PagedSeriesGrid(items: LazyPagingItems<Series>, filterKey: String, onOpen: (Series) -> Unit) {
-    PagedVodGrid(items, filterKey, { it.id }) { series ->
-        PosterCard(title = series.displayTitle, posterUrl = series.posterUrl,
-            subtitle = series.year?.toString(), rating = series.rating, tagBadge = series.sourceTag,
-            onClick = { onOpen(series) })
+internal fun PagedSeriesGrid(items: LazyPagingItems<app.opentv.ui.VodViewModel.ShowCard>, filterKey: String,
+    onOpen: (Series) -> Unit, loadVariants: suspend (String) -> List<Series>, emptyText: String? = null,
+    pickDefault: suspend (List<Series>) -> Series? = { it.firstOrNull() },
+    header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(columns: Int) -> Unit)? = null) {
+    // A tap always opens the show's page; its Source control switches between provider versions.
+    val scope = rememberCoroutineScope()
+    PagedVodGrid(items, filterKey, { it.group.groupKey }, emptyText, header) { card ->
+        val group = card.group
+        // Network and running/ended when TMDB has confirmed the show; year and source count otherwise.
+        val chips = listOfNotNull(card.show?.network, card.show?.statusLabel).ifEmpty {
+            listOfNotNull(group.primary.year?.toString(), if (group.variantCount > 1) "${group.variantCount} sources" else null)
+        }
+        JaskPosterCard(cleanShowTitle(group.primary.name), group.primary.posterUrl, chips) {
+            if (group.variantCount > 1) scope.launch { onOpen(pickDefault(loadVariants(group.groupKey)) ?: group.primary) }
+            else onOpen(group.primary)
+        }
     }
 }
 
 @Composable
-private fun <T : Any> PagedVodGrid(
-    items: LazyPagingItems<T>, filterKey: String, key: (T) -> Any, card: @Composable (T) -> Unit,
+internal fun <T : Any> PagedVodGrid(
+    items: LazyPagingItems<T>, filterKey: String, key: (T) -> Any, emptyText: String? = null,
+    header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(columns: Int) -> Unit)? = null, card: @Composable (T) -> Unit,
 ) {
     // A detail push saves the viewport, while an actual filter change starts at the top.
     // Declare before load-state branches so invalidations never discard the saved viewport.
     val state = rememberSaveable(filterKey, saver = LazyGridState.Saver) { LazyGridState() }
     val refresh = items.loadState.refresh
-    if (items.itemCount == 0) {
+    // The home arrives a moment after the grid; the grid would stay anchored on its first poster
+    // and open scrolled past the hero. Jump to the top if we were at the top when it arrived.
+    val hasHeader = header != null
+    var hadHeader by remember(filterKey) { mutableStateOf(hasHeader) }
+    LaunchedEffect(hasHeader) {
+        if (hasHeader && !hadHeader) {
+            val firstKey = if (items.itemCount > 0) items.peek(0)?.let(key) else null
+            val visible = state.layoutInfo.visibleItemsInfo.firstOrNull()
+            if (visible == null || (visible.key == firstKey && state.firstVisibleItemScrollOffset < 40)) state.scrollToItem(0)
+        }
+        hadHeader = hasHeader
+    }
+    if (items.itemCount == 0 && header == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             when (refresh) {
                 is LoadState.Loading -> PagingLoading()
                 is LoadState.Error -> PagingError(items::retry)
-                is LoadState.NotLoading -> Text(stringResource(R.string.vod_paging_empty))
+                is LoadState.NotLoading -> Text(emptyText ?: stringResource(R.string.vod_paging_empty), modifier = Modifier.padding(24.dp))
             }
         }
         return
     }
     val phone = LocalLayoutClass.current == LayoutClass.PHONE
     Column(Modifier.fillMaxSize()) {
-        when (refresh) {
-            is LoadState.Loading -> PagingLoading()
-            is LoadState.Error -> PagingError(items::retry)
-            else -> Unit
-        }
+        // Room invalidates as background identification commits. Keep the existing viewport
+        // visible; inserting a loading row on every refresh made the grid look like a reload loop.
+        if (refresh is LoadState.Error) PagingError(items::retry)
         LazyVerticalGrid(
-            columns = if (phone) GridCells.Fixed(3) else GridCells.Adaptive(140.dp),
+            // Three posters across a phone, ~120dp posters on tablets: browse density over hero size.
+            columns = if (phone) GridCells.Fixed(3) else GridCells.Adaptive(if (LocalLayoutClass.current == LayoutClass.TV) 140.dp else 120.dp),
             state = state, modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(if (phone) 8.dp else 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(if (phone) 4.dp else 12.dp),
-            verticalArrangement = Arrangement.spacedBy(if (phone) 8.dp else 16.dp),
+            // A home header starts full-bleed under the floating header.
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp,
+                top = if (header != null) 0.dp else app.opentv.ui.LocalJaskContentPadding.current.calculateTopPadding() + 8.dp,
+                bottom = app.opentv.ui.LocalJaskContentPadding.current.calculateBottomPadding() + 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            header?.invoke(this, if (phone) 3 else 6)
+            if (header != null && items.itemCount == 0) item(key = "paging-empty", span = { GridItemSpan(maxLineSpan) }) {
+                when (refresh) {
+                    is LoadState.Loading -> PagingLoading()
+                    is LoadState.Error -> PagingError(items::retry)
+                    is LoadState.NotLoading -> Text(emptyText ?: stringResource(R.string.vod_paging_empty), modifier = Modifier.padding(24.dp))
+                }
+            }
             items(count = items.itemCount, key = items.itemKey(key)) { index ->
                 items[index]?.let { card(it) }
             }

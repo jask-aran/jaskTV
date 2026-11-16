@@ -575,4 +575,7 @@
     <string name="upd_retry">Riprova</string>
     <string name="upd_update">Aggiorna</string>
     <string name="vod_remove_continue">Rimuovi da Continua a guardare</string>
+    <string name="nav_media_simple">Film e Serie</string>
+    <string name="nav_saved_simple">Libreria</string>
+    <string name="provider_filters">Filtri del provider</string>
 </resources>
