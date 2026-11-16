@@ -72,7 +72,7 @@ internal fun Modifier.jaskWavesBackground(ambient: JaskAmbient): Modifier {
     val inks = goal.mapIndexed { i, c -> animateColorAsState(c, tween(300), label = "ink$i").value }
     // The flat colour the dither averages to, so heroes can fade into it before the dots begin.
     ambient.wash = wavesWash(inks)
-    if (Build.VERSION.SDK_INT < 33) return drawBehind { drawRect(Color.Black) }
+    if (Build.VERSION.SDK_INT < 33 || remember { debugProp("debug.jasktv.nowaves") == "1" }) return drawBehind { drawRect(inks[1]) }
     // Phones dim the lower page under the bottom navigation, as Conduit does; wide screens have no
     // bottom bar, so the waves run nearly undimmed to the bottom edge.
     val fade = if (LocalLayoutClass.current == LayoutClass.PHONE) 0.6f else 0.2f
@@ -80,8 +80,10 @@ internal fun Modifier.jaskWavesBackground(ambient: JaskAmbient): Modifier {
     val grain = 2f // device pixels, as in Conduit
     var time by remember { mutableFloatStateOf(0f) }
     val context = LocalContext.current
-    val still = remember(context) {
-        android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    // Still when the system has animations off, and on the SOLID material (the cheapest).
+    val solid = LocalJaskMaterial.current == JaskMaterial.SOLID
+    val still = remember(context, solid) {
+        solid || debugProp("debug.jasktv.stillwaves") == "1" || android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     }
     // ~30 updates a second is plenty for a field this slow; only the draw phase re-runs.
     LaunchedEffect(still) {

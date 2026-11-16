@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.opentv.ui.LayoutClass
+import app.opentv.ui.jaskArtSource
 import app.opentv.ui.LocalLayoutClass
 import app.opentv.ui.VodViewModel.CatalogueHome
 import app.opentv.ui.VodViewModel.HomeStyle
@@ -80,7 +81,12 @@ internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, watchlist
         when {
             !phone -> item(key = "home-shelf-${section.key}", span = { GridItemSpan(maxLineSpan) }) {
                 // Wide screens: one sideways-scrolling shelf per section, edge to edge.
-                androidx.compose.foundation.lazy.LazyRow(Modifier.bleed(16.dp),
+                // Prefetch a screenful of cards when the shelf is about to scroll in, so a new shelf
+                // isn't composed all at once in the frame it appears.
+                @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+                val shelf = androidx.compose.foundation.lazy.rememberLazyListState(
+                    prefetchStrategy = androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 12))
+                androidx.compose.foundation.lazy.LazyRow(Modifier.bleed(16.dp), state = shelf,
                     contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     items(section.items.size, key = { "shelf-${section.key}-${section.items[it].key}" }) { i ->
                         val title = section.items[i]
@@ -120,7 +126,7 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
     val tail = with(androidx.compose.ui.platform.LocalDensity.current) { 200.dp.toPx() }
     // Below the hero (outside the pager, which clips), its colour fades into the dithered page.
     val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
-    Box(modifier.fillMaxWidth().then(if (wide) Modifier.height((screenH * 0.64f).coerceIn(360f, 600f).dp) else Modifier.aspectRatio(0.9f)).drawBehind {
+    Box(modifier.fillMaxWidth().then(if (wide) Modifier.height((screenH * 0.74f).coerceIn(380f, 680f).dp) else Modifier.aspectRatio(0.9f)).drawBehind {
         drawRect(Brush.verticalGradient(listOf(wash, wash.copy(alpha = 0f)), startY = size.height - 1f, endY = size.height + tail),
             topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - 1f), size = androidx.compose.ui.geometry.Size(size.width, tail))
     }) {
@@ -139,7 +145,7 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
                 if (wide) Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
                     0f to Color.Black.copy(alpha = 0.6f), 0.45f to Color.Black.copy(alpha = 0.15f), 0.7f to Color.Transparent)))
                 // Last over the art and scrims, so the hero's bottom edge is exactly the wash colour (no seam).
-                Box(Modifier.fillMaxSize().background(if (wide) Brush.verticalGradient(0.68f to wash.copy(alpha = 0f), 0.88f to wash.copy(alpha = .7f), 1f to wash)
+                Box(Modifier.fillMaxSize().background(if (wide) Brush.verticalGradient(0.8f to wash.copy(alpha = 0f), 0.94f to wash.copy(alpha = .55f), 1f to wash)
                     else Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash)))
                 val facts = HeroFacts(rank = t.rank.takeIf { caption == null }, rating = t.rating, quality = qualityBadge(t.quality),
                     networkLogo = t.networkLogo, network = t.network, text = listOfNotNull(t.year?.toString(), t.status),
@@ -271,16 +277,16 @@ internal fun JaskSearchResults(hits: List<HomeTitle>?, emptyText: String, onOpen
 /** A detailed search hit: poster with its rank circle, title, facts and description. */
 @Composable
 private fun JaskHitRow(t: HomeTitle, onClick: () -> Unit) {
-    var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val art = app.opentv.ui.rememberArtBackdrop(t.poster, cells = 16)
     Row(Modifier.fillMaxWidth().height(124.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E1C1B)).clickable(onClick = onClick)) {
-        Box(Modifier.fillMaxHeight().aspectRatio(2f / 3f).background(Color(0xFF282522)).onSizeChanged { size = it }) {
+        Box(Modifier.fillMaxHeight().aspectRatio(2f / 3f).background(Color(0xFF282522)).then(Modifier.jaskArtSource(art))) {
             AsyncImage(t.poster, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            t.rank?.let { rank ->
-                PosterFrost(t.poster, size, CircleShape, Modifier.align(Alignment.TopStart).padding(5.dp).size(22.dp)) {
+            t.rank?.let { rank -> CompositionLocalProvider(app.opentv.ui.LocalJaskBackdrop provides art) {
+                PosterFrost(CircleShape, Modifier.align(Alignment.TopStart).padding(5.dp).size(22.dp)) {
                     Text("$rank", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.align(Alignment.Center))
                 }
-            }
+            } }
         }
         Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 9.dp)) {
             Text(t.title, color = Color(0xFFF6F3EF), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,

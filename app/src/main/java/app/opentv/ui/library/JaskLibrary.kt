@@ -208,7 +208,7 @@ private fun LazyGridScope.sectionHeader(key: String, title: String, type: Librar
 /** Compact All / Movies / TV switch on glass, selection styled like the tab rail. */
 @Composable
 internal fun TypeSwitch(type: LibraryType, onType: (LibraryType) -> Unit) {
-    app.opentv.ui.JaskFrostSurface(Modifier.height(34.dp), RoundedCornerShape(50)) {
+    app.opentv.ui.JaskGlassSurface(Modifier.height(34.dp), RoundedCornerShape(50)) {
         Row(Modifier.fillMaxHeight().padding(3.dp), verticalAlignment = Alignment.CenterVertically) {
             LibraryType.entries.forEach { t ->
                 val selected = t == type

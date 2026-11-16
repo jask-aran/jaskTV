@@ -29,7 +29,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
-import app.opentv.ui.JaskFrostSurface
+import app.opentv.ui.JaskGlassSurface
+import app.opentv.ui.jaskArtSource
 import app.opentv.ui.JaskGlassCircle
 import app.opentv.ui.JaskGlassHost
 import androidx.compose.material3.Icon
@@ -110,25 +111,34 @@ internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, fact
     modifier: Modifier = Modifier, blurb: String? = null, actions: @Composable RowScope.() -> Unit) {
     val wide = LocalLayoutClass.current != LayoutClass.PHONE
     val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
-    JaskGlassHost(modifier.fillMaxWidth().then(if (wide) Modifier.height((screenH * 0.66f).coerceIn(380f, 620f).dp) else Modifier.aspectRatio(0.92f)), background = {
-        val candidates = remember(artUrl, fallbackArt) { listOfNotNull(heroArt(artUrl), artUrl, fallbackArt).distinct() }
-        var index by remember(candidates) { mutableIntStateOf(0) }
-        candidates.getOrNull(index)?.let { model ->
-            AsyncImage(model, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.matchParentSize(),
-                onError = { if (index < candidates.lastIndex) index++ })
-        }
-        if (wide) Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
-            0f to Color.Black.copy(alpha = 0.55f), 0.45f to Color.Black.copy(alpha = 0.12f), 0.7f to Color.Transparent)))
-        // Eased ramp into exactly `tint` at the bottom edge, where jaskPageBackground picks it up.
-        // Wide screens keep more of the art: the ramp starts lower, the side scrim carries the text.
-        Box(Modifier.matchParentSize().background(if (wide) Brush.verticalGradient(
+    val candidates = remember(artUrl, fallbackArt) { listOfNotNull(heroArt(artUrl), artUrl, fallbackArt).distinct() }
+    var index by remember(candidates) { mutableIntStateOf(0) }
+    val model = candidates.getOrNull(index)
+    // Side scrim (wide) and an eased ramp into exactly `tint` at the bottom edge, where
+    // jaskPageBackground picks it up. Wide screens keep more of the art: the ramp starts lower.
+    val scrim: androidx.compose.ui.graphics.drawscope.DrawScope.(androidx.compose.ui.geometry.Size) -> Unit = { size ->
+        if (wide) drawRect(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.55f), 0.45f to Color.Black.copy(alpha = 0.12f),
+            0.7f to Color.Transparent), size = size)
+        drawRect(if (wide) Brush.verticalGradient(
             0f to Color.Black.copy(alpha = 0.40f), 0.18f to Color.Transparent, 0.62f to Color.Transparent,
             0.76f to tint.copy(alpha = 0.35f), 0.88f to tint.copy(alpha = 0.8f), 1f to tint)
         else Brush.verticalGradient(
             0f to Color.Black.copy(alpha = 0.40f), 0.18f to Color.Transparent, 0.40f to Color.Transparent,
             0.55f to tint.copy(alpha = 0.22f), 0.68f to tint.copy(alpha = 0.55f), 0.80f to tint.copy(alpha = 0.82f),
-            0.90f to tint.copy(alpha = 0.95f), 1f to tint)))
-    }) {
+            0.90f to tint.copy(alpha = 0.95f), 1f to tint), size = size)
+    }
+    // The hero's buttons are glass over the art: a pre-blurred copy of it, with the same scrims.
+    val screenW = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val art = app.opentv.ui.rememberArtBackdrop(model, cells = (screenW / 12).coerceIn(24, 128))
+    art?.scrim = scrim
+    Box(modifier.fillMaxWidth().then(if (wide) Modifier.height((screenH * 0.66f).coerceIn(380f, 620f).dp) else Modifier.aspectRatio(0.92f))
+        .then(Modifier.jaskArtSource(art))) {
+        model?.let {
+            AsyncImage(it, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.matchParentSize(),
+                onError = { if (index < candidates.lastIndex) index++ })
+        }
+        Box(Modifier.matchParentSize().drawBehind { scrim(size) })
+        CompositionLocalProvider(app.opentv.ui.LocalJaskBackdrop provides art) {
         JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, "Back", Modifier.align(Alignment.TopStart).statusBarsPadding().padding(12.dp),
             size = 44.dp, onClick = onBack)
         if (wide) {
@@ -166,6 +176,7 @@ internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, fact
                 verticalAlignment = Alignment.CenterVertically, content = actions)
         }
     }
+}
 }
 
 /**
@@ -246,7 +257,7 @@ internal fun RowScope.JaskPlayPill(label: String, progress: Float? = null, onCli
 /** Glass source chooser for the hero row: what plays now ("4K", provider), and how many choices. */
 @Composable
 internal fun JaskSourceButton(label: String, count: Int, onClick: () -> Unit) {
-    JaskFrostSurface(Modifier.height(48.dp).widthIn(max = 150.dp), RoundedCornerShape(50)) {
+    JaskGlassSurface(Modifier.height(48.dp).widthIn(max = 150.dp), RoundedCornerShape(50)) {
         Row(Modifier.fillMaxHeight().clickable(onClick = onClick).padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Layers, null, tint = Color(0xFFF0F0F0), modifier = Modifier.size(18.dp))
@@ -261,7 +272,7 @@ internal fun JaskSourceButton(label: String, count: Int, onClick: () -> Unit) {
 /** Glass circle holding the download control (icon, progress ring or done tick). */
 @Composable
 internal fun JaskGlassDownload(control: @Composable () -> Unit) {
-    JaskFrostSurface(Modifier.size(48.dp), CircleShape) {
+    JaskGlassSurface(Modifier.size(48.dp), CircleShape) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides Color(0xFFF0F0F0)) { control() }
         }

@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -58,19 +59,6 @@ internal val LocalJaskContentPadding = staticCompositionLocalOf { PaddingValues(
 internal val LocalJaskSearchFocus = staticCompositionLocalOf { androidx.compose.ui.focus.FocusRequester() }
 /** Opens the bottom search bar (e.g. My TV's "Find channels"). */
 internal val LocalJaskOpenSearch = staticCompositionLocalOf<() -> Unit> { {} }
-
-/** Debug A/B switch: `adb shell setprop debug.jasktv.noblur 1`, then restart the app. */
-private fun debugNoBlur(): Boolean = app.opentv.BuildConfig.DEBUG && runCatching {
-    Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.jasktv.noblur") == "1"
-}.getOrDefault(false)
-
-/** One source layer is recorded per frame, shared by floating chrome. No bitmap readback. */
-internal class JaskBackdrop(val layer: androidx.compose.ui.graphics.layer.GraphicsLayer) {
-    var origin by mutableStateOf(Offset.Zero)
-}
-private val LocalJaskBackdrop = staticCompositionLocalOf<JaskBackdrop?> { null }
-/** True inside a glass host's recorded page, where frost renders without blur (see [JaskGlassHost]). */
-private val LocalJaskInRecording = staticCompositionLocalOf { false }
 
 @Composable
 internal fun JaskChromeFrame(
@@ -202,7 +190,7 @@ internal fun BoxScope.JaskMenu(expanded: Boolean, onDismiss: () -> Unit, items: 
         Box(Modifier.fillMaxSize().clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null, onClick = onDismiss))
         val margin = with(LocalDensity.current) { 8.dp.roundToPx() }
         androidx.compose.ui.layout.Layout({
-            JaskFrostSurface(Modifier.widthIn(min = 180.dp, max = 280.dp), RoundedCornerShape(16.dp)) {
+            JaskGlassSurface(Modifier.widthIn(min = 180.dp, max = 280.dp), RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(vertical = 6.dp).width(IntrinsicSize.Max)
                     .heightIn(max = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * .75f).dp)
                     .verticalScroll(androidx.compose.foundation.rememberScrollState())) {
@@ -270,7 +258,7 @@ internal fun JaskSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.(
         androidx.activity.compose.BackHandler(onBack = onDismiss)
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .35f))
             .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null, onClick = onDismiss)) {
-            JaskFrostSurface(Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp).fillMaxWidth()
+            JaskGlassSurface(Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp).fillMaxWidth()
                 .heightIn(max = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.85f).dp)
                 .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) {},
                 RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)) {
@@ -286,29 +274,31 @@ internal fun JaskSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.(
 }
 
 /**
- * Glass host: [background] is recorded into one layer per frame and drawn; every [JaskFrostSurface]
- * inside [content] blurs that layer. Content is drawn on top and never recorded, so glass can't
- * sample itself. Used by the shell (pages behind the rails) and by media-page heroes (art behind buttons).
+ * Glass host: on the LIVE material, [background] is recorded into one layer per frame and drawn,
+ * and every [JaskGlassSurface] inside [content] blurs that layer. Content is drawn on top and never
+ * recorded, so glass can't sample itself. Other materials draw [background] directly: no recording.
  */
 @Composable
 internal fun JaskGlassHost(modifier: Modifier = Modifier, background: @Composable BoxScope.() -> Unit,
     content: @Composable BoxScope.() -> Unit) {
-    val context = LocalContext.current
-    val useBackdrop = remember(context) { Build.VERSION.SDK_INT >= 31 && !debugNoBlur() &&
-        !(context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).isLowRamDevice }
-    val layer = rememberGraphicsLayer()
-    val backdrop = remember(layer) { JaskBackdrop(layer) }
-    CompositionLocalProvider(LocalJaskBackdrop provides if (useBackdrop) backdrop else null) {
+    val live = LocalJaskMaterial.current == JaskMaterial.LIVE
+    val page = rememberGraphicsLayer()
+    val blurred = rememberGraphicsLayer()
+    val down = remember { debugProp("debug.jasktv.blurdown")?.toFloatOrNull() ?: 4f }
+    val radius = with(LocalDensity.current) { 28.dp.toPx() }
+    val backdrop = remember(blurred) { JaskLiveBackdrop(blurred, down) }
+    if (live) remember(blurred, radius) { blurred.renderEffect = jaskLiveEffect(radius / down) }
+    CompositionLocalProvider(LocalJaskBackdrop provides if (live) backdrop else null) {
         Box(modifier) {
-            Box(Modifier.matchParentSize().graphicsLayer().onGloballyPositioned { backdrop.origin = it.positionInRoot() }
+            Box(Modifier.matchParentSize().then(if (live) Modifier.onGloballyPositioned { backdrop.origin = it.positionInRoot() }
                 .drawWithContent {
-                    if (useBackdrop) {
-                        layer.record { this@drawWithContent.drawContent() }
-                        drawLayer(layer)
-                    } else drawContent()
-                }) {
+                    page.record { this@drawWithContent.drawContent() }
+                    drawLayer(page)
+                    val small = androidx.compose.ui.unit.IntSize(kotlin.math.ceil(size.width / down).toInt(), kotlin.math.ceil(size.height / down).toInt())
+                    blurred.record(small) { scale(1f / down, pivot = Offset.Zero) { drawLayer(page) } }
+                } else Modifier)) {
                 // Glass inside the recorded page must not sample this layer: it would draw itself
-                // recursively (a native stack overflow in the renderer). It gets the unblurred look.
+                // recursively (a native stack overflow in the renderer). It gets the tinted look.
                 CompositionLocalProvider(LocalJaskBackdrop provides null, LocalJaskInRecording provides true) { background() }
             }
             content()
@@ -326,61 +316,17 @@ internal fun JaskWordmark(modifier: Modifier = Modifier, tint: Color = Color(0xF
 @Composable
 internal fun JaskGlassCircle(icon: androidx.compose.ui.graphics.vector.ImageVector, contentDescription: String,
     modifier: Modifier = Modifier, active: Boolean = false, size: androidx.compose.ui.unit.Dp = 48.dp, onClick: () -> Unit) {
-    JaskFrostSurface(modifier.size(size), CircleShape) {
+    JaskGlassSurface(modifier.size(size), CircleShape) {
         IconButton(onClick, Modifier.fillMaxSize()) {
             Icon(icon, contentDescription, Modifier.size(22.dp), tint = if (active) Color.White else Color(0xFFF0F0F0))
         }
     }
 }
 
-/** Actual backdrop blur on API 31+, translucent material on low-RAM/API 23–30 devices. */
-@Composable
-internal fun JaskFrostSurface(modifier: Modifier = Modifier, shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(24.dp),
-    content: @Composable BoxScope.() -> Unit) {
-    val source = LocalJaskBackdrop.current
-    var origin by remember { mutableStateOf(Offset.Zero) }
-    val context = LocalContext.current
-    val cheap = remember(context) { (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).isLowRamDevice }
-    val radius = with(LocalDensity.current) { 28.dp.toPx() }
-    val effect = remember(radius, cheap) {
-        if (Build.VERSION.SDK_INT >= 31 && !cheap) {
-            // Native GPU Gaussian, then a mild saturation lift (as Apple's materials do) so the
-            // blurred colour reads as glass rather than grey and fine detail flickers less.
-            val blur = android.graphics.RenderEffect.createBlurEffect(radius, radius, android.graphics.Shader.TileMode.CLAMP)
-            val saturate = android.graphics.ColorMatrix().apply { setSaturation(1.5f) }
-            android.graphics.RenderEffect.createChainEffect(
-                android.graphics.RenderEffect.createColorFilterEffect(android.graphics.ColorMatrixColorFilter(saturate)), blur,
-            ).asComposeRenderEffect()
-        } else null
-    }
-    val glass = source != null && effect != null
-    // Blur a region larger than the surface by the blur radius, then clip: the edges always have
-    // real content to sample, so artwork scrolling past no longer shimmers at the rim.
-    val margin = (radius * 1.5f).toInt()
-    val inRecording = LocalJaskInRecording.current
-    Box(modifier.onGloballyPositioned { origin = it.positionInRoot() }.clip(shape)
-        .background(when { glass -> Color(0xFF141312); inRecording -> Color(0x8C2C2A28); else -> Color(0xE62A2A2A) })) {
-        if (glass) Canvas(Modifier.matchParentSize().layout { measurable, constraints ->
-                val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(
-                    constraints.maxWidth + 2 * margin, constraints.maxHeight + 2 * margin))
-                layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(-margin, -margin) }
-            }.graphicsLayer { renderEffect = effect }) {
-            translate(source!!.origin.x - origin.x + margin, source.origin.y - origin.y + margin) { drawLayer(source.layer) }
-        }
-        // Glass: a thin neutral tint keeps the blurred artwork visible; the fallback stays opaque enough to read.
-        if (glass || inRecording) Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(
-            Color.White.copy(alpha = .14f), Color.Black.copy(alpha = .28f)))))
-        // Specular rim: bright along the top edge, fading out down the sides.
-        Box(Modifier.matchParentSize().border(1.dp, Brush.verticalGradient(listOf(
-            Color.White.copy(alpha = .38f), Color.White.copy(alpha = .06f), Color.White.copy(alpha = .12f))), shape))
-        content()
-    }
-}
-
 /** Icon-only capsule (Apple-style tab bar); tab names remain as accessibility labels. */
 @Composable
 internal fun JaskFloatingNavigation(current: JaskDestination, onSelect: (JaskDestination) -> Unit, modifier: Modifier = Modifier) {
-    JaskFrostSurface(modifier.testTag("jask.navigation").height(JaskRailHeight), RoundedCornerShape(50)) {
+    JaskGlassSurface(modifier.testTag("jask.navigation").height(JaskRailHeight), RoundedCornerShape(50)) {
         Row(Modifier.fillMaxSize().padding(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             JaskDestination.entries.forEach { destination ->
                 val selected = current == destination
@@ -408,13 +354,13 @@ internal fun JaskHeader(onFilter: () -> Unit, onAccount: () -> Unit, modifier: M
     Row(modifier.testTag("jask.header").height(52.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         JaskWordmark(Modifier.height(20.dp))
         Spacer(Modifier.weight(1f))
-        if (filterIcon != null) JaskFrostSurface(Modifier.size(48.dp), RoundedCornerShape(50)) {
+        if (filterIcon != null) JaskGlassSurface(Modifier.size(48.dp), RoundedCornerShape(50)) {
             IconButton(onFilter, Modifier.fillMaxSize()) {
                 Icon(filterIcon, filterLabel ?: stringResource(R.string.catalogue_filters), Modifier.size(20.dp), tint = Color(0xFFF0F0F0))
             }
         }
         Box {
-            JaskFrostSurface(Modifier.size(48.dp), RoundedCornerShape(50)) {
+            JaskGlassSurface(Modifier.size(48.dp), RoundedCornerShape(50)) {
                 IconButton(onAccount, Modifier.fillMaxSize()) {
                     Icon(Icons.Default.Person, stringResource(R.string.jask_account), tint = Color(0xFFF5F5F5), modifier = Modifier.size(23.dp))
                 }
@@ -443,7 +389,7 @@ internal fun JaskBottomBar(current: JaskDestination, onSelect: (JaskDestination)
     Row(modifier.widthIn(max = 420.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (searching) {
-            JaskFrostSurface(Modifier.weight(1f).height(JaskRailHeight), RoundedCornerShape(50)) {
+            JaskGlassSurface(Modifier.weight(1f).height(JaskRailHeight), RoundedCornerShape(50)) {
                 Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Search, null, Modifier.padding(start = 16.dp, end = 10.dp).size(21.dp), tint = Color(0xFFF5F5F5))
                     Box(Modifier.weight(1f).padding(end = 16.dp), contentAlignment = Alignment.CenterStart) {
@@ -462,14 +408,14 @@ internal fun JaskBottomBar(current: JaskDestination, onSelect: (JaskDestination)
                     }
                 }
             }
-            JaskFrostSurface(Modifier.size(JaskRailHeight), RoundedCornerShape(50)) {
+            JaskGlassSurface(Modifier.size(JaskRailHeight), RoundedCornerShape(50)) {
                 IconButton(::close, Modifier.fillMaxSize()) {
                     Icon(Icons.Default.Close, stringResource(R.string.common_cancel), Modifier.size(22.dp), tint = Color(0xFFF5F5F5))
                 }
             }
         } else {
             JaskFloatingNavigation(current, onSelect, Modifier.weight(1f))
-            JaskFrostSurface(Modifier.size(JaskRailHeight), RoundedCornerShape(50)) {
+            JaskGlassSurface(Modifier.size(JaskRailHeight), RoundedCornerShape(50)) {
                 IconButton({ setSearching(true) }, Modifier.fillMaxSize().testTag("jask.searchButton"), enabled = searchEnabled) {
                     Icon(Icons.Default.Search, stringResource(R.string.nav_search), Modifier.size(24.dp),
                         tint = if (searchEnabled) Color(0xFFF5F5F5) else Color(0x55F5F5F5))

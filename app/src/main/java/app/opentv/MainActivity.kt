@@ -210,7 +210,8 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    CompositionLocalProvider(LocalLayoutClass provides rememberLayoutClass(isTelevision)) {
+                    CompositionLocalProvider(LocalLayoutClass provides rememberLayoutClass(isTelevision),
+                        app.opentv.ui.LocalJaskMaterial provides app.opentv.ui.rememberJaskMaterial(isTelevision)) {
                         OpenTvApp(isTelevision = isTelevision)
                     }
                 }

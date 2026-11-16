@@ -184,6 +184,18 @@ class AppSettings(private val prefs: Prefs) {
         _guidePreviewSound.value = enabled
     }
 
+    /**
+     * How jaskTV draws glass: "auto" (chosen per device), "live" (real-time blur of the page),
+     * "frosted" (pre-blurred artwork, tinted chrome) or "solid" (no blur at all).
+     */
+    private val _glassMode = MutableStateFlow(prefs.getString(KEY_GLASS_MODE, null) ?: "auto")
+    val glassMode: StateFlow<String> = _glassMode.asStateFlow()
+
+    fun setGlassMode(mode: String) {
+        prefs.edit().putString(KEY_GLASS_MODE, mode).apply()
+        _glassMode.value = mode
+    }
+
     /** Whether launching the app jumps straight back to the last channel you watched. */
     private val _resumeLastChannel = MutableStateFlow(prefs.getBoolean(KEY_RESUME_LAST, false))
     val resumeLastChannel: StateFlow<Boolean> = _resumeLastChannel.asStateFlow()
@@ -524,6 +536,7 @@ class AppSettings(private val prefs: Prefs) {
         private const val KEY_CHANNEL_LAYOUT = "channel_layout"
         private const val KEY_SUBTITLES = "subtitles_enabled"
         private const val KEY_PREVIEW_VIDEO = "guide_preview_video"
+        private const val KEY_GLASS_MODE = "glass_mode"
         private const val KEY_PREVIEW_SOUND = "guide_preview_sound"
         private const val KEY_PIN_HASH = "parental_pin_hash"
         private const val KEY_HIDDEN_CATS = "hidden_categories"

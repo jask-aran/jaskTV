@@ -1,5 +1,6 @@
 package app.opentv.ui.vod
 
+import app.opentv.ui.jaskArtSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -222,8 +223,10 @@ internal fun JaskPosterCard(title: String, poster: String?, facts: PosterFacts, 
 @Composable
 internal fun PosterArt(poster: String?, facts: PosterFacts, modifier: Modifier, shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(8.dp),
     focused: Boolean = false, compact: Boolean = false, inset: Boolean = false) {
-    var cardSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
-    Box(modifier.onSizeChanged { cardSize = it }) {
+    // The badges are glass over the poster: they show a pre-blurred copy of it (see JaskMaterial).
+    val art = app.opentv.ui.rememberArtBackdrop(poster, cells = 24, bleed = PosterBadgeOverhang + 6.dp)
+    Box(modifier.then(Modifier.jaskArtSource(art))) {
+    androidx.compose.runtime.CompositionLocalProvider(app.opentv.ui.LocalJaskBackdrop provides art) {
         Box(Modifier.matchParentSize().clip(shape).background(Color(0xFF282522))
             .then(if (focused) Modifier.border(3.dp, JaskAccent, shape) else Modifier)) {
             AsyncImage(poster, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
@@ -248,7 +251,7 @@ internal fun PosterArt(poster: String?, facts: PosterFacts, modifier: Modifier, 
         // Inset (inside a clipped row) the badges sit just inside the corner instead of overhanging it.
         val o = if (inset) (-4).dp else PosterBadgeOverhang
         facts.rank?.let { rank ->
-            PosterFrost(poster, cardSize, CircleShape, Modifier.align(androidx.compose.ui.Alignment.TopStart).offset(-o, -o).size(24.dp)) {
+            PosterFrost(CircleShape, Modifier.align(androidx.compose.ui.Alignment.TopStart).offset(-o, -o).size(24.dp)) {
                 Text("$rank", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                     style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp, lineHeight = 12.sp),
                     modifier = Modifier.align(androidx.compose.ui.Alignment.Center))
@@ -257,7 +260,7 @@ internal fun PosterArt(poster: String?, facts: PosterFacts, modifier: Modifier, 
         val quality = qualityBadge(facts.quality)
         val logo = facts.networkLogo?.takeIf(String::isNotBlank)
         if (facts.noSource || quality != null || logo != null) {
-            PosterFrost(poster, cardSize, RoundedCornerShape(50), Modifier.align(androidx.compose.ui.Alignment.TopEnd).offset(o, -o).height(20.dp)) {
+            PosterFrost(RoundedCornerShape(50), Modifier.align(androidx.compose.ui.Alignment.TopEnd).offset(o, -o).height(20.dp)) {
                 Row(Modifier.fillMaxHeight().padding(horizontal = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     if (facts.noSource) Icon(Icons.Outlined.CloudOff, stringResource(R.string.jask_not_on_sources), tint = Color(0xFFFFC7BD), modifier = Modifier.size(13.dp))
@@ -276,34 +279,13 @@ internal fun PosterArt(poster: String?, facts: PosterFacts, modifier: Modifier, 
             }
         }
     }
-}
-
-/**
- * Frosted badge over a poster. Cards live inside the page that the shell's glass records, so they
- * can't sample that layer; instead the badge blurs its own slice of the same (cached) poster image.
- * The slice is drawn slightly enlarged so the part of a badge overhanging the poster edge is still
- * poster-coloured glass rather than whatever the page behind is. A soft shadow separates it from
- * the page. API < 31 has no blur and shows the translucent tint only.
- */
-@Composable
-internal fun PosterFrost(image: String?, cardSize: androidx.compose.ui.unit.IntSize, shape: androidx.compose.ui.graphics.Shape,
-    modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
-    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    val bleed = with(androidx.compose.ui.platform.LocalDensity.current) { (PosterBadgeOverhang + 6.dp).roundToPx() }
-    Box(modifier.onPlaced { origin = it.positionInParent() }.shadow(3.dp, shape, clip = false).clip(shape)) {
-        if (cardSize.width > 0) androidx.compose.ui.layout.Layout({
-            AsyncImage(image, null, contentScale = ContentScale.Crop, modifier = Modifier.blur(10.dp, BlurredEdgeTreatment.Unbounded))
-        }, Modifier.matchParentSize()) { measurables, constraints ->
-            val placeable = measurables.first().measure(androidx.compose.ui.unit.Constraints.fixed(cardSize.width + 2 * bleed, cardSize.height + 2 * bleed))
-            layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(-origin.x.toInt() - bleed, -origin.y.toInt() - bleed) }
-        }
-        Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(
-            listOf(Color.White.copy(alpha = .16f), Color.Black.copy(alpha = .38f)))))
-        Box(Modifier.matchParentSize().border(1.dp, androidx.compose.ui.graphics.Brush.verticalGradient(
-            listOf(Color.White.copy(alpha = .45f), Color.White.copy(alpha = .08f))), shape))
-        content()
     }
 }
+
+/** Frosted badge over a poster: badge-tone glass over the poster's art backdrop (see [PosterArt]). */
+@Composable
+internal fun PosterFrost(shape: androidx.compose.ui.graphics.Shape, modifier: Modifier, content: @Composable BoxScope.() -> Unit) =
+    app.opentv.ui.JaskGlassSurface(modifier, shape, app.opentv.ui.JaskGlassTone.BADGE, content)
 
 /** Small dark pill over artwork; legible on bright posters without a full-width scrim. */
 @Composable
