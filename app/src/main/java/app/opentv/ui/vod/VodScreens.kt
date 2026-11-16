@@ -157,13 +157,14 @@ fun SeriesScreen(
         val home by viewModel.showHome.collectAsState()
         val hits by viewModel.showSearch.collectAsState()
         val openTitle = rememberHomeOpener { title -> viewModel.openHomeShow(title)?.let(onOpenSeries) }
+        val watchlist = androidx.compose.runtime.remember(viewModel) { HomeWatchlist(viewModel::homeOnWatchlist, viewModel::toggleHomeWatchlist) }
         if (query.isNotBlank()) {
             JaskSearchResults(hits, stringResource(R.string.jask_no_matches, query.trim()), openTitle)
             return
         }
         val h = home
         val header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(Int) -> Unit)? = if (h != null) { columns ->
-            jaskHome(h, columns, openTitle)
+            jaskHome(h, columns, watchlist, openTitle)
         } else null
         PagedSeriesGrid(viewModel.seriesPages.collectAsLazyPagingItems(), "$source/$category/$query", onOpenSeries, viewModel::seriesBrowseVariants, pickDefault = viewModel::defaultSeriesVersion,
             emptyText = null, header = header)

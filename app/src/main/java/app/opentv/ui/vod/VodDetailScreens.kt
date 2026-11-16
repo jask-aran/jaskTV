@@ -46,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -165,14 +166,14 @@ fun MovieDetailScreen(
         var sourceSheet by remember { mutableStateOf(false) }
         val list = androidx.compose.foundation.lazy.rememberLazyListState()
         var heroHeight by remember { mutableStateOf(0) }
+        val wideHero = app.opentv.ui.LocalLayoutClass.current != app.opentv.ui.LayoutClass.PHONE
         app.opentv.ui.JaskSurfaceHost(Modifier.fillMaxSize(), background = { Box(Modifier.fillMaxSize().jaskPageBackground(tint, list, heroHeight)) {
             LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 32.dp +
                 androidx.compose.foundation.layout.WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())) {
                 item(key = "hero") {
-                    JaskHero(m.displayTitle, m.backdropUrl, m.posterUrl, listOfNotNull(
-                        m.year?.toString(), m.durationSeconds?.takeIf { it > 0 }?.let { formatRuntime(it) },
-                        m.rating?.takeIf { it > 0.0 }?.let { (if (versions.isEmpty()) "★ " else "TMDB ") + formatRating(it) }),
-                        tint, onBack, Modifier.onSizeChanged { heroHeight = it.height }) {
+                    JaskHero(m.displayTitle, m.backdropUrl, m.posterUrl, HeroFacts(rating = m.rating, quality = quality(m).takeIf { it.length <= 6 },
+                        text = listOfNotNull(m.year?.toString(), m.durationSeconds?.takeIf { it > 0 }?.let { formatRuntime(it) })),
+                        tint, onBack, Modifier.onSizeChanged { heroHeight = it.height }, blurb = m.plot.takeIf { wideHero }) {
                         val playLabel = stringResource(if (resumeExists) R.string.vod_resume else R.string.vod_watch_now)
                         JaskPlayPill(minutesLeft?.takeIf { resumeExists }?.let { "$playLabel · " + if (it >= 60) "${it / 60}h ${it % 60}m" else "${it}m" } ?: playLabel, progress) { onPlay(m) }
                         JaskSourceButton(quality(m).ifBlank { providerName(m) }, pool.size) { sourceSheet = true }
@@ -192,7 +193,7 @@ fun MovieDetailScreen(
                         }
                     }
                 }
-                item(key = "synopsis") { JaskSynopsis(m.plot) }
+                if (!wideHero) item(key = "synopsis") { JaskSynopsis(m.plot) }
                 item(key = "credits") { JaskCredits(m.genre, m.cast ?: credits?.first, m.director ?: credits?.second) }
                 item(key = "review-scores") { ExternalReviews(movie = m) }
             }
@@ -459,7 +460,6 @@ fun SeriesDetailScreen(
         LaunchedEffect(s.id) { tmdbShow = viewModel.canonicalShow(s) }
         val seasonOrder = remember(seasons) { seasons.keys.sortedBy { if (it == 0) Int.MAX_VALUE else it } }
         var chosenSeason by remember(s.id) { mutableStateOf<Int?>(null) }
-        val wideEpisodes = app.opentv.ui.LocalLayoutClass.current != app.opentv.ui.LayoutClass.PHONE
         val shownSeason = chosenSeason?.takeIf { it in seasons } ?: next?.first?.season ?: seasonOrder.firstOrNull()
         val summaries = remember(seasons, positions, seasonPosters) {
             seasonOrder.map { n ->
@@ -473,15 +473,15 @@ fun SeriesDetailScreen(
         var sourceSheet by remember { mutableStateOf(false) }
         val list = androidx.compose.foundation.lazy.rememberLazyListState()
         var heroHeight by remember { mutableStateOf(0) }
+        val wideHero = app.opentv.ui.LocalLayoutClass.current != app.opentv.ui.LayoutClass.PHONE
         app.opentv.ui.JaskSurfaceHost(Modifier.fillMaxSize(), background = { Box(Modifier.fillMaxSize().jaskPageBackground(tint, list, heroHeight)) {
             LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 32.dp +
                 androidx.compose.foundation.layout.WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())) {
                 item(key = "hero") {
-                    JaskHero(title, s.backdropUrl, s.posterUrl, listOfNotNull(s.year?.toString(),
-                        seasons.keys.count { it > 0 }.takeIf { it > 0 }?.let { if (it == 1) "1 season" else "$it seasons" },
-                        tmdbShow?.network, tmdbShow?.statusLabel,
-                        s.rating?.takeIf { it > 0.0 }?.let { "★ " + formatRating(it) }),
-                        tint, onBack, Modifier.onSizeChanged { heroHeight = it.height }) {
+                    JaskHero(title, s.backdropUrl, s.posterUrl, HeroFacts(rating = s.rating, networkLogo = tmdbShow?.networkLogo, network = tmdbShow?.network,
+                        text = listOfNotNull(s.year?.toString(), seasons.keys.count { it > 0 }.takeIf { it > 0 }?.let { if (it == 1) "1 season" else "$it seasons" },
+                            tmdbShow?.statusLabel)),
+                        tint, onBack, Modifier.onSizeChanged { heroHeight = it.height }, blurb = s.plot.takeIf { wideHero }) {
                         if (next == null) JaskPlayPill(stringResource(R.string.vod_loading_episodes)) {}
                         else {
                             val (ep, pos) = next
@@ -496,24 +496,33 @@ fun SeriesDetailScreen(
                         }
                     }
                 }
-                item(key = "synopsis") { JaskSynopsis(s.plot) }
+                if (!wideHero) item(key = "synopsis") { JaskSynopsis(s.plot) }
                 item(key = "credits") { JaskCredits(s.genre, s.cast, null) }
                 if (episodes.isEmpty()) item(key = "eploading") {
                     Text(stringResource(R.string.vod_loading_episodes), color = Color(0xFFBDBDBD), modifier = Modifier.padding(16.dp))
                 }
                 if (shownSeason != null) {
-                    item(key = "seasons") { JaskSeasonStrip(summaries, shownSeason, s.posterUrl) { chosenSeason = it } }
+                    if (!wideHero) item(key = "seasons") { JaskSeasonStrip(summaries, shownSeason, s.posterUrl) { chosenSeason = it } }
                     val episodeCell: @Composable (Episode, Modifier, Boolean) -> Unit = { ep, mod, cell ->
                         JaskEpisodeRow(ep, s.name, byKey["ep:${ep.id}"], isNext = next?.first?.id == ep.id, onPlay = { play(ep) }, modifier = mod, cell = cell) {
                             DownloadControl(mediaKey = "ep:${ep.id}", buildDownload = { episodeDownload(s, ep) }, compact = true, small = true)
                         }
                     }
-                    if (wideEpisodes) {
-                        // Wide screens: two episodes per row.
-                        items(seasons[shownSeason].orEmpty().chunked(2), key = { it.first().id }) { pair ->
-                            Row(Modifier.padding(horizontal = jaskSide(), vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                pair.forEach { episodeCell(it, Modifier.weight(1f), true) }
-                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                    if (wideHero) {
+                        // Wide screens: seasons in a side column, the chosen season's episodes two per row beside it.
+                        item(key = "episodes-wide") {
+                            Row(Modifier.fillMaxWidth().padding(start = jaskSide(), end = jaskSide(), top = 12.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                                if (summaries.size > 1) JaskSeasonList(summaries, shownSeason, s.posterUrl, Modifier.width(240.dp)) { chosenSeason = it }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    if (summaries.size == 1) Text("${summaries.first().episodes} episodes", color = Color.White,
+                                        style = MaterialTheme.typography.titleSmall)
+                                    seasons[shownSeason].orEmpty().chunked(2).forEach { pair ->
+                                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            pair.forEach { key(it.id) { episodeCell(it, Modifier.weight(1f), true) } }
+                                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else items(seasons[shownSeason].orEmpty(), key = { it.id }) { ep -> episodeCell(ep, Modifier, false) }

@@ -2,6 +2,8 @@ package app.opentv.ui.vod
 
 import androidx.compose.foundation.background
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.ui.draw.drawBehind
 import kotlinx.coroutines.launch
 import app.opentv.R
@@ -62,9 +64,9 @@ private fun Modifier.bleed(side: androidx.compose.ui.unit.Dp) = layout { measura
     layout(constraints.maxWidth, placeable.height) { placeable.place(-extra / 2, 0) }
 }
 
-internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, onOpen: (HomeTitle) -> Unit) {
+internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, watchlist: HomeWatchlist? = null, onOpen: (HomeTitle) -> Unit) {
     if (home.featured.isNotEmpty()) item(key = "home-featured", span = { GridItemSpan(maxLineSpan) }) {
-        JaskFeatured(home.featured, Modifier.bleed(16.dp), onOpen = onOpen)
+        JaskFeatured(home.featured, Modifier.bleed(16.dp), watchlist = watchlist, onOpen = onOpen)
     } else item(key = "home-top", span = { GridItemSpan(maxLineSpan) }) {
         Spacer(Modifier.statusBarsPadding().height(64.dp))
     }
@@ -104,7 +106,8 @@ internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, onOpen: (
 
 /** Swipeable full-bleed hero: backdrop, title, facts and synopsis; tap opens the page; advances every 14 seconds. */
 @Composable
-internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: String? = null, onOpen: (HomeTitle) -> Unit) {
+internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: String? = null, watchlist: HomeWatchlist? = null,
+    onOpen: (HomeTitle) -> Unit) {
     val wide = LocalLayoutClass.current != LayoutClass.PHONE
     val pager = rememberPagerState { titles.size }
     app.opentv.ui.JaskAmbientFrom(titles.getOrNull(pager.settledPage)?.let { it.backdrop ?: it.poster })
@@ -136,30 +139,37 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
                 if (wide) Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
                     0f to Color.Black.copy(alpha = 0.6f), 0.45f to Color.Black.copy(alpha = 0.15f), 0.7f to Color.Transparent)))
                 // Last over the art and scrims, so the hero's bottom edge is exactly the wash colour (no seam).
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash)))
-                val align = if (wide) TextAlign.Start else TextAlign.Center
-                Column(Modifier.align(if (wide) Alignment.BottomStart else Alignment.BottomCenter)
-                    .then(if (wide) Modifier.widthIn(max = 560.dp).padding(start = 44.dp, bottom = 40.dp) else Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 18.dp)),
-                    horizontalAlignment = if (wide) Alignment.Start else Alignment.CenterHorizontally) {
-                    Text(t.title, color = Color.White, style = if (wide) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold, textAlign = align, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(6.dp))
-                    Text(listOfNotNull(caption ?: t.rank?.let { "#$it this week" }, t.year?.toString(), t.network, t.status, rating(t.rating),
-                        stringResource(R.string.jask_not_on_sources).takeIf { !t.available }).joinToString("  ·  "),
-                        color = Color(0xFFDADADA), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Box(Modifier.fillMaxSize().background(if (wide) Brush.verticalGradient(0.68f to wash.copy(alpha = 0f), 0.88f to wash.copy(alpha = .7f), 1f to wash)
+                    else Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash)))
+                val facts = HeroFacts(rank = t.rank.takeIf { caption == null }, rating = t.rating, quality = qualityBadge(t.quality),
+                    networkLogo = t.networkLogo, network = t.network, text = listOfNotNull(t.year?.toString(), t.status),
+                    noSource = !t.available, caption = caption)
+                if (wide) Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 44.dp, end = 44.dp, bottom = 40.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Column(Modifier.widthIn(max = 600.dp)) {
+                            Text(t.title, color = Color.White, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(10.dp))
+                            JaskHeroBadges(facts, center = false)
+                            t.overview?.let {
+                                Spacer(Modifier.height(12.dp))
+                                Text(it, color = Color(0xFFDADADA), style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.width(32.dp))
+                    HeroActions(t, watchlist) { onOpen(t) }
+                } else Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(t.title, color = Color.White, style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(8.dp))
+                    JaskHeroBadges(facts, center = true)
                     t.overview?.let {
                         Spacer(Modifier.height(8.dp))
-                        Text(it, color = Color(0xFFCFCFCF), style = if (wide) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                            textAlign = align, maxLines = if (wide) 3 else 2, overflow = TextOverflow.Ellipsis)
-                    }
-                    if (wide) {
-                        Spacer(Modifier.height(18.dp))
-                        Row(Modifier.clip(RoundedCornerShape(50)).background(Color.White).clickable { onOpen(t) }.padding(horizontal = 22.dp, vertical = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Icon(androidx.compose.material.icons.Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (t.available) "Watch now" else "Details", color = Color.Black, fontWeight = FontWeight.SemiBold)
-                        }
+                        Text(it, color = Color(0xFFCFCFCF), style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -169,6 +179,33 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
             repeat(titles.size) { i ->
                 Box(Modifier.size(if (i == pager.currentPage) 7.dp else 5.dp).clip(CircleShape)
                     .background(if (i == pager.currentPage) Color.White else Color.White.copy(alpha = 0.4f)))
+            }
+        }
+    }
+}
+
+/** Saves a home title to the Watchlist without opening it; supplied by the Movies and Shows homes. */
+internal class HomeWatchlist(val isSaved: suspend (HomeTitle) -> Boolean, val toggle: suspend (HomeTitle) -> Unit)
+
+/** Wide hero, right side: Play (opens the title) and a Watchlist toggle. */
+@Composable
+private fun HeroActions(t: HomeTitle, watchlist: HomeWatchlist?, onOpen: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var saved by remember(t.key) { mutableStateOf<Boolean?>(null) }
+    if (watchlist != null && t.available) LaunchedEffect(t.key) { saved = watchlist.isSaved(t) }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (t.available) Row(Modifier.height(52.dp).clip(RoundedCornerShape(50)).background(Color.White).clickable(onClick = onOpen)
+            .padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(androidx.compose.material.icons.Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Play", color = Color.Black, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        }
+        saved?.let { on ->
+            Box(Modifier.size(52.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.38f))
+                .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+                .clickable { saved = !on; scope.launch { watchlist?.toggle(t) } }, contentAlignment = Alignment.Center) {
+                Icon(if (on) androidx.compose.material.icons.Icons.Filled.Star else androidx.compose.material.icons.Icons.Outlined.StarOutline,
+                    stringResource(R.string.jask_watchlist), tint = Color.White, modifier = Modifier.size(24.dp))
             }
         }
     }

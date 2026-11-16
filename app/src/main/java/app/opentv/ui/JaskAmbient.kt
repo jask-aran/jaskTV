@@ -73,6 +73,9 @@ internal fun Modifier.jaskWavesBackground(ambient: JaskAmbient): Modifier {
     // The flat colour the dither averages to, so heroes can fade into it before the dots begin.
     ambient.wash = wavesWash(inks)
     if (Build.VERSION.SDK_INT < 33) return drawBehind { drawRect(Color.Black) }
+    // Phones dim the lower page under the bottom navigation, as Conduit does; wide screens have no
+    // bottom bar, so the waves run nearly undimmed to the bottom edge.
+    val fade = if (LocalLayoutClass.current == LayoutClass.PHONE) 0.6f else 0.2f
     val shader = remember { RuntimeShader(WAVES) }
     val grain = 2f // device pixels, as in Conduit
     var time by remember { mutableFloatStateOf(0f) }
@@ -92,7 +95,7 @@ internal fun Modifier.jaskWavesBackground(ambient: JaskAmbient): Modifier {
         shader.setFloatUniform("view", size.width, size.height)
         shader.setFloatUniform("grain", grain)
         shader.setFloatUniform("time", time)
-        shader.setFloatUniform("fade", 0.6f)
+        shader.setFloatUniform("fade", fade)
         inks.forEachIndexed { i, c -> shader.setColorUniform("ink$i", c.toArgb()) }
         drawRect(ShaderBrush(shader))
     }

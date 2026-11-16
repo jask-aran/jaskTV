@@ -104,7 +104,7 @@ internal fun JaskChromeFrame(
             // Dim behind the status bar and header so the brand and clock read over artwork; cheap, no blur.
             Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(statusBar + 88.dp).background(Brush.verticalGradient(
                 listOf(Color(0xFF141312).copy(alpha = .9f), Color(0xFF141312).copy(alpha = .55f), Color.Transparent))))
-            JaskBarScrim(Modifier.align(Alignment.BottomCenter), top = false)
+            if (!wide) JaskBarScrim(Modifier.align(Alignment.BottomCenter), top = false)
             var accountOpen by remember { mutableStateOf(false) }
             JaskHeader(onFilter, { accountOpen = true },
                 Modifier.align(Alignment.TopCenter).statusBarsPadding().fillMaxWidth().padding(horizontal = if (wide) 28.dp else 16.dp, vertical = 8.dp),

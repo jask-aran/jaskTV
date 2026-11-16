@@ -7,6 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import app.opentv.ui.LayoutClass
+import app.opentv.ui.LocalLayoutClass
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -127,31 +130,36 @@ internal fun JaskLibrary(
     val watchlistLabel = stringResource(R.string.jask_watchlist)
     val searching = needle.isNotEmpty()
     val noMatches = stringResource(R.string.jask_no_matches, needle)
+    // Rows are at least 340dp: one column on phones, two or more on tablets and desktops. The
+    // collapsed sections show whole rows (6 cards in 3 columns rather than 4 with one left over).
+    val side = if (LocalLayoutClass.current == LayoutClass.PHONE) 16.dp else 28.dp
+    val columns = ((LocalConfiguration.current.screenWidthDp - 2 * side.value + 12) / (340 + 12)).toInt().coerceAtLeast(1)
+    fun whole(limit: Int) = if (columns == 1) limit else ((limit + columns - 1) / columns) * columns
+    val continueLimit = whole(CONTINUE_LIMIT); val watchlistLimit = whole(WATCHLIST_LIMIT)
     LazyVerticalGrid(
-        // Rows are at least 340dp: one column on phones, two or more on tablets and desktops.
         columns = GridCells.Adaptive(340.dp),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp,
+        contentPadding = PaddingValues(start = side, end = side,
             top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding() + 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         sectionHeader("h-resume", resumeLabel, resumeType, { resumeType = it; resumeAll = false },
             ContinueSort.entries.map { it.label }, resumeSort.ordinal) { resumeSort = ContinueSort.entries[it] }
         if (resume.isEmpty()) note("n-resume", if (searching) noMatches else "Nothing in progress.")
-        val shownResume = if (resumeAll || searching) resume else resume.take(CONTINUE_LIMIT)
+        val shownResume = if (resumeAll || searching) resume else resume.take(continueLimit)
         items(shownResume, key = { "r-" + it.mediaKey }) { item ->
             ContinueCard(item, onOpen = { open(item) }, onWatched = { vm.markWatched(item) }, onRemove = { vm.forget(item) })
         }
-        if (!searching) expander("x-resume", resume.size, CONTINUE_LIMIT, resumeAll) { resumeAll = it }
+        if (!searching) expander("x-resume", resume.size, continueLimit, resumeAll) { resumeAll = it }
 
         sectionHeader("h-watchlist", watchlistLabel, listType, { listType = it; listAll = false },
             WatchlistSort.entries.map { it.label }, listSort.ordinal) { listSort = WatchlistSort.entries[it] }
         if (saved.isEmpty()) note("n-watchlist", if (searching) noMatches else "Tap ☆ on any movie or show to save it here.")
-        val shownSaved = if (listAll || searching) saved else saved.take(WATCHLIST_LIMIT)
+        val shownSaved = if (listAll || searching) saved else saved.take(watchlistLimit)
         items(shownSaved, key = { "w-" + it.key }) { entry ->
             WatchRow(entry) { entry.movie?.let(onOpenMovie); entry.series?.let(onOpenSeries) }
         }
-        if (!searching) expander("x-watchlist", saved.size, WATCHLIST_LIMIT, listAll) { listAll = it }
+        if (!searching) expander("x-watchlist", saved.size, watchlistLimit, listAll) { listAll = it }
 
         if (watched.isNotEmpty()) {
             item(key = "h-watched", span = { GridItemSpan(maxLineSpan) }) {

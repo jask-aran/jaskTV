@@ -396,6 +396,15 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         defaultSeriesVersion(seriesBrowseVariants(key))?.let { withCanonicalShow(it) }
     }
 
+    /** Watchlist state of a home title (its default version, as opening it would pick). */
+    suspend fun homeOnWatchlist(title: HomeTitle): Boolean =
+        if (title.movieId != null) openHomeMovie(title)?.favourite == true else openHomeShow(title)?.favourite == true
+
+    suspend fun toggleHomeWatchlist(title: HomeTitle) {
+        if (title.movieId != null) openHomeMovie(title)?.let { graph.catalogRepository.setMovieFavourite(it.id, !it.favourite) }
+        else openHomeShow(title)?.let { graph.database.series().setFavourite(it.id, !it.favourite) }
+    }
+
     /** TMDB title/art for a show whose provider hint was validated; the provider row otherwise. */
     suspend fun withCanonicalShow(series: Series): Series =
         series.tmdbHint()?.let { canonicalShows.validated(it) }?.let(series::withCanonical) ?: series

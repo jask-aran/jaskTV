@@ -20,6 +20,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.ui.res.stringResource
+import app.opentv.R
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
@@ -101,8 +106,8 @@ private fun heroArt(url: String?): String? = url?.replace("image.tmdb.org/t/p/w1
  * of actions sit on the art. The art is a glass host, so the round actions blur it.
  */
 @Composable
-internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, chips: List<String>, tint: Color, onBack: () -> Unit,
-    modifier: Modifier = Modifier, actions: @Composable RowScope.() -> Unit) {
+internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, facts: HeroFacts, tint: Color, onBack: () -> Unit,
+    modifier: Modifier = Modifier, blurb: String? = null, actions: @Composable RowScope.() -> Unit) {
     val wide = LocalLayoutClass.current != LayoutClass.PHONE
     val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
     JaskGlassHost(modifier.fillMaxWidth().then(if (wide) Modifier.height((screenH * 0.66f).coerceIn(380f, 620f).dp) else Modifier.aspectRatio(0.92f)), background = {
@@ -115,31 +120,110 @@ internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, chip
         if (wide) Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
             0f to Color.Black.copy(alpha = 0.55f), 0.45f to Color.Black.copy(alpha = 0.12f), 0.7f to Color.Transparent)))
         // Eased ramp into exactly `tint` at the bottom edge, where jaskPageBackground picks it up.
-        Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+        // Wide screens keep more of the art: the ramp starts lower, the side scrim carries the text.
+        Box(Modifier.matchParentSize().background(if (wide) Brush.verticalGradient(
+            0f to Color.Black.copy(alpha = 0.40f), 0.18f to Color.Transparent, 0.62f to Color.Transparent,
+            0.76f to tint.copy(alpha = 0.35f), 0.88f to tint.copy(alpha = 0.8f), 1f to tint)
+        else Brush.verticalGradient(
             0f to Color.Black.copy(alpha = 0.40f), 0.18f to Color.Transparent, 0.40f to Color.Transparent,
             0.55f to tint.copy(alpha = 0.22f), 0.68f to tint.copy(alpha = 0.55f), 0.80f to tint.copy(alpha = 0.82f),
             0.90f to tint.copy(alpha = 0.95f), 1f to tint)))
     }) {
         JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, "Back", Modifier.align(Alignment.TopStart).statusBarsPadding().padding(12.dp),
             size = 44.dp, onClick = onBack)
-        // Wide screens: everything in a left column, aligned with the page content below.
-        Column(Modifier.align(if (wide) Alignment.BottomStart else Alignment.BottomCenter)
-            .then(if (wide) Modifier.widthIn(max = 620.dp).padding(start = 44.dp, bottom = 22.dp) else Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp)),
-            horizontalAlignment = if (wide) Alignment.Start else Alignment.CenterHorizontally) {
-            Text(title, color = Color.White, style = if (wide) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold, textAlign = if (wide) TextAlign.Start else TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = if (wide) 0.dp else 8.dp))
-            if (chips.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                @OptIn(ExperimentalLayoutApi::class)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp, if (wide) Alignment.Start else Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)) { chips.forEach { JaskMetaChip(it) } }
+        if (wide) {
+            // Wide screens: title, badges and blurb in a left column; the actions sit on the right,
+            // centred against that column.
+            Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 44.dp, end = 44.dp, bottom = 28.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Column(Modifier.widthIn(max = 620.dp)) {
+                        Text(title, color = Color.White, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(10.dp))
+                        JaskHeroBadges(facts, center = false)
+                        if (!blurb.isNullOrBlank()) {
+                            var expanded by remember { mutableStateOf(false) }
+                            Spacer(Modifier.height(12.dp))
+                            Text(blurb, color = Color(0xFFE2E2E2), style = MaterialTheme.typography.bodyMedium,
+                                maxLines = if (expanded) 12 else 3, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.animateContentSize().clickable { expanded = !expanded })
+                        }
+                    }
+                }
+                Spacer(Modifier.width(32.dp))
+                Row(Modifier.width(480.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically, content = actions)
             }
-            Spacer(Modifier.height(if (wide) 18.dp else 14.dp))
-            Row(Modifier.fillMaxWidth().widthIn(max = if (wide) 500.dp else 560.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+        } else Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
+            Spacer(Modifier.height(8.dp))
+            JaskHeroBadges(facts, center = true)
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth().widthIn(max = 560.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically, content = actions)
         }
     }
+}
+
+/**
+ * What a hero shows about a title, drawn as badges: trending rank, quality, network logo, rating,
+ * then plain facts (year, runtime, status). [noSource] marks titles no enabled source has.
+ */
+internal data class HeroFacts(
+    val rank: Int? = null, val rating: Double? = null, val quality: String? = null, val networkLogo: String? = null,
+    val network: String? = null, val text: List<String> = emptyList(), val noSource: Boolean = false, val caption: String? = null,
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun JaskHeroBadges(facts: HeroFacts, center: Boolean) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp, if (center) Alignment.CenterHorizontally else Alignment.Start),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val strong = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+        facts.caption?.let { HeroBadge { Text(it, color = Color.White, style = strong) } }
+        facts.rank?.let { rank ->
+            HeroBadge {
+                Icon(Icons.AutoMirrored.Filled.TrendingUp, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("#$rank", color = Color.White, style = strong)
+                Text(" this week", color = Color(0xFFD6D6D6), style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        if (facts.noSource) HeroBadge {
+            Icon(Icons.Outlined.CloudOff, null, tint = Color(0xFFFFC7BD), modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(stringResource(R.string.jask_not_on_sources), color = Color(0xFFFFDDD6), style = MaterialTheme.typography.labelMedium)
+        }
+        facts.quality?.takeIf(String::isNotBlank)?.let { q ->
+            HeroBadge {
+                Text(q, color = Color.White, style = strong.copy(letterSpacing = 0.4.sp),
+                    modifier = Modifier.border(1.dp, Color.White.copy(alpha = .85f), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp))
+            }
+        }
+        val logo = facts.networkLogo?.takeIf(String::isNotBlank)
+        if (logo != null) HeroBadge {
+            AsyncImage(logo, facts.network, contentScale = ContentScale.Fit, colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color.White),
+                modifier = Modifier.height(14.dp).widthIn(max = 64.dp))
+        } else facts.network?.let { n -> HeroBadge { Text(n, color = Color.White, style = MaterialTheme.typography.labelMedium) } }
+        facts.rating?.takeIf { it > 0 }?.let { r ->
+            HeroBadge {
+                Icon(Icons.Filled.Star, null, tint = Color(0xFFF5C518), modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(String.format(java.util.Locale.getDefault(), "%.1f", r), color = Color.White, style = strong)
+            }
+        }
+        facts.text.forEach { HeroBadge { Text(it, color = Color(0xFFEDEDED), style = MaterialTheme.typography.labelMedium, maxLines = 1) } }
+    }
+}
+
+@Composable
+private fun HeroBadge(content: @Composable RowScope.() -> Unit) {
+    Row(Modifier.height(28.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.38f))
+        .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(50)).padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, content = content)
 }
 
 /** White play pill sized for the inline hero row; resume progress runs along its bottom edge. */
@@ -202,12 +286,6 @@ internal fun JaskCredits(genre: String?, cast: String?, director: String?) {
     }
 }
 
-@Composable
-private fun JaskMetaChip(text: String) {
-    Text(text, color = Color(0xFFEDEDED), style = MaterialTheme.typography.labelMedium, maxLines = 1,
-        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.14f)).padding(horizontal = 8.dp, vertical = 3.dp))
-}
-
 /** Three lines, tap to expand. */
 @Composable
 internal fun JaskSynopsis(text: String?) {
@@ -259,6 +337,38 @@ internal fun JaskSeasonStrip(seasons: List<SeasonSummary>, selected: Int, fallba
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, modifier = Modifier.padding(top = 5.dp))
                 Text(if (s.watched >= s.episodes && s.episodes > 0) "Watched" else if (s.watched > 0) "${s.watched}/${s.episodes} watched" else "${s.episodes} episodes",
                     color = Color(0xFF9A9A9A), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            }
+        }
+    }
+}
+
+/**
+ * Wide screens: seasons as a vertical list in a side column next to the episode grid (a strip
+ * across a landscape screen would hold a few posters and leave the rest empty).
+ */
+@Composable
+internal fun JaskSeasonList(seasons: List<SeasonSummary>, selected: Int, fallbackPoster: String?, modifier: Modifier = Modifier,
+    onSelect: (Int) -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        seasons.forEach { s ->
+            val isSelected = s.season == selected
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                .background(if (isSelected) Color.White.copy(alpha = 0.12f) else Color.Transparent)
+                .clickable { onSelect(s.season) }.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(40.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(5.dp)).background(Color(0xFF2A2826))) {
+                    (s.poster ?: fallbackPoster)?.let { AsyncImage(it, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize()
+                        .graphicsLayer { alpha = if (isSelected) 1f else 0.6f }) }
+                }
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(seasonName(s.season), color = if (isSelected) Color.White else Color(0xFFC4C4C4), style = MaterialTheme.typography.titleSmall,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+                    Text(if (s.watched >= s.episodes && s.episodes > 0) "Watched" else if (s.watched > 0) "${s.watched}/${s.episodes} watched" else "${s.episodes} episodes",
+                        color = Color(0xFF9A9A9A), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    if (s.watched > 0) Box(Modifier.padding(top = 5.dp).fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp))
+                        .background(Color.White.copy(alpha = 0.2f))) {
+                        Box(Modifier.fillMaxHeight().fillMaxWidth(s.watched.toFloat() / s.episodes.coerceAtLeast(1)).background(Color.White))
+                    }
+                }
             }
         }
     }

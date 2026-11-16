@@ -78,8 +78,9 @@ private fun CanonicalMoviesContent(vm: VodViewModel, onOpen: (Movie) -> Unit,
         val home by vm.movieHome.collectAsState()
         val h = home
         val openTitle = rememberHomeOpener { title -> vm.openHomeMovie(title)?.let(onOpen) }
+        val watchlist = remember(vm) { HomeWatchlist(vm::homeOnWatchlist, vm::toggleHomeWatchlist) }
         val header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(Int) -> Unit)? = if (h != null && shell && query.isBlank()) { columns ->
-            jaskHome(h, columns, openTitle)
+            jaskHome(h, columns, watchlist, openTitle)
         } else null
         val hits by vm.movieSearch.collectAsState()
         if (shell && query.isNotBlank()) {
