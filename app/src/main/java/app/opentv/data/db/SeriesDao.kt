@@ -13,15 +13,28 @@ import app.opentv.data.repo.VodCategoryCount
 import app.opentv.data.model.Series
 import kotlinx.coroutines.flow.Flow
 
+private const val SERIES_KEY = "CASE WHEN trim(tmdbId) != '' AND trim(tmdbId) NOT GLOB '*[^0-9]*' AND CAST(tmdbId AS INTEGER) BETWEEN 1 AND 2147483647 THEN 'tv-hint:' || CAST(tmdbId AS INTEGER) ELSE 'provider:' || sourceId || ':' || seriesId END"
+
 @Dao
 interface SeriesDao {
+    @Query("SELECT s.*, g.groupKey, g.variantCount FROM (SELECT " + SERIES_KEY + " AS groupKey, MIN(id) AS representativeId, COUNT(*) AS variantCount FROM series WHERE (:sourceId IS NULL OR sourceId = :sourceId) AND (:categoryId IS NULL OR categoryId = :categoryId) AND (:query = '' OR instr(lower(name), lower(:query)) > 0) GROUP BY " + SERIES_KEY + ") g JOIN series s ON s.id = g.representativeId ORDER BY s.name COLLATE NOCASE, g.groupKey")
+    fun browseGroups(sourceId: Long?, categoryId: String?, query: String = ""): PagingSource<Int, app.opentv.data.repo.SeriesBrowseGroup>
+
+    /** Provider show groups for the given TMDB hints, with all their provider names. */
+    @Query("SELECT s.*, g.groupKey, g.variantCount, g.names FROM (SELECT 'tv-hint:' || CAST(tmdbId AS INTEGER) AS groupKey, MIN(id) AS representativeId, COUNT(*) AS variantCount, group_concat(DISTINCT name) AS names FROM series WHERE trim(tmdbId) != '' AND trim(tmdbId) NOT GLOB '*[^0-9]*' AND CAST(tmdbId AS INTEGER) IN (:ids) GROUP BY CAST(tmdbId AS INTEGER)) g JOIN series s ON s.id = g.representativeId")
+    suspend fun groupsForHints(ids: List<Int>): List<app.opentv.catalogue.HintGroup>
+
+    @Query("SELECT * FROM series WHERE " + SERIES_KEY + " = :groupKey AND (:sourceId IS NULL OR sourceId = :sourceId) ORDER BY name, sourceId, id")
+    suspend fun browseVariants(groupKey: String, sourceId: Long?): List<Series>
+
     @Query("""
         SELECT * FROM series
         WHERE (:sourceId IS NULL OR sourceId = :sourceId)
           AND (:categoryId IS NULL OR categoryId = :categoryId)
+          AND (:query = '' OR instr(lower(name), lower(:query)) > 0)
         ORDER BY addedMillis DESC, name COLLATE BINARY ASC, id ASC
     """)
-    fun browse(sourceId: Long?, categoryId: String?): PagingSource<Int, Series>
+    fun browse(sourceId: Long?, categoryId: String?, query: String = ""): PagingSource<Int, Series>
 
     @Query("SELECT * FROM series WHERE (:sourceId IS NULL OR sourceId = :sourceId) ORDER BY addedMillis DESC, id ASC LIMIT :limit")
     fun observeBrowseRecent(sourceId: Long?, limit: Int): Flow<List<Series>>

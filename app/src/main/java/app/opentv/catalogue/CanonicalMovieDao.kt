@@ -41,7 +41,43 @@ abstract class CanonicalMovieDao {
                         WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
                   AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
                   AND (:sourceId IS NULL OR m.sourceId = :sourceId))
-          AND (:query = '' OR instr(lower(c.title), lower(:query)) > 0 OR instr(lower(c.originalTitle), lower(:query)) > 0)
+          AND (:query = '' OR instr(lower(c.title), lower(:query)) > 0 OR instr(lower(c.originalTitle), lower(:query)) > 0 OR EXISTS (SELECT 1 FROM movie_identity_matches aliasLink JOIN movies raw ON raw.sourceId = aliasLink.sourceId AND raw.streamId = aliasLink.streamId WHERE aliasLink.tmdbId = c.tmdbId AND instr(lower(raw.name), lower(:query)) > 0))
+          AND ((:languages = '' AND (:includeUnknown OR c.originalLanguage IS NOT NULL)) OR instr(:languages, '|' || c.originalLanguage || '|') > 0 OR (:includeUnknown AND c.originalLanguage IS NULL))
+        ORDER BY c.title, c.tmdbId LIMIT 100
+    """)
+    abstract fun search(sourceId: Long?, query: String, languages: String = "", includeUnknown: Boolean = true): Flow<List<CanonicalMovieCard>>
+
+    @Query("""
+        SELECT c.*,
+            (SELECT MIN(m.id) FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
+                WHERE l.tmdbId = c.tmdbId
+                  AND EXISTS (SELECT 1 FROM sources provider WHERE provider.id = m.sourceId AND provider.enabled = 1)
+                  AND (NOT EXISTS (SELECT 1 FROM movie_inventory_snapshots snap WHERE snap.sourceId = m.sourceId)
+                    OR EXISTS (SELECT 1 FROM movie_inventory_snapshots snap JOIN movie_inventory_assets present
+                        ON present.sourceId = snap.sourceId AND present.generation = snap.generation
+                        WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
+                  AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
+                  AND (:sourceId IS NULL OR m.sourceId = :sourceId)) AS movieId,
+            (SELECT COUNT(*) FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
+                WHERE l.tmdbId = c.tmdbId
+                  AND EXISTS (SELECT 1 FROM sources provider WHERE provider.id = m.sourceId AND provider.enabled = 1)
+                  AND (NOT EXISTS (SELECT 1 FROM movie_inventory_snapshots snap WHERE snap.sourceId = m.sourceId)
+                    OR EXISTS (SELECT 1 FROM movie_inventory_snapshots snap JOIN movie_inventory_assets present
+                        ON present.sourceId = snap.sourceId AND present.generation = snap.generation
+                        WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
+                  AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
+                  AND (:sourceId IS NULL OR m.sourceId = :sourceId)) AS versionCount
+        FROM canonical_movies c
+        WHERE EXISTS (SELECT 1 FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
+                WHERE l.tmdbId = c.tmdbId
+                  AND EXISTS (SELECT 1 FROM sources provider WHERE provider.id = m.sourceId AND provider.enabled = 1)
+                  AND (NOT EXISTS (SELECT 1 FROM movie_inventory_snapshots snap WHERE snap.sourceId = m.sourceId)
+                    OR EXISTS (SELECT 1 FROM movie_inventory_snapshots snap JOIN movie_inventory_assets present
+                        ON present.sourceId = snap.sourceId AND present.generation = snap.generation
+                        WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
+                  AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
+                  AND (:sourceId IS NULL OR m.sourceId = :sourceId))
+          AND (:query = '' OR instr(lower(c.title), lower(:query)) > 0 OR instr(lower(c.originalTitle), lower(:query)) > 0 OR EXISTS (SELECT 1 FROM movie_identity_matches aliasLink JOIN movies raw ON raw.sourceId = aliasLink.sourceId AND raw.streamId = aliasLink.streamId WHERE aliasLink.tmdbId = c.tmdbId AND instr(lower(raw.name), lower(:query)) > 0))
           AND ((:languages = '' AND (:includeUnknown OR c.originalLanguage IS NOT NULL)) OR instr(:languages, '|' || c.originalLanguage || '|') > 0 OR (:includeUnknown AND c.originalLanguage IS NULL))
         ORDER BY c.title, c.tmdbId
     """)
@@ -63,7 +99,7 @@ abstract class CanonicalMovieDao {
                         WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
           AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
           AND (:sourceId IS NULL OR m.sourceId = :sourceId)
-          AND (:query = '' OR instr(lower(c.title), lower(:query)) > 0 OR instr(lower(c.originalTitle), lower(:query)) > 0)
+          AND (:query = '' OR instr(lower(c.title), lower(:query)) > 0 OR instr(lower(c.originalTitle), lower(:query)) > 0 OR EXISTS (SELECT 1 FROM movie_identity_matches aliasLink JOIN movies raw ON raw.sourceId = aliasLink.sourceId AND raw.streamId = aliasLink.streamId WHERE aliasLink.tmdbId = c.tmdbId AND instr(lower(raw.name), lower(:query)) > 0))
           AND ((:languages = '' AND (:includeUnknown OR c.originalLanguage IS NOT NULL)) OR instr(:languages, '|' || c.originalLanguage || '|') > 0 OR (:includeUnknown AND c.originalLanguage IS NULL))
         GROUP BY c.tmdbId
         ORDER BY
@@ -87,6 +123,21 @@ abstract class CanonicalMovieDao {
                         WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
         ORDER BY m.id LIMIT :limit""")
     abstract suspend fun pending(limit: Int): List<Movie>
+
+    /** Ranked TMDB ids that are available locally (any enabled, present, confidently matched version). */
+    @Query("""
+        SELECT * FROM (SELECT c.*,
+            (SELECT MIN(m.id) FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
+                WHERE l.tmdbId = c.tmdbId
+                  AND EXISTS (SELECT 1 FROM sources provider WHERE provider.id = m.sourceId AND provider.enabled = 1)
+                  AND (NOT EXISTS (SELECT 1 FROM movie_inventory_snapshots snap WHERE snap.sourceId = m.sourceId)
+                    OR EXISTS (SELECT 1 FROM movie_inventory_snapshots snap JOIN movie_inventory_assets present
+                        ON present.sourceId = snap.sourceId AND present.generation = snap.generation
+                        WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
+                  AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))) AS movieId,
+            1 AS versionCount
+        FROM canonical_movies c WHERE c.tmdbId IN (:ids)) WHERE movieId IS NOT NULL""")
+    abstract suspend fun availableByIds(ids: List<Int>): List<CanonicalMovieCard>
 
     @Query("SELECT * FROM movie_identity_matches WHERE sourceId = :sourceId AND streamId = :streamId")
     abstract suspend fun match(sourceId: Long, streamId: String): MovieIdentityMatch?
@@ -120,6 +171,11 @@ abstract class CanonicalMovieDao {
 
     @Upsert abstract suspend fun putTitle(title: CanonicalMovie)
     @Upsert protected abstract suspend fun putMatch(match: MovieIdentityMatch)
+
+    @Transaction
+    open suspend fun recordBatch(records: List<Pair<CanonicalMovie?, MovieIdentityMatch>>) {
+        records.forEach { (title, link) -> record(title, link) }
+    }
 
     @Transaction
     open suspend fun record(title: CanonicalMovie?, link: MovieIdentityMatch) {

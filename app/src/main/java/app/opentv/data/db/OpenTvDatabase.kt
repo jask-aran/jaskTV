@@ -63,9 +63,11 @@ class Converters {
 
 @Database(
     entities = [
+        app.opentv.livetv.SavedTvChannel::class,
         app.opentv.catalogue.MovieInventorySnapshot::class,
         app.opentv.catalogue.MovieInventoryAsset::class,
         app.opentv.catalogue.CanonicalMovie::class,
+        app.opentv.catalogue.CanonicalShow::class,
         app.opentv.catalogue.MovieIdentityMatch::class,
         Source::class,
         Category::class,
@@ -88,12 +90,14 @@ class Converters {
         CollectionEntry::class,
         ChannelAliasOverride::class,
     ],
-    version = 19,
+    version = 22,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class OpenTvDatabase : RoomDatabase() {
+    abstract fun savedTv(): app.opentv.livetv.SavedTvDao
     abstract fun canonicalMovies(): app.opentv.catalogue.CanonicalMovieDao
+    abstract fun canonicalShows(): app.opentv.catalogue.CanonicalShowDao
     abstract fun sources(): SourceDao
     abstract fun categories(): CategoryDao
     abstract fun channels(): ChannelDao
@@ -407,6 +411,27 @@ abstract class OpenTvDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `saved_tv_channels` (`profileId` INTEGER NOT NULL, `identity` TEXT NOT NULL, `label` TEXT NOT NULL, `preferredSourceId` INTEGER, `preferredStreamId` TEXT, `sortIndex` INTEGER NOT NULL, PRIMARY KEY(`profileId`, `identity`))")
+            }
+        }
+
+        /** Additive: TMDB TV metadata per provider hint (see CanonicalShow). */
+        internal val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `canonical_shows` (`tmdbId` INTEGER NOT NULL, `validated` INTEGER NOT NULL, `title` TEXT COLLATE NOCASE, `originalTitle` TEXT, `year` INTEGER, `originalLanguage` TEXT, `posterUrl` TEXT, `backdropUrl` TEXT, `synopsis` TEXT, `genres` TEXT, `rating` REAL, `seasonCount` INTEGER, `checkedMillis` INTEGER NOT NULL, PRIMARY KEY(`tmdbId`))")
+            }
+        }
+
+        /** Additive: TMDB network and status for canonical shows. */
+        internal val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `canonical_shows` ADD COLUMN `network` TEXT")
+                db.execSQL("ALTER TABLE `canonical_shows` ADD COLUMN `status` TEXT")
+            }
+        }
+
         fun build(context: Context): OpenTvDatabase =
             Room.databaseBuilder(context, OpenTvDatabase::class.java, "opentv.db")
                 // WAL keeps guide writes from blocking guide reads, so a background EPG
@@ -415,7 +440,7 @@ abstract class OpenTvDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
-                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
+                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
                 )
                 // v1 predates the retained migration chain; all versions >= 2 must migrate.
                 .fallbackToDestructiveMigrationFrom(1)

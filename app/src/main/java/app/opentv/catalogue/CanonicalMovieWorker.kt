@@ -15,16 +15,23 @@ class CanonicalMovieWorker(context: Context, params: WorkerParameters) : Corouti
         if (graph.settings.tmdbApiKey.value.isBlank()) return@withContext Result.success()
         val dao = graph.database.canonicalMovies()
         val resolver = CanonicalMovieResolver(graph.httpClient, graph.settings)
+        val writes = mutableListOf<Pair<CanonicalMovie?, MovieIdentityMatch>>()
+        suspend fun checkpoint(title: CanonicalMovie?, link: MovieIdentityMatch) {
+            writes += title to link
+            if (writes.size >= 8) { dao.recordBatch(writes.toList()); writes.clear() }
+        }
         try {
             val batch = dao.pending(80)
             for (movie in batch) {
                 val evidence = movie.identityEvidence()
                 val cached = dao.byEvidence(evidence)
                 if (cached != null) {
-                    dao.record(null, cached.copy(sourceId = movie.sourceId, streamId = movie.streamId))
+                    checkpoint(null, cached.copy(sourceId = movie.sourceId, streamId = movie.streamId))
                     continue
                 }
-                val existingTitle = movie.tmdbId?.toIntOrNull()?.takeIf { it > 0 }?.let { dao.title(it) }
+                val existingTitle = movie.tmdbId?.toIntOrNull()?.takeIf { it > 0 }?.let { id ->
+                    writes.firstNotNullOfOrNull { it.first?.takeIf { title -> title.tmdbId == id } } ?: dao.title(id)
+                }
                 val (title, decision) = if (existingTitle != null) {
                     existingTitle to MovieMatching.explicit(MovieCandidate(existingTitle.tmdbId,
                         existingTitle.title, existingTitle.originalTitle, existingTitle.year),
@@ -38,15 +45,19 @@ class CanonicalMovieWorker(context: Context, params: WorkerParameters) : Corouti
                     MovieMatchDecision.Unmatched -> MovieIdentityMatch(movie.sourceId, movie.streamId, evidence,
                         null, 0.0, "unmatched", false, "")
                 }
-                dao.record(title, link)
+                checkpoint(title, link)
             }
+            if (writes.isNotEmpty()) { dao.recordBatch(writes.toList()); writes.clear() }
             if (dao.pending(1).isNotEmpty()) {
                 WorkManager.getInstance(applicationContext).enqueueUniqueWork("jask-canonical-movies",
                     ExistingWorkPolicy.APPEND_OR_REPLACE, request())
             }
             Result.success()
         } catch (e: CancellationException) { throw e }
-        catch (_: Exception) { Result.retry() }
+        catch (_: Exception) {
+            if (writes.isNotEmpty()) runCatching { dao.recordBatch(writes.toList()) }
+            Result.retry()
+        }
     }
 
     companion object {

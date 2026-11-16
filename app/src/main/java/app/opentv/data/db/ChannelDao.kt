@@ -16,6 +16,13 @@ private const val UPSERT_CHUNK = 500
 
 @Dao
 interface ChannelDao {
+    /** Only variants of this exact regional group, never the whole inventory. */
+    @Query("SELECT c.* FROM channels c JOIN sources s ON s.id=c.sourceId AND s.enabled=1 WHERE c.hidden=0 AND c.groupKey=:key ORDER BY c.qualityRank DESC LIMIT 100")
+    suspend fun myTvVariants(key: String): List<Channel>
+
+    @Query("SELECT c.* FROM channels c JOIN channel_alias_overrides a ON a.sourceId=c.sourceId AND a.streamId=c.streamId JOIN sources s ON s.id=c.sourceId AND s.enabled=1 WHERE c.hidden=0 AND a.iptvOrgId=:identity LIMIT 100")
+    suspend fun myTvMappedVariants(identity: String): List<Channel>
+
     @Query("SELECT * FROM channels WHERE streamUrl = :url LIMIT 1")
     suspend fun byStreamUrl(url: String): Channel?
 

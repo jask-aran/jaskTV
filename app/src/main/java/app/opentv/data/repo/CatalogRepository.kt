@@ -45,6 +45,8 @@ import app.opentv.data.remote.StalkerApi
 import app.opentv.data.remote.TmdbClient
 import app.opentv.data.remote.XtreamApi
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -143,6 +145,7 @@ class CatalogRepository(
 
     /** TMDB back-fill for VOD detail pages, gated on a user-supplied key. See [TmdbClient]. */
     private val tmdb = TmdbClient(http, settings)
+    private val vodInventoryMutex = Mutex()
 
     sealed interface SyncResult {
         data class Success(
@@ -473,33 +476,20 @@ class CatalogRepository(
             }
         }
 
-        // 2) TMDB fallback for whatever the provider still left blank — only when the user set a
-        //    key, and only while a headline visual field is missing (so it stops re-fetching once
-        //    filled). This is the "match Plex" back-fill for posters, backdrops, synopsis and cast.
-        if (tmdb.isConfigured() && (result.backdropUrl == null || result.plot == null || result.cast == null)) {
-            val meta = runCatching {
-                tmdb.movieMeta(VodTitleCleaner.clean(result.name), result.year, result.tmdbId)
-            }.getOrNull()
-            if (meta != null) {
-                result = result.copy(
-                    posterUrl = result.posterUrl ?: meta.posterUrl,
-                    backdropUrl = result.backdropUrl ?: meta.backdropUrl,
-                    plot = result.plot ?: meta.overview,
-                    cast = result.cast ?: meta.cast,
-                    director = result.director ?: meta.director,
-                    genre = result.genre ?: meta.genre,
-                    tmdbId = result.tmdbId ?: meta.tmdbId,
-                    rating = result.rating ?: meta.rating,
-                    year = result.year ?: meta.year,
-                )
-            }
-        }
-
+        // CanonicalMovieWorker owns movie identification and TMDB persistence. Provider
+        // records retain provider metadata; opening inventory detail must not assign identity.
         if (result != movie) movieDao.upsertAll(listOf(result))
         result
     }
 
     /** Loads a series and lazily back-fills its detail fields from `get_series_info`. See [movieDetail]. */
+    /** TMDB season posters for a show with a positive provider TMDB hint; see [TmdbClient.seasonPosters]. */
+    suspend fun seasonPosters(series: Series): Map<Int, String> = withContext(Dispatchers.IO) {
+        val id = series.tmdbId?.trim()?.toIntOrNull()?.takeIf { it > 0 } ?: return@withContext emptyMap()
+        tmdb.seasonPosters(id.toString(), app.opentv.data.parser.VodTitleCleaner.clean(series.name)
+            .replace(Regex("\\s*\\(\\d{4}\\)$"), ""), series.year)
+    }
+
     suspend fun seriesDetail(id: Long): Series? = withContext(Dispatchers.IO) {
         val series = seriesDao.byId(id) ?: return@withContext null
         var result = series
@@ -692,11 +682,11 @@ class CatalogRepository(
         }
     }
 
-    /** Movies + series — best-effort, meant to run in the background so a huge VOD list never
-     * blocks live TV. Silent on failure: an account with no VOD is normal, not an error. */
-    suspend fun syncVod(source: Source, nowUtcMillis: Long) = withContext(BackgroundWork.dispatcher) {
-        runCatching { if (source.kind == SourceKind.XTREAM) syncXtreamVod(source, nowUtcMillis) }
-            .onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
+    /** Imports each VOD kind independently. False means the catalogue is incomplete and must
+     * remain retryable; live channels and already imported titles remain available. */
+    suspend fun syncVod(source: Source, nowUtcMillis: Long): Boolean = withContext(BackgroundWork.dispatcher) {
+        if (source.kind != SourceKind.XTREAM) return@withContext true
+        syncXtreamVod(source, nowUtcMillis)
     }
 
     private suspend fun syncXtreamLive(source: Source, nowUtcMillis: Long): SyncResult {
@@ -754,28 +744,46 @@ class CatalogRepository(
         return runCatching { stalkerApi.createLink(source, cmd) }.getOrNull() ?: channel.streamUrl
     }
 
-    private suspend fun syncXtreamVod(source: Source, nowUtcMillis: Long) {
+    private suspend fun syncXtreamVod(source: Source, nowUtcMillis: Long): Boolean = vodInventoryMutex.withLock {
         // VOD is optional: plenty of accounts have live TV only, and a 404 on get_vod_streams
         // must not cost the user their channel list. Movies and series are gated independently so
         // a user who only turned off, say, Series still gets their movie library refreshed.
         val moviesOn = settings.moviesEnabled.value
         val seriesOn = settings.seriesEnabled.value
-        if (!moviesOn && !seriesOn) return
-
-        val movieCategories =
-            if (moviesOn) runCatching { api.movieCategories(source) }.getOrDefault(emptyList())
-            else emptyList()
-        val seriesCategories =
-            if (seriesOn) runCatching { api.seriesCategories(source) }.getOrDefault(emptyList())
-            else emptyList()
-        if (movieCategories.isNotEmpty() || seriesCategories.isNotEmpty()) {
-            categoryDao.upsertAll(movieCategories + seriesCategories)
+        if (!moviesOn && !seriesOn) return@withLock true
+        var complete = true
+        suspend fun importKind(block: suspend () -> Unit) {
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                complete = false
+                // Don't include provider URLs or credentials in diagnostics.
+                Log.w(TAG, "VOD import failed for source ${source.id}: ${e.javaClass.simpleName}")
+            }
         }
-
-        // Written batch by batch as they stream in: holding a big provider's whole library in
-        // memory (movies and series at once) crashed phones with an OutOfMemoryError.
-        if (moviesOn) runCatching { api.movies(source) { movieDao.upsertAll(it) } }
-        if (seriesOn) runCatching { api.series(source) { seriesDao.upsertAll(it) } }
+        // Shows must not wait behind a provider's much larger movie catalogue. A failure
+        // in either kind leaves existing data intact and still allows the other to import.
+        if (seriesOn) {
+            importKind { categoryDao.upsertAll(api.seriesCategories(source)) }
+            importKind { api.series(source) { seriesDao.upsertAll(it) } }
+        }
+        if (moviesOn) {
+            importKind { categoryDao.upsertAll(api.movieCategories(source)) }
+            importKind {
+                val generation = java.util.UUID.randomUUID().toString()
+                val identities = database?.canonicalMovies()
+                api.movies(source) { batch ->
+                    movieDao.upsertAll(batch)
+                    identities?.stageInventory(batch.map {
+                        app.opentv.catalogue.MovieInventoryAsset(it.sourceId, generation, it.streamId)
+                    })
+                }
+                identities?.activateSnapshot(source.id, generation)
+            }
+        }
+        complete
     }
 
     private suspend fun syncM3u(source: Source, nowUtcMillis: Long): SyncResult {
@@ -929,8 +937,11 @@ class CatalogRepository(
      */
     suspend fun variants(channel: Channel): List<Channel> {
         if (channel.groupKey.isEmpty()) return listOf(channel)
-        val all = channelDao.variantsInGroup(channel.groupKey)
-        return distinctByQuality(all).ifEmpty { listOf(channel) }
+        val identity = app.opentv.livetv.LiveChannelKeys.provisional(channel)
+        val all = channelDao.myTvVariants(channel.groupKey).filter {
+            app.opentv.livetv.LiveChannelKeys.provisional(it) == identity
+        }
+        return all.distinctBy { it.sourceId to it.streamId }.ifEmpty { listOf(channel) }
     }
 
     /**

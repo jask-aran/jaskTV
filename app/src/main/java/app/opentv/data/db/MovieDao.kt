@@ -29,6 +29,7 @@ abstract class MovieDao {
             FROM movies
             WHERE (:sourceId IS NULL OR sourceId = :sourceId)
               AND (:categoryId IS NULL OR categoryId = :categoryId)
+              AND (:query = '' OR instr(lower(name), lower(:query)) > 0)
             GROUP BY browseGroupKey
         ) AS g
         JOIN movies AS m ON m.id = (
@@ -36,12 +37,13 @@ abstract class MovieDao {
             WHERE v.browseGroupKey = g.browseGroupKey
               AND (:sourceId IS NULL OR v.sourceId = :sourceId)
               AND (:categoryId IS NULL OR v.categoryId = :categoryId)
+              AND (:query = '' OR instr(lower(v.name), lower(:query)) > 0)
             ORDER BY v.browseQualityRank DESC, v.name COLLATE BINARY ASC, v.id ASC
             LIMIT 1
         )
         ORDER BY g.newestAddedMillis DESC, g.browseGroupKey COLLATE BINARY ASC
     """)
-    abstract fun browseGroups(sourceId: Long?, categoryId: String?): PagingSource<Int, MovieBrowseGroup>
+    abstract fun browseGroups(sourceId: Long?, categoryId: String?, query: String = ""): PagingSource<Int, MovieBrowseGroup>
 
     /** Only fetch a selected group's variants, in exactly the representative's order. */
     @Query("""
@@ -139,6 +141,9 @@ abstract class MovieDao {
         """
     )
     abstract suspend fun moviesByDirector(name: String, limit: Int): List<Movie>
+
+    @Query("SELECT * FROM movies WHERE id IN (:ids)")
+    abstract suspend fun byIds(ids: List<Long>): List<Movie>
 
     @Query("SELECT * FROM movies WHERE id = :id")
     abstract suspend fun byId(id: Long): Movie?

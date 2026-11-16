@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -170,6 +171,30 @@ class TmdbClient(
         )
     }
 
+    /**
+     * Season number → poster for a show, from one `/tv/{id}` request. Provider TMDB hints are not
+     * always right, so the posters are used only when TMDB's name matches [title] or its first-air
+     * year matches [year]. Empty without a key, on mismatch or on failure.
+     */
+    fun seasonPosters(tvId: String, title: String, year: Int?): Map<Int, String> {
+        val key = settings.tmdbApiKey.value.takeIf { it.isNotBlank() } ?: return emptyMap()
+        val url = TMDB_BASE.newBuilder().addPathSegment("tv").addPathSegment(tvId).addQueryParameter("api_key", key).build()
+        val o = get(url)?.jsonObject ?: return emptyMap()
+        fun norm(s: String?) = s.orEmpty().lowercase().filter(Char::isLetterOrDigit)
+        val names = listOfNotNull(o["name"]?.jsonPrimitive?.contentOrNull, o["original_name"]?.jsonPrimitive?.contentOrNull).map(::norm)
+        val tmdbYear = o["first_air_date"]?.jsonPrimitive?.contentOrNull?.take(4)?.toIntOrNull()
+        val wanted = norm(title)
+        val nameMatch = wanted.isNotEmpty() && names.any { it == wanted }
+        val yearMatch = year != null && year == tmdbYear && names.any { it.isNotEmpty() && (it in wanted || wanted in it) }
+        if (!nameMatch && !yearMatch) return emptyMap()
+        return o["seasons"]?.jsonArray?.mapNotNull { element ->
+            val season = element.jsonObject
+            val number = season["season_number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+            val poster = season["poster_path"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            number to IMG_SEASON + poster
+        }?.toMap().orEmpty()
+    }
+
     private fun get(url: HttpUrl): JsonElement? {
         val request = Request.Builder().url(url).header("User-Agent", "OpenTV").build()
         return runCatching {
@@ -192,6 +217,7 @@ class TmdbClient(
         val TMDB_BASE: HttpUrl = "https://api.themoviedb.org/3".toHttpUrl()
         const val IMG_POSTER = "https://image.tmdb.org/t/p/w500"
         const val IMG_BACKDROP = "https://image.tmdb.org/t/p/w1280"
+        const val IMG_SEASON = "https://image.tmdb.org/t/p/w342"
         const val TOP_CAST = 12
     }
 }

@@ -112,6 +112,9 @@ interface EpgFeedDao {
 
 @Dao
 interface EpgChannelAliasDao {
+    @Query("SELECT * FROM epg_channels WHERE epgId IN (:ids)")
+    suspend fun forIds(ids: List<String>): List<app.opentv.data.model.EpgChannelAlias>
+
     @Query("SELECT * FROM epg_channels")
     suspend fun all(): List<EpgChannelAlias>
 
@@ -129,6 +132,9 @@ interface EpgChannelAliasDao {
 interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE sourceId = :sourceId AND seriesId = :seriesId ORDER BY season, episodeNumber")
     fun observeForSeries(sourceId: Long, seriesId: String): Flow<List<Episode>>
+
+    @Query("SELECT * FROM episodes WHERE sourceId = :sourceId AND seriesId = :seriesId ORDER BY season, episodeNumber")
+    suspend fun forSeries(sourceId: Long, seriesId: String): List<Episode>
 
     @Query("SELECT * FROM episodes WHERE id = :id")
     suspend fun byId(id: Long): Episode?
@@ -156,6 +162,16 @@ interface PlaybackPositionDao {
 
     @Query("SELECT * FROM playback_positions")
     suspend fun all(): List<PlaybackPosition>
+
+    /** Live resume positions for every episode of one provider version of a show. */
+    @Query("SELECT p.* FROM playback_positions p JOIN episodes e ON p.mediaKey = 'ep:' || e.id " +
+        "WHERE p.profileId = :profileId AND e.sourceId = :sourceId AND e.seriesId = :seriesId")
+    fun observeSeries(profileId: Long, sourceId: Long, seriesId: String): Flow<List<PlaybackPosition>>
+
+    /** Most recent episode activity for one provider version of a show; null when never watched. */
+    @Query("SELECT MAX(p.updatedAtMillis) FROM playback_positions p JOIN episodes e ON p.mediaKey = 'ep:' || e.id " +
+        "WHERE p.profileId = :profileId AND e.sourceId = :sourceId AND e.seriesId = :seriesId")
+    suspend fun lastSeriesActivity(profileId: Long, sourceId: Long, seriesId: String): Long?
 
     /** One profile's whole watch history — the input to genre-affinity recommendations. */
     @Query("SELECT * FROM playback_positions WHERE profileId = :profileId")

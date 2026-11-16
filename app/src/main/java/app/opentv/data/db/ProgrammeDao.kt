@@ -13,6 +13,11 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ProgrammeDao {
+    @Query("""SELECT * FROM programmes WHERE endUtcMillis > :fromMillis AND startUtcMillis < :toMillis
+        AND (title LIKE '%F1%' OR title LIKE '%Formula 1%' OR title LIKE '%Formula One%')
+        ORDER BY startUtcMillis LIMIT 1200""")
+    suspend fun f1Window(fromMillis: Long, toMillis: Long): List<Programme>
+
     /** Bounded, case-insensitive programme search for event discovery. */
     @Query("""
         SELECT * FROM programmes
