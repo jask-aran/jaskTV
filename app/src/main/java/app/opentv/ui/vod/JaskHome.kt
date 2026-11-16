@@ -1,6 +1,7 @@
 package app.opentv.ui.vod
 
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.ui.draw.drawBehind
 import kotlinx.coroutines.launch
 import app.opentv.R
@@ -73,18 +74,27 @@ internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, onOpen: (
             Text(section.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
                 color = Color(0xFFF4F4F4), modifier = Modifier.padding(top = if (first) 0.dp else 10.dp))
         }
-        when (section.style) {
-            HomeStyle.POSTERS -> items(section.items, key = { "home-${section.key}-${it.key}" }) { title ->
+        val phone = columns <= 3
+        when {
+            !phone -> item(key = "home-shelf-${section.key}", span = { GridItemSpan(maxLineSpan) }) {
+                // Wide screens: one sideways-scrolling shelf per section, edge to edge.
+                androidx.compose.foundation.lazy.LazyRow(Modifier.bleed(16.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(section.items.size, key = { "shelf-${section.key}-${section.items[it].key}" }) { i ->
+                        val title = section.items[i]
+                        if (section.style == HomeStyle.WIDE) JaskWideCard(title, Modifier.width(340.dp)) { onOpen(title) }
+                        else Box(Modifier.width(158.dp)) { JaskPosterCard(title.title, title.poster, title.facts()) { onOpen(title) } }
+                    }
+                }
+            }
+            section.style == HomeStyle.POSTERS -> items(section.items.take(6), key = { "home-${section.key}-${it.key}" }) { title ->
                 JaskPosterCard(title.title, title.poster, title.facts()) { onOpen(title) }
             }
-            HomeStyle.WIDE -> {
-                val perRow = if (columns <= 3) 2 else 3
-                section.items.chunked(perRow).forEachIndexed { row, pair ->
-                    item(key = "home-${section.key}-row$row", span = { GridItemSpan(maxLineSpan) }) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            pair.forEach { JaskWideCard(it, Modifier.weight(1f)) { onOpen(it) } }
-                            repeat(perRow - pair.size) { Spacer(Modifier.weight(1f)) }
-                        }
+            else -> section.items.take(4).chunked(2).forEachIndexed { row, pair ->
+                item(key = "home-${section.key}-row$row", span = { GridItemSpan(maxLineSpan) }) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        pair.forEach { JaskWideCard(it, Modifier.weight(1f)) { onOpen(it) } }
+                        repeat(2 - pair.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
@@ -106,7 +116,8 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
     val wash = app.opentv.ui.LocalJaskAmbient.current?.wash ?: JaskPageCanvas
     val tail = with(androidx.compose.ui.platform.LocalDensity.current) { 200.dp.toPx() }
     // Below the hero (outside the pager, which clips), its colour fades into the dithered page.
-    Box(modifier.fillMaxWidth().then(if (wide) Modifier.height(440.dp) else Modifier.aspectRatio(0.9f)).drawBehind {
+    val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
+    Box(modifier.fillMaxWidth().then(if (wide) Modifier.height((screenH * 0.64f).coerceIn(360f, 600f).dp) else Modifier.aspectRatio(0.9f)).drawBehind {
         drawRect(Brush.verticalGradient(listOf(wash, wash.copy(alpha = 0f)), startY = size.height - 1f, endY = size.height + tail),
             topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - 1f), size = androidx.compose.ui.geometry.Size(size.width, tail))
     }) {
@@ -117,30 +128,44 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
                 // fades into the dithered background (drawn past the item's bottom, under the rows).
                 val wash = app.opentv.ui.LocalJaskAmbient.current?.wash ?: JaskPageCanvas
                 AsyncImage(t.backdrop?.replace("/t/p/w1280/", "/t/p/original/"), null, contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize().drawWithContent {
-                        drawContent()
-                        drawRect(Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash))
-                    })
+                    alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                     0f to Color.Black.copy(alpha = 0.55f), 0.2f to Color.Transparent, 0.55f to Color.Transparent,
                     0.8f to Color.Black.copy(alpha = 0.18f), 1f to Color.Transparent)))
-                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(t.title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                // Wide screens: text in a left column over a soft side scrim, not stretched across the art.
+                if (wide) Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
+                    0f to Color.Black.copy(alpha = 0.6f), 0.45f to Color.Black.copy(alpha = 0.15f), 0.7f to Color.Transparent)))
+                // Last over the art and scrims, so the hero's bottom edge is exactly the wash colour (no seam).
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash)))
+                val align = if (wide) TextAlign.Start else TextAlign.Center
+                Column(Modifier.align(if (wide) Alignment.BottomStart else Alignment.BottomCenter)
+                    .then(if (wide) Modifier.widthIn(max = 560.dp).padding(start = 44.dp, bottom = 40.dp) else Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 18.dp)),
+                    horizontalAlignment = if (wide) Alignment.Start else Alignment.CenterHorizontally) {
+                    Text(t.title, color = Color.White, style = if (wide) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold, textAlign = align, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(6.dp))
                     Text(listOfNotNull(caption ?: t.rank?.let { "#$it this week" }, t.year?.toString(), t.network, t.status, rating(t.rating),
                         stringResource(R.string.jask_not_on_sources).takeIf { !t.available }).joinToString("  ·  "),
                         color = Color(0xFFDADADA), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     t.overview?.let {
                         Spacer(Modifier.height(8.dp))
-                        Text(it, color = Color(0xFFCFCFCF), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(it, color = Color(0xFFCFCFCF), style = if (wide) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                            textAlign = align, maxLines = if (wide) 3 else 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (wide) {
+                        Spacer(Modifier.height(18.dp))
+                        Row(Modifier.clip(RoundedCornerShape(50)).background(Color.White).clickable { onOpen(t) }.padding(horizontal = 22.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(androidx.compose.material.icons.Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (t.available) "Watch now" else "Details", color = Color.Black, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }
         }
-        if (titles.size > 1) Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (titles.size > 1) Row(Modifier.align(if (wide) Alignment.BottomStart else Alignment.BottomCenter)
+            .padding(start = if (wide) 44.dp else 0.dp, bottom = if (wide) 16.dp else 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             repeat(titles.size) { i ->
                 Box(Modifier.size(if (i == pager.currentPage) 7.dp else 5.dp).clip(CircleShape)
                     .background(if (i == pager.currentPage) Color.White else Color.White.copy(alpha = 0.4f)))

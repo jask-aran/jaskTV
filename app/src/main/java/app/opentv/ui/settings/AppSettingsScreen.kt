@@ -198,15 +198,7 @@ fun AppSettingsScreen(onBack: () -> Unit) {
                 onToggle = settings::setGuidePreviewSound,
             )
             }
-            if (LocalLayoutClass.current == LayoutClass.PHONE) {
-                val autoRotate by settings.phoneAutoRotate.collectAsState()
-                ToggleRow(
-                    title = stringResource(R.string.settings_auto_rotate_title),
-                    subtitle = stringResource(R.string.settings_auto_rotate_subtitle),
-                    checked = autoRotate,
-                    onToggle = settings::setPhoneAutoRotate,
-                )
-            }
+            // Phones browse in portrait only (MainActivity.applyOrientationPolicy), so no auto-rotate toggle.
         }
 
         Spacer(Modifier.height(16.dp))

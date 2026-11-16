@@ -137,7 +137,8 @@ class MainActivity : ComponentActivity() {
             null -> return
         } else when {
             // Android observes its rotation lock live; do not snapshot it or use FULL_SENSOR.
-            resources.configuration.smallestScreenWidthDp >= 600 || browseAutoRotate -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+            // Phones browse in portrait only (the player rotates on its own); tablets rotate freely.
+            resources.configuration.smallestScreenWidthDp >= 600 -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
             else -> ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
         }
         if (requestedOrientation != requested) requestedOrientation = requested

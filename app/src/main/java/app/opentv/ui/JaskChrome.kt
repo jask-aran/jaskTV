@@ -89,10 +89,13 @@ internal fun JaskChromeFrame(
     val navBar = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val ambient = remember { JaskAmbient() }
     LaunchedEffect(current) { ambient.art = null }
+    // Tablet, desktop and TV have width to spare: the pill navigation moves up into the header.
+    val wide = LocalLayoutClass.current == LayoutClass.TABLET
     CompositionLocalProvider(LocalJaskOpenSearch provides { if (searchEnabled) searching = true }, LocalJaskTouchShell provides true,
         LocalJaskAmbient provides ambient,
         LocalJaskSearchFocus provides searchFocus,
-        LocalJaskContentPadding provides PaddingValues(top = statusBar + 72.dp, bottom = navBar + 84.dp)) {
+        LocalJaskContentPadding provides if (wide) PaddingValues(top = statusBar + 80.dp, bottom = navBar + 16.dp)
+            else PaddingValues(top = statusBar + 72.dp, bottom = navBar + 84.dp)) {
         // The waves are part of the recorded page, so the header and rail glass blur them too.
         JaskSurfaceHost(Modifier.fillMaxSize().background(Color.Black), background = {
             Box(Modifier.matchParentSize().jaskWavesBackground(ambient))
@@ -104,11 +107,13 @@ internal fun JaskChromeFrame(
             JaskBarScrim(Modifier.align(Alignment.BottomCenter), top = false)
             var accountOpen by remember { mutableStateOf(false) }
             JaskHeader(onFilter, { accountOpen = true },
-                Modifier.align(Alignment.TopCenter).statusBarsPadding().fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                Modifier.align(Alignment.TopCenter).statusBarsPadding().fillMaxWidth().padding(horizontal = if (wide) 28.dp else 16.dp, vertical = 8.dp),
                 filterIcon = filterIcon, filterLabel = filterLabel) {
                 JaskMenu(accountOpen, { accountOpen = false }, accountMenu)
             }
-            JaskBottomBar(current, onSelect, query, onQuery, searchEnabled, searching, { searching = it },
+            if (wide) JaskBottomBar(current, onSelect, query, onQuery, searchEnabled, searching, { searching = it },
+                Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 7.dp).widthIn(max = 460.dp))
+            else JaskBottomBar(current, onSelect, query, onQuery, searchEnabled, searching, { searching = it },
                 Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .padding(horizontal = 16.dp, vertical = 12.dp))
         }

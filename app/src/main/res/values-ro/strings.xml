@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- OpenTV UI translation. Auto-assembled; English fallback for any gap. -->
+<!-- jaskTV UI translation. Auto-assembled; English fallback for any gap. -->
 <resources>
-    <string name="app_name">OpenTV Mobile</string>
+    <string name="app_name">jaskTV</string>
     <string name="common_done">Gata</string>
     <string name="common_cancel">Anulare</string>
     <string name="common_back">Înapoi</string>
@@ -93,12 +93,12 @@
     <string name="rec_notification_one">Se înregistrează 1 program</string>
     <string name="rec_notification_many">Se înregistrează %1$d programe</string>
     <string name="rec_channel_name">Înregistrare</string>
-    <string name="rec_channel_desc">Afișat cât timp OpenTV Mobile înregistrează</string>
+    <string name="rec_channel_desc">Afișat cât timp jaskTV înregistrează</string>
     <string name="rec_error_nothing">Nu s-a înregistrat nimic</string>
     <string name="rec_error_usb_no_folder">Nu a fost ales niciun folder USB. Deschide Setări înregistrare și alege un folder pe unitatea ta.</string>
     <string name="rec_error_usb_unavailable">Unitatea USB nu este disponibilă. Reconectează unitatea și alege din nou folderul în Setări înregistrare.</string>
     <string name="rec_background_prompt_title">Continuă înregistrarea când ieși din aplicație?</string>
-    <string name="rec_background_prompt_body">Android poate opri această înregistrare atunci când ecranul se blochează sau ieși din OpenTV Mobile. Permite aplicației OpenTV Mobile să ignore optimizarea bateriei, astfel încât înregistrările să continue chiar și în standby — la fel ca un set-top box.</string>
+    <string name="rec_background_prompt_body">Android poate opri această înregistrare atunci când ecranul se blochează sau ieși din jaskTV. Permite aplicației jaskTV să ignore optimizarea bateriei, astfel încât înregistrările să continue chiar și în standby — la fel ca un set-top box.</string>
     <string name="rec_background_prompt_allow">Permite</string>
     <string name="rec_background_prompt_not_now">Nu acum</string>
     <string name="player_rewind">Derulare înapoi</string>
@@ -122,7 +122,7 @@
     <string name="settings_providers_subtitle">Adaugă, elimină și retestează sursele tale IPTV</string>
     <string name="settings_addons_title">Suplimente (Stremio)</string>
     <string name="settings_addons_subtitle">Redă din suplimentele Stremio configurate de tine</string>
-    <string name="addons_note">Adaugă un supliment Stremio lipind URL-ul manifestului său. OpenTV Mobile nu vine cu niciunul — le aduci tu. Dacă suplimentul este bazat pe debrid, configurează-ți cheia debrid pe site-ul propriu al suplimentului și lipește URL-ul personalizat pe care ți-l oferă; cheia ta rămâne acolo, niciodată în OpenTV Mobile.</string>
+    <string name="addons_note">Adaugă un supliment Stremio lipind URL-ul manifestului său. jaskTV nu vine cu niciunul — le aduci tu. Dacă suplimentul este bazat pe debrid, configurează-ți cheia debrid pe site-ul propriu al suplimentului și lipește URL-ul personalizat pe care ți-l oferă; cheia ta rămâne acolo, niciodată în jaskTV.</string>
     <string name="addons_url_label">URL manifest supliment</string>
     <string name="addons_add">Adaugă</string>
     <string name="addons_checking">Se verifică…</string>
@@ -225,7 +225,7 @@
     <string name="recset_usb_change">Schimbă folderul</string>
     <string name="recset_usb_saving_to">Se salvează în: %1$s</string>
     <string name="recset_usb_none">Încă nu a fost ales niciun folder</string>
-    <string name="recset_usb_hint">Conectează o unitate USB sau un suport extern formatat exFAT sau FAT32, apoi alege un folder pe el. Înregistrările sunt scrise direct în acel folder și pot fi redate și șterse tot din OpenTV Mobile.</string>
+    <string name="recset_usb_hint">Conectează o unitate USB sau un suport extern formatat exFAT sau FAT32, apoi alege un folder pe el. Înregistrările sunt scrise direct în acel folder și pot fi redate și șterse tot din jaskTV.</string>
     <string name="recset_usb_need_folder">Alege un folder înainte de a salva pe USB.</string>
     <string name="recset_usb_no_picker">Nu există niciun selector de foldere disponibil pe acest dispozitiv.</string>
     <string name="recset_nas_connection">Conexiune NAS</string>
@@ -257,9 +257,9 @@
     <string name="recset_background_allowed">Permisă</string>
     <string name="recset_background_not_allowed">Nepermisă</string>
     <string name="recset_background_fix">Remediază</string>
-    <string name="recset_background_desc">Android poate opri înregistrările atunci când dispozitivul intră în stare de repaus sau ieși din OpenTV Mobile, cu excepția cazului în care OpenTV Mobile are voie să ignore optimizarea bateriei. Permițând acest lucru, înregistrările continuă chiar și în standby, ca la un set-top box.</string>
+    <string name="recset_background_desc">Android poate opri înregistrările atunci când dispozitivul intră în stare de repaus sau ieși din jaskTV, cu excepția cazului în care jaskTV are voie să ignore optimizarea bateriei. Permițând acest lucru, înregistrările continuă chiar și în standby, ca la un set-top box.</string>
     <string name="recset_background_on_title">Înregistrarea în fundal este activă</string>
-    <string name="recset_background_on_desc">Înregistrările vor continua să ruleze când ieși din OpenTV Mobile sau televizorul intră în repaus.</string>
+    <string name="recset_background_on_desc">Înregistrările vor continua să ruleze când ieși din jaskTV sau televizorul intră în repaus.</string>
     <string name="recset_background_toast">Înregistrarea în fundal a fost activată — înregistrările vor continua în fundal.</string>
     <string name="epg_updating">Se actualizează…</string>
     <string name="epg_update_now">Actualizează ghidul acum</string>
@@ -268,7 +268,7 @@
     <string name="epg_name_optional">Nume (opțional)</string>
     <string name="epg_xmltv_url">URL XMLTV (.xml sau .xml.gz)</string>
     <string name="epg_add_guide">Adaugă ghid</string>
-    <string name="sync_desc">Copiază progresul de vizionare între două dispozitive OpenTV Mobile prin propriul tău wifi — nimic nu iese din casă și nu este nevoie de niciun cont.</string>
+    <string name="sync_desc">Copiază progresul de vizionare între două dispozitive jaskTV prin propriul tău wifi — nimic nu iese din casă și nu este nevoie de niciun cont.</string>
     <string name="sync_share_from_here">Distribuie de aici</string>
     <string name="sync_receive">Primește</string>
     <string name="sync_ready_to_share">Pregătit pentru partajare</string>
@@ -293,7 +293,7 @@
     <string name="sync_nas_uploaded">Acest dispozitiv a fost salvat pe NAS. Niciun alt dispozitiv nu s-a sincronizat încă aici.</string>
     <string name="sync_nas_failed">Nu s-a putut ajunge la NAS. Verifică dacă este pornit și dacă detaliile din Setări înregistrare sunt corecte.</string>
     <string name="sync_nas_auto">Sincronizare automată la deschiderea aplicației</string>
-    <string name="about_title">Despre OpenTV Mobile</string>
+    <string name="about_title">Despre jaskTV</string>
     <string name="about_version">Versiune</string>
     <string name="about_update_available">Actualizare disponibilă: %1$s — vezi solicitarea pentru instalare.</string>
     <string name="about_up_to_date">Ai cea mai recentă versiune.</string>
@@ -302,7 +302,7 @@
     <string name="about_what_is_title">Ce este</string>
     <string name="about_what_is_body">Un player IPTV gratuit, open-source, pentru Android TV, Fire TV și telefoane. Este doar un player — nu furnizează canale; conectezi serviciul pe care îl plătești deja. Nimic din ce introduci nu iese de pe dispozitiv, decât pentru a comunica cu furnizorul tău.</string>
     <string name="about_built_open_title">Construit în mod deschis</string>
-    <string name="about_built_open_body">OpenTV Mobile este dezvoltat deschis, iar AI-ul realizează o mare parte din programare sub îndrumare umană — acest lucru este spus clar, nu ascuns. Fiind open source, plecarea unei singure persoane nu îl poate opri: oricine poate citi fiecare linie, îl poate compila și îl poate continua.</string>
+    <string name="about_built_open_body">jaskTV este dezvoltat deschis, iar AI-ul realizează o mare parte din programare sub îndrumare umană — acest lucru este spus clar, nu ascuns. Fiind open source, plecarea unei singure persoane nu îl poate opri: oricine poate citi fiecare linie, îl poate compila și îl poate continua.</string>
     <string name="about_support_title">Susține proiectul</string>
     <string name="about_scan_to_donate">Scanează pentru a dona</string>
     <string name="about_licence_links_title">Licență &amp; linkuri</string>
@@ -313,7 +313,7 @@
     <string name="onboarding_default_provider_name">Furnizorul meu</string>
     <string name="onboarding_default_playlist_name">Playlistul meu</string>
     <string name="onboarding_add_provider_title">Adaugă furnizorul tău</string>
-    <string name="onboarding_add_provider_desc">OpenTV Mobile este un player. Nu furnizează canale — conectezi serviciul pe care îl plătești deja.</string>
+    <string name="onboarding_add_provider_desc">jaskTV este un player. Nu furnizează canale — conectezi serviciul pe care îl plătești deja.</string>
     <string name="onboarding_xtream_login">Autentificare Xtream Codes</string>
     <string name="onboarding_m3u_url">URL playlist M3U</string>
     <string name="onboarding_stalker_portal">Portal Stalker</string>
@@ -333,7 +333,7 @@
     <string name="onboarding_working">Se procesează…</string>
     <string name="onboarding_save_load">Salvează și încarcă</string>
     <string name="onboarding_use_phone">Folosește telefonul în schimb</string>
-    <string name="onboarding_privacy_note">Detaliile furnizorului tău sunt stocate doar pe acest dispozitiv. OpenTV Mobile nu are sistem de cont și niciun server propriu — nimic din ce tastezi aici nu este trimis nicăieri, în afară de furnizorul tău.</string>
+    <string name="onboarding_privacy_note">Detaliile furnizorului tău sunt stocate doar pe acest dispozitiv. jaskTV nu are sistem de cont și niciun server propriu — nimic din ce tastezi aici nu este trimis nicăieri, în afară de furnizorul tău.</string>
     <string name="pairing_stopped">Asociere oprită</string>
     <string name="pairing_type_here">Introdu-l aici în schimb</string>
     <string name="pairing_got_it">Recepționat — se conectează la furnizorul tău…</string>
@@ -436,12 +436,12 @@
     <string name="settings_tmdb_save">Salvează cheia</string>
     <string name="settings_tmdb_saved">Cheia TMDB a fost salvată</string>
     <string name="settings_tmdb_active">Activ</string>
-    <string name="about_based_on">Bazat pe OpenTV (susține-i autorii mai jos)</string>
+    <string name="about_based_on">Bazat pe jaskTV (susține-i autorii mai jos)</string>
     <string name="about_donate_paypal">Donează prin PayPal</string>
     <string name="about_kofi">Cumpără-mi o cafea pe Ko-fi</string>
     <string name="about_sponsor_github">GitHub Sponsors</string>
-    <string name="about_support_body">OpenTV Mobile este gratuit și va rămâne așa — nimic nu e blocat. Dacă îți este util și vrei să contribui, o cafea pe Ko-fi ține în viață dezvoltarea pentru Android. Aplicația are la bază OpenTV, așa că aici găsești și linkurile autorilor originali.</string>
-    <string name="about_support_original">Susține autorii originali OpenTV</string>
+    <string name="about_support_body">jaskTV este gratuit și va rămâne așa — nimic nu e blocat. Dacă îți este util și vrei să contribui, o cafea pe Ko-fi ține în viață dezvoltarea pentru Android. Aplicația are la bază jaskTV, așa că aici găsești și linkurile autorilor originali.</string>
+    <string name="about_support_original">Susține autorii originali jaskTV</string>
     <string name="common_edit">Editează</string>
     <string name="dl_delete">Șterge</string>
     <string name="dl_delete_confirm">Ștergi „%1$s” de pe acest dispozitiv?</string>
@@ -502,7 +502,7 @@
     <string name="exit_body">Vei reveni la ecranul principal.</string>
     <string name="exit_cancel">Rămâi</string>
     <string name="exit_confirm">Ieși</string>
-    <string name="exit_title">Ieși din OpenTV Mobile?</string>
+    <string name="exit_title">Ieși din jaskTV?</string>
     <string name="msg_building_guide">Se construiește ghidul TV…</string>
     <string name="msg_building_guide_short">Se construiește ghidul…</string>
     <string name="msg_channels_no_guide">Canalele sunt gata. Încă nu s-au potrivit date de ghid — adaugă un ghid gratuit în setările ghidului.</string>

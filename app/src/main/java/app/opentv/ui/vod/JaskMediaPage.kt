@@ -64,40 +64,16 @@ import kotlinx.coroutines.withContext
 
 internal val JaskPageCanvas = Color(0xFF141312)
 
-/** A dark colour sampled from the artwork, animated in once decoded; canvas until then. */
+/** A dark colour from the artwork's accent (see [app.opentv.ui.JaskColor]), animated in once decoded; canvas until then. */
 @Composable
 internal fun rememberArtworkTint(url: String?): Color {
     val context = LocalContext.current
     var target by remember(url) { mutableStateOf(JaskPageCanvas) }
     LaunchedEffect(url) {
         if (url == null) return@LaunchedEffect
-        val request = ImageRequest.Builder(context).data(url).size(48).allowHardware(false).build()
-        val bitmap = ((context.imageLoader.execute(request) as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap
-            ?: return@LaunchedEffect
-        target = withContext(Dispatchers.Default) { artworkTint(bitmap) }
+        app.opentv.ui.artworkAccent(context, url)?.let { target = app.opentv.ui.JaskColor.tint(it) }
     }
-    return animateColorAsState(target, tween(500), label = "artworkTint").value
-}
-
-/** Most weighted hue bucket (by saturation × brightness), darkened to a background tone. */
-private fun artworkTint(bitmap: Bitmap): Color {
-    val buckets = Array(12) { FloatArray(4) } // weight, r, g, b
-    val hsv = FloatArray(3)
-    val stepX = maxOf(1, bitmap.width / 32); val stepY = maxOf(1, bitmap.height / 32)
-    for (y in 0 until bitmap.height step stepY) for (x in 0 until bitmap.width step stepX) {
-        val c = bitmap.getPixel(x, y)
-        android.graphics.Color.colorToHSV(c, hsv)
-        if (hsv[2] < 0.12f || hsv[2] > 0.97f && hsv[1] < 0.1f) continue
-        val w = hsv[1] * hsv[2] + 0.02f
-        val b = buckets[((hsv[0] / 30f).toInt()).coerceIn(0, 11)]
-        b[0] += w; b[1] += w * android.graphics.Color.red(c); b[2] += w * android.graphics.Color.green(c); b[3] += w * android.graphics.Color.blue(c)
-    }
-    val best = buckets.maxByOrNull { it[0] }?.takeIf { it[0] > 0f } ?: return JaskPageCanvas
-    val avg = android.graphics.Color.rgb((best[1] / best[0]).toInt(), (best[2] / best[0]).toInt(), (best[3] / best[0]).toInt())
-    android.graphics.Color.colorToHSV(avg, hsv)
-    hsv[1] = hsv[1].coerceAtMost(0.6f)
-    hsv[2] = 0.30f
-    return Color(android.graphics.Color.HSVToColor(hsv))
+    return animateColorAsState(target, tween(300), label = "artworkTint").value
 }
 
 /**
@@ -128,13 +104,16 @@ private fun heroArt(url: String?): String? = url?.replace("image.tmdb.org/t/p/w1
 internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, chips: List<String>, tint: Color, onBack: () -> Unit,
     modifier: Modifier = Modifier, actions: @Composable RowScope.() -> Unit) {
     val wide = LocalLayoutClass.current != LayoutClass.PHONE
-    JaskGlassHost(modifier.fillMaxWidth().then(if (wide) Modifier.height(480.dp) else Modifier.aspectRatio(0.92f)), background = {
+    val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
+    JaskGlassHost(modifier.fillMaxWidth().then(if (wide) Modifier.height((screenH * 0.66f).coerceIn(380f, 620f).dp) else Modifier.aspectRatio(0.92f)), background = {
         val candidates = remember(artUrl, fallbackArt) { listOfNotNull(heroArt(artUrl), artUrl, fallbackArt).distinct() }
         var index by remember(candidates) { mutableIntStateOf(0) }
         candidates.getOrNull(index)?.let { model ->
             AsyncImage(model, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.matchParentSize(),
                 onError = { if (index < candidates.lastIndex) index++ })
         }
+        if (wide) Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
+            0f to Color.Black.copy(alpha = 0.55f), 0.45f to Color.Black.copy(alpha = 0.12f), 0.7f to Color.Transparent)))
         // Eased ramp into exactly `tint` at the bottom edge, where jaskPageBackground picks it up.
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(
             0f to Color.Black.copy(alpha = 0.40f), 0.18f to Color.Transparent, 0.40f to Color.Transparent,
@@ -143,18 +122,21 @@ internal fun JaskHero(title: String, artUrl: String?, fallbackArt: String?, chip
     }) {
         JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, "Back", Modifier.align(Alignment.TopStart).statusBarsPadding().padding(12.dp),
             size = 44.dp, onClick = onBack)
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
+        // Wide screens: everything in a left column, aligned with the page content below.
+        Column(Modifier.align(if (wide) Alignment.BottomStart else Alignment.BottomCenter)
+            .then(if (wide) Modifier.widthIn(max = 620.dp).padding(start = 44.dp, bottom = 22.dp) else Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp)),
+            horizontalAlignment = if (wide) Alignment.Start else Alignment.CenterHorizontally) {
+            Text(title, color = Color.White, style = if (wide) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold, textAlign = if (wide) TextAlign.Start else TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = if (wide) 0.dp else 8.dp))
             if (chips.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 @OptIn(ExperimentalLayoutApi::class)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp, if (wide) Alignment.Start else Alignment.CenterHorizontally),
                     verticalArrangement = Arrangement.spacedBy(6.dp)) { chips.forEach { JaskMetaChip(it) } }
             }
-            Spacer(Modifier.height(14.dp))
-            Row(Modifier.fillMaxWidth().widthIn(max = 560.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Spacer(Modifier.height(if (wide) 18.dp else 14.dp))
+            Row(Modifier.fillMaxWidth().widthIn(max = if (wide) 500.dp else 560.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically, content = actions)
         }
     }
@@ -202,6 +184,10 @@ internal fun JaskGlassDownload(control: @Composable () -> Unit) {
     }
 }
 
+/** Page side margin: wider on tablet/desktop/TV so content lines up with the hero's text column. */
+@Composable
+internal fun jaskSide() = if (LocalLayoutClass.current != LayoutClass.PHONE) 44.dp else 16.dp
+
 /** Genres, cast and director as quiet text lines instead of chip rails. */
 @Composable
 internal fun JaskCredits(genre: String?, cast: String?, director: String?) {
@@ -211,7 +197,7 @@ internal fun JaskCredits(genre: String?, cast: String?, director: String?) {
         director?.takeIf(String::isNotBlank)?.let { "Directed by $it" },
     )
     if (lines.isEmpty()) return
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = jaskSide(), vertical = 4.dp).widthIn(max = 900.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         lines.forEach { Text(it, color = Color(0xFFB8B8B8), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }
     }
 }
@@ -229,7 +215,7 @@ internal fun JaskSynopsis(text: String?) {
     var expanded by remember { mutableStateOf(false) }
     Text(text, color = Color(0xFFE6E6E6), style = MaterialTheme.typography.bodyMedium,
         maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.fillMaxWidth().animateContentSize().clickable { expanded = !expanded }.padding(horizontal = 16.dp, vertical = 12.dp))
+        modifier = Modifier.fillMaxWidth().animateContentSize().clickable { expanded = !expanded }.padding(horizontal = jaskSide(), vertical = 12.dp).widthIn(max = 900.dp))
 }
 
 internal data class SeasonSummary(val season: Int, val episodes: Int, val watched: Int, val poster: String?)
@@ -245,7 +231,7 @@ internal fun JaskSeasonStrip(seasons: List<SeasonSummary>, selected: Int, fallba
     if (seasons.size == 1) {
         val only = seasons.first()
         Text("${seasonName(only.season)} · ${only.episodes} episodes", color = Color.White, style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            modifier = Modifier.padding(horizontal = jaskSide(), vertical = 8.dp))
         return
     }
     val state = rememberLazyListState()
@@ -253,7 +239,7 @@ internal fun JaskSeasonStrip(seasons: List<SeasonSummary>, selected: Int, fallba
         val index = seasons.indexOfFirst { it.season == selected }
         if (index > 1) state.scrollToItem(index - 1)
     }
-    LazyRow(state = state, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyRow(state = state, contentPadding = PaddingValues(horizontal = jaskSide(), vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(seasons, key = { it.season }) { s ->
             val isSelected = s.season == selected
             Column(Modifier.width(76.dp).clip(RoundedCornerShape(8.dp)).clickable { onSelect(s.season) }) {
@@ -281,12 +267,13 @@ internal fun JaskSeasonStrip(seasons: List<SeasonSummary>, selected: Int, fallba
 /** Episode: still with progress, number + title, runtime and two lines of plot. */
 @Composable
 internal fun JaskEpisodeRow(ep: Episode, seriesTitle: String, position: PlaybackPosition?, isNext: Boolean,
-    onPlay: () -> Unit, trailing: @Composable () -> Unit) {
+    onPlay: () -> Unit, modifier: Modifier = Modifier, cell: Boolean = false, trailing: @Composable () -> Unit) {
     val title = remember(ep.title, seriesTitle) { cleanEpisodeTitle(episodeDisplayTitle(ep.title, seriesTitle), ep.episodeNumber) }
-    Row(Modifier.fillMaxWidth().clickable(onClick = onPlay)
-        .background(if (isNext) Color.White.copy(alpha = 0.06f) else Color.Transparent)
-        .padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.Top) {
-        Box(Modifier.width(132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)).background(Color(0xFF2A2826))) {
+    // cell = one tile of the wide two-column episode grid (rounded, own padding) instead of a full-width row.
+    Row(modifier.fillMaxWidth().then(if (cell) Modifier.clip(RoundedCornerShape(12.dp)) else Modifier).clickable(onClick = onPlay)
+        .background(if (isNext) Color.White.copy(alpha = 0.08f) else if (cell) Color.White.copy(alpha = 0.03f) else Color.Transparent)
+        .padding(horizontal = if (cell) 10.dp else jaskSide(), vertical = if (cell) 10.dp else 8.dp), verticalAlignment = Alignment.Top) {
+        Box(Modifier.width(if (cell) 168.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)).background(Color(0xFF2A2826))) {
             if (ep.stillUrl != null) AsyncImage(ep.stillUrl, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Text("E${ep.episodeNumber}", color = Color(0xFF9E9E9E), modifier = Modifier.align(Alignment.Center))
             if (position?.isFinished == true) Icon(Icons.Filled.CheckCircle, "Watched", tint = Color.White,

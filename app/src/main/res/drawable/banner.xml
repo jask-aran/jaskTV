@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android TV banner (320x180): the dither background with the wordmark on top. -->
+<!-- Android TV banner (320x180): the white wordmark on black. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item><bitmap android:src="@drawable/banner_background" android:filter="false" /></item>
+    <item><shape android:shape="rectangle"><solid android:color="#FF000000" /></shape></item>
     <item android:drawable="@drawable/banner_wordmark" />
 </layer-list>

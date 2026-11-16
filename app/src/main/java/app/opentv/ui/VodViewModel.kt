@@ -292,9 +292,9 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
             .filter { it.key !in used && need(it) }.take(count).also { picked -> used += picked.map { it.key } }
         val featured = pick(TmdbRankings.TRENDING, 5) { it.backdrop != null }
         val sections = listOf(
-            HomeSection("trending", "Trending this week", HomeStyle.POSTERS, pick(TmdbRankings.TRENDING, 6)),
-            HomeSection("new", newTitle, HomeStyle.WIDE, pick(TmdbRankings.NEW, 4) { it.backdrop != null }),
-            HomeSection("popular", "Popular", HomeStyle.POSTERS, pick(TmdbRankings.POPULAR, 6)),
+            HomeSection("trending", "Trending this week", HomeStyle.POSTERS, pick(TmdbRankings.TRENDING, 15)),
+            HomeSection("new", newTitle, HomeStyle.WIDE, pick(TmdbRankings.NEW, 10) { it.backdrop != null }),
+            HomeSection("popular", "Popular", HomeStyle.POSTERS, pick(TmdbRankings.POPULAR, 15)),
         ).filter { it.items.isNotEmpty() }
         return CatalogueHome(featured, sections + HomeSection("all", kindTitle, HomeStyle.POSTERS, emptyList()))
     }

@@ -39,6 +39,8 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.background
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -157,20 +159,27 @@ fun AddSourceScreen(
         SourceKind.STALKER -> mac.isNotBlank()
     }
 
+    // jaskTV look: black page, wordmark, the dark Jask theme for fields and buttons.
+    app.opentv.ui.vod.JaskTheme {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.Black)
             .verticalScroll(rememberScrollState())
-            .padding(32.dp),
+            .statusBarsPadding()
+            .padding(horizontal = 24.dp, vertical = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Column(Modifier.widthIn(max = 640.dp).fillMaxWidth()) {
+            app.opentv.ui.JaskWordmark(Modifier.height(24.dp))
+            Spacer(Modifier.height(28.dp))
             Text(
                 stringResource(
                     if (existing != null) R.string.settings_edit_provider_title
                     else R.string.onboarding_add_provider_title,
                 ),
-                style = MaterialTheme.typography.displaySmall,
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
             )
             Spacer(Modifier.height(8.dp))
             Text(
@@ -399,6 +408,7 @@ fun AddSourceScreen(
             )
         }
     }
+}
 }
 
 /**

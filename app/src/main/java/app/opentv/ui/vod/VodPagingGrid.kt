@@ -167,7 +167,7 @@ internal fun <T : Any> PagedVodGrid(
         if (refresh is LoadState.Error) PagingError(items::retry)
         LazyVerticalGrid(
             // Three posters across a phone, ~120dp posters on tablets: browse density over hero size.
-            columns = if (phone) GridCells.Fixed(3) else GridCells.Adaptive(if (LocalLayoutClass.current == LayoutClass.TV) 140.dp else 120.dp),
+            columns = if (phone) GridCells.Fixed(3) else GridCells.Adaptive(if (LocalLayoutClass.current == LayoutClass.TV) 140.dp else 150.dp),
             state = state, modifier = Modifier.weight(1f).fillMaxWidth(),
             // A home header starts full-bleed under the floating header.
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp,

@@ -459,6 +459,7 @@ fun SeriesDetailScreen(
         LaunchedEffect(s.id) { tmdbShow = viewModel.canonicalShow(s) }
         val seasonOrder = remember(seasons) { seasons.keys.sortedBy { if (it == 0) Int.MAX_VALUE else it } }
         var chosenSeason by remember(s.id) { mutableStateOf<Int?>(null) }
+        val wideEpisodes = app.opentv.ui.LocalLayoutClass.current != app.opentv.ui.LayoutClass.PHONE
         val shownSeason = chosenSeason?.takeIf { it in seasons } ?: next?.first?.season ?: seasonOrder.firstOrNull()
         val summaries = remember(seasons, positions, seasonPosters) {
             seasonOrder.map { n ->
@@ -502,11 +503,20 @@ fun SeriesDetailScreen(
                 }
                 if (shownSeason != null) {
                     item(key = "seasons") { JaskSeasonStrip(summaries, shownSeason, s.posterUrl) { chosenSeason = it } }
-                    items(seasons[shownSeason].orEmpty(), key = { it.id }) { ep ->
-                        JaskEpisodeRow(ep, s.name, byKey["ep:${ep.id}"], isNext = next?.first?.id == ep.id, onPlay = { play(ep) }) {
+                    val episodeCell: @Composable (Episode, Modifier, Boolean) -> Unit = { ep, mod, cell ->
+                        JaskEpisodeRow(ep, s.name, byKey["ep:${ep.id}"], isNext = next?.first?.id == ep.id, onPlay = { play(ep) }, modifier = mod, cell = cell) {
                             DownloadControl(mediaKey = "ep:${ep.id}", buildDownload = { episodeDownload(s, ep) }, compact = true, small = true)
                         }
                     }
+                    if (wideEpisodes) {
+                        // Wide screens: two episodes per row.
+                        items(seasons[shownSeason].orEmpty().chunked(2), key = { it.first().id }) { pair ->
+                            Row(Modifier.padding(horizontal = jaskSide(), vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                pair.forEach { episodeCell(it, Modifier.weight(1f), true) }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    } else items(seasons[shownSeason].orEmpty(), key = { it.id }) { ep -> episodeCell(ep, Modifier, false) }
                 }
             }
         } }) {

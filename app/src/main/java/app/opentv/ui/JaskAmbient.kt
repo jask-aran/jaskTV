@@ -67,9 +67,11 @@ half4 main(float2 xy) {
 
 @Composable
 internal fun Modifier.jaskWavesBackground(ambient: JaskAmbient): Modifier {
-    val accent = rememberArtworkAccent(ambient.art)
+    val target = rememberArtworkAccent(ambient.art)
+    val goal = target?.let(JaskColor::inks) ?: List(4) { Color.Black }
+    val inks = goal.mapIndexed { i, c -> animateColorAsState(c, tween(300), label = "ink$i").value }
     // The flat colour the dither averages to, so heroes can fade into it before the dots begin.
-    ambient.wash = wavesWash(wavesInks(accent))
+    ambient.wash = wavesWash(inks)
     if (Build.VERSION.SDK_INT < 33) return drawBehind { drawRect(Color.Black) }
     val shader = remember { RuntimeShader(WAVES) }
     val grain = 2f // device pixels, as in Conduit
@@ -87,7 +89,6 @@ internal fun Modifier.jaskWavesBackground(ambient: JaskAmbient): Modifier {
         }
     }
     return drawBehind {
-        val inks = wavesInks(accent)
         shader.setFloatUniform("view", size.width, size.height)
         shader.setFloatUniform("grain", grain)
         shader.setFloatUniform("time", time)
@@ -105,50 +106,23 @@ private fun wavesWash(inks: List<Color>): Color {
         inks.indices.sumOf { (inks[it].blue * w[it]).toDouble() }.toFloat())
 }
 
-/** Near-black, deep, mid and light tones of the accent hue; transparent accent (no art) → all black. */
-private fun wavesInks(accent: Color): List<Color> {
-    if (accent.alpha < 0.01f) return List(4) { Color.Black }
-    val hsv = FloatArray(3)
-    android.graphics.Color.colorToHSV(accent.copy(alpha = 1f).toArgb(), hsv)
-    fun tone(dh: Float, s: Float, v: Float) = Color(android.graphics.Color.HSVToColor(floatArrayOf((hsv[0] + dh + 360f) % 360f, s.coerceIn(0f, 1f), v)))
-        .let { androidx.compose.ui.graphics.lerp(Color.Black, it, accent.alpha) }
-    val s = hsv[1]
-    return listOf(tone(0f, s, 0.03f), tone(-6f, s, 0.17f), tone(4f, s * 0.95f, 0.36f), tone(14f, s * 0.7f, 0.62f))
-}
-
-/** The artwork's most vivid hue at full strength, animated in; transparent until one is decoded. */
+/** The artwork's accent (see [JaskColor.accent]); null until decoded or when there is no art. */
 @Composable
-private fun rememberArtworkAccent(url: String?): Color {
+private fun rememberArtworkAccent(url: String?): JaskColor.Lch? {
     val context = LocalContext.current
-    var target by remember { mutableStateOf(Color.Transparent) }
+    var target by remember { mutableStateOf<JaskColor.Lch?>(null) }
     LaunchedEffect(url) {
-        if (url == null) { target = Color.Transparent; return@LaunchedEffect }
-        val request = ImageRequest.Builder(context).data(url).size(48).allowHardware(false).build()
-        val bitmap = ((context.imageLoader.execute(request) as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap
-            ?: return@LaunchedEffect
-        target = withContext(Dispatchers.Default) { artworkAccent(bitmap) }
+        if (url == null) { target = null; return@LaunchedEffect }
+        target = artworkAccent(context, url) ?: return@LaunchedEffect
     }
-    return animateColorAsState(target, tween(300), label = "artworkAccent").value
+    return target
 }
 
-/** Hue bucket weighted by saturation² × brightness (so vivid areas win over large dull ones), saturation lifted. */
-private fun artworkAccent(bitmap: Bitmap): Color {
-    val buckets = Array(18) { FloatArray(4) }
-    val hsv = FloatArray(3)
-    val stepX = maxOf(1, bitmap.width / 32); val stepY = maxOf(1, bitmap.height / 32)
-    for (y in 0 until bitmap.height step stepY) for (x in 0 until bitmap.width step stepX) {
-        val c = bitmap.getPixel(x, y)
-        android.graphics.Color.colorToHSV(c, hsv)
-        if (hsv[2] < 0.15f || hsv[1] < 0.12f) continue
-        val w = hsv[1] * hsv[1] * hsv[2]
-        val b = buckets[(hsv[0] / 20f).toInt().coerceIn(0, 17)]
-        b[0] += w; b[1] += w * android.graphics.Color.red(c); b[2] += w * android.graphics.Color.green(c); b[3] += w * android.graphics.Color.blue(c)
-    }
-    // Greyscale art: a cool neutral blue rather than brown-grey.
-    val best = buckets.maxByOrNull { it[0] }?.takeIf { it[0] > 0.4f } ?: return Color(0xFF3A5A8C)
-    val avg = android.graphics.Color.rgb((best[1] / best[0]).toInt(), (best[2] / best[0]).toInt(), (best[3] / best[0]).toInt())
-    android.graphics.Color.colorToHSV(avg, hsv)
-    hsv[1] = hsv[1].coerceIn(0.55f, 0.9f)
-    hsv[2] = 1f
-    return Color(android.graphics.Color.HSVToColor(hsv))
+private val accents = java.util.concurrent.ConcurrentHashMap<String, JaskColor.Lch>()
+
+/** Decodes a small copy of [url] (Coil cache) and picks its accent; memoised per URL. */
+internal suspend fun artworkAccent(context: android.content.Context, url: String): JaskColor.Lch? = accents[url] ?: run {
+    val request = ImageRequest.Builder(context).data(url).size(64).allowHardware(false).build()
+    val bitmap = ((context.imageLoader.execute(request) as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap ?: return null
+    withContext(Dispatchers.Default) { JaskColor.accent(JaskColor.sample(bitmap)) }.also { accents[url] = it }
 }
