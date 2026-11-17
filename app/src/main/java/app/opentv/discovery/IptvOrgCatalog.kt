@@ -23,6 +23,8 @@ data class ChannelIdentity(
     val country: String,
     val aliases: List<String>,
     val network: String?,
+    /** IPTV-org category ids (`news`, `sports`, `kids`…). */
+    val categories: List<String> = emptyList(),
 )
 
 internal object AliasKeys {
@@ -90,6 +92,66 @@ class IptvOrgCatalog(context: Context) {
         val choices = index[AliasKeys.key(name)].orEmpty().distinctBy { it.id }.take(8)
         return (listOf(name) + choices.flatMap { listOf(it.name) + it.aliases.take(8) })
             .filter { it.isNotBlank() }.distinct().take(30)
+    }
+
+    /**
+     * Strict, region-bound identity for Find: the cleaned name (or an alias) must equal one identity's
+     * key in [country]. Short keys and ambiguous matches give null rather than a guess.
+     */
+    suspend fun strictIn(name: String, country: String): ChannelIdentity? {
+        ensureLoaded()
+        val key = AliasKeys.key(name)
+        if (key.length < 3) return null
+        val matches = index[key].orEmpty().filter { it.country == country }.distinctBy { it.id }
+        return matches.singleOrNull()
+    }
+
+    // ---- Logos (iptv-org logos.json, ~6 MB, cached a day) -------------------------------------
+    private val logoCache = File(context.applicationContext.cacheDir, "jasktv-iptvorg-logos.json")
+    @Volatile private var logos: Map<String, String>? = null
+
+    /** A channel's own logo by IPTV-org id: in use, not feed-specific, raster (SVG can't be drawn), widest first. */
+    fun logoFor(id: String): String? = logos?.get(id)
+
+    /** Logos from disk only, or with [network] also downloading when missing or older than a day. */
+    suspend fun warmLogos(network: Boolean): Boolean = withContext(Dispatchers.IO) {
+        if (logos != null) return@withContext true
+        val fresh = logoCache.isFile && System.currentTimeMillis() - logoCache.lastModified() < refreshMillis
+        val text = (if (network && !fresh) runCatching {
+            http.newCall(Request.Builder().url("https://iptv-org.github.io/api/logos.json").header("Accept", "application/json").build())
+                .execute().use { r -> if (!r.isSuccessful) null else r.body?.charStream()?.readText()?.takeIf { it.length <= maxBytes } }
+        }.getOrNull()?.also { runCatching { logoCache.writeText(it) } } else null)
+            ?: logoCache.takeIf { it.isFile && it.length() <= maxBytes }?.let { runCatching { it.readText() }.getOrNull() }
+            ?: return@withContext false
+        logos = runCatching { parseLogos(text) }.getOrNull()
+        logos != null
+    }
+
+    private fun parseLogos(text: String): Map<String, String> {
+        val data = JSONArray(text)
+        val best = HashMap<String, Pair<Int, String>>()
+        for (i in 0 until data.length()) {
+            val item = data.optJSONObject(i) ?: continue
+            val channel = item.optString("channel").takeIf(String::isNotBlank) ?: continue
+            val url = item.optString("url").takeIf { it.startsWith("http") } ?: continue
+            if (item.optString("format").equals("SVG", true) || url.endsWith(".svg", true)) continue
+            if (!item.optBoolean("in_use", true)) continue
+            // Feed-specific logos ("+1", regional) rank below the channel's own.
+            val score = item.optInt("width", 0) - if (item.optString("feed").let { it.isNotBlank() && it != "null" }) 10_000 else 0
+            if ((best[channel]?.first ?: Int.MIN_VALUE) < score) best[channel] = score to url
+        }
+        return best.mapValues { it.value.second }
+    }
+
+    /** Loads the catalogue, downloading it if missing or older than a day. */
+    suspend fun warm(): Boolean = runCatching { ensureLoaded(); loaded != null }.getOrDefault(false)
+
+    /** In memory or on disk only: never touches the network (Find's first paint must not wait on it). */
+    suspend fun warmFromDisk(): Boolean = withContext(Dispatchers.IO) {
+        if (loaded == null && cache.isFile && cache.length() <= maxBytes) {
+            runCatching { parse(cache.readText()) }.getOrNull()?.let(::install)
+        }
+        loaded != null
     }
 
     suspend fun idsFor(name: String): Set<String> {
@@ -171,8 +233,12 @@ class IptvOrgCatalog(context: Context) {
             val aliases = (0 until alt.length()).mapNotNull { j ->
                 alt.optString(j).takeIf { it.isNotBlank() }
             }
-            result += ChannelIdentity(id, name, item.optString("country"), aliases,
-                item.optString("network").takeIf { it.isNotBlank() && it != "null" })
+            val cats = item.optJSONArray("categories") ?: JSONArray()
+            // IPTV-org files the UK as "UK"; everything else in the app (AliasKeys.country) uses GB.
+            val country = item.optString("country").let { if (it == "UK") "GB" else it }
+            result += ChannelIdentity(id, name, country, aliases,
+                item.optString("network").takeIf { it.isNotBlank() && it != "null" },
+                (0 until cats.length()).mapNotNull { j -> cats.optString(j).takeIf { it.isNotBlank() } })
         }
         return result
     }

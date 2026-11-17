@@ -147,7 +147,15 @@ class EpgRepository(
                 )
             }
         }
+        val existing = feedDao.all()
         for ((name, url) in BUILT_IN_FEEDS) {
+            // epgshare01 renames files (US1 → US2, CA1 → CA2): repair the stored row by name so the
+            // user's enabled state survives and no duplicate appears beside the dead link.
+            val stale = existing.firstOrNull { it.builtIn && it.name == name && it.url != url }
+            if (stale != null) {
+                feedDao.update(stale.copy(url = url, lastSyncMillis = 0, lastResult = ""))
+                continue
+            }
             if (feedDao.byUrl(url) == null) {
                 // Off by default: shipping a switched-on 20 MB download for a country the
                 // user may not live in would be rude. The EPG settings screen makes
@@ -379,6 +387,20 @@ class EpgRepository(
      * and no custom feed exists. Switch it off and it stays off — a choice the user has
      * made is never overridden.
      */
+    /**
+     * Choosing Find regions switches on their built-in guides (never off: a guide the user enabled
+     * stays). Returns whether anything changed, so the caller can schedule a guide refresh.
+     */
+    suspend fun enableGuidesForRegions(regions: Set<String>): Boolean {
+        ensureFeeds() // the India row (and repaired URLs) may not exist yet on this install
+        val wanted = regions.mapNotNull { FIND_REGION_FEEDS[it] }.toSet()
+        var changed = false
+        for (feed in feedDao.all()) if (feed.builtIn && !feed.enabled && feed.name in wanted) {
+            feedDao.setEnabled(feed.id, true); changed = true
+        }
+        return changed
+    }
+
     private suspend fun maybeAutoEnableRegionalFeed() {
         val all = feedDao.all()
         val builtIns = all.filter { it.builtIn }
@@ -438,15 +460,26 @@ class EpgRepository(
             "AUS" to "Australia — epgshare01",
         )
 
+        /** Find's region codes → the built-in guide that covers them best (genres, art). */
+        val FIND_REGION_FEEDS: Map<String, String> = mapOf(
+            "GB" to "UK — epgshare01 (Sky lineup)",
+            "US" to "USA — epgshare01",
+            "CA" to "Canada — epgshare01",
+            "AU" to "Australia — epgshare01",
+            "IN" to "India — epgshare01",
+        )
+
         val BUILT_IN_FEEDS: List<Pair<String, String>> = listOf(
             "UK — Freeview (free-to-air)" to
                 "https://raw.githubusercontent.com/dp247/Freeview-EPG/master/epg.xml",
             "UK — epgshare01 (Sky lineup)" to
                 "https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz",
             "USA — epgshare01" to
-                "https://epgshare01.online/epgshare01/epg_ripper_US1.xml.gz",
+                "https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz",
             "Canada — epgshare01" to
-                "https://epgshare01.online/epgshare01/epg_ripper_CA1.xml.gz",
+                "https://epgshare01.online/epgshare01/epg_ripper_CA2.xml.gz",
+            "India — epgshare01" to
+                "https://epgshare01.online/epgshare01/epg_ripper_IN4.xml.gz",
             "Australia — epgshare01" to
                 "https://epgshare01.online/epgshare01/epg_ripper_AU1.xml.gz",
         )

@@ -209,6 +209,11 @@ fun JaskProvidersPage(onAddSource: () -> Unit, onEditSource: (Source) -> Unit, o
                     Text(source.name, color = JaskInk, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
                     Text(stringResource(R.string.providers_remove_confirm), color = JaskDim, style = MaterialTheme.typography.bodyMedium)
+                    // Signed in, a playlist (other than one imported from a file) is removed from every device on the account.
+                    if (!source.isLocalPlaylist && app.opentv.account.AccountManager.get(androidx.compose.ui.platform.LocalContext.current).status.collectAsState().value
+                            is app.opentv.account.AccountManager.Status.Ready)
+                        Text("It's also removed from your other signed-in devices.", Modifier.padding(top = 6.dp), color = JaskDim,
+                            style = MaterialTheme.typography.bodyMedium)
                     Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
                         JaskPill(stringResource(R.string.common_cancel)) { removing = null }
                         JaskPill(stringResource(R.string.providers_yes_remove), primary = true) { viewModel.delete(source); removing = null }

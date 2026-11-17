@@ -72,7 +72,38 @@ class AppSettings(private val prefs: Prefs) {
     fun setActiveProfile(id: Long) {
         prefs.edit().putLong(KEY_ACTIVE_PROFILE, id).apply()
         _activeProfileId.value = id
+        _liveRegions.value = readLiveRegions(id)
+        _followedSports.value = readFollowedSports(id)
     }
+
+    // ---- Live TV finding (per profile) ---------------------------------------------------------
+
+    /**
+     * Regions whose channels Live TV offers when finding channels (provider region codes such as
+     * `US`, `GB`, `AU`, `IN`), or null before the profile has chosen. Followed sports ignore it.
+     */
+    private val _liveRegions = MutableStateFlow(readLiveRegions(_activeProfileId.value))
+    val liveRegions: StateFlow<Set<String>?> = _liveRegions.asStateFlow()
+
+    fun setLiveRegions(regions: Set<String>) {
+        prefs.edit().putStringSet("live_regions_${_activeProfileId.value}", regions).apply()
+        _liveRegions.value = regions
+    }
+
+    private fun readLiveRegions(profile: Long): Set<String>? =
+        prefs.getStringSet("live_regions_$profile", null)?.toSet()
+
+    /** Sport keys the profile follows (see `app.opentv.livetv.find.Sports`). Opt-in: empty by default. */
+    private val _followedSports = MutableStateFlow(readFollowedSports(_activeProfileId.value))
+    val followedSports: StateFlow<Set<String>> = _followedSports.asStateFlow()
+
+    fun setFollowedSports(sports: Set<String>) {
+        prefs.edit().putStringSet("followed_sports_${_activeProfileId.value}", sports).apply()
+        _followedSports.value = sports
+    }
+
+    private fun readFollowedSports(profile: Long): Set<String> =
+        prefs.getStringSet("followed_sports_$profile", emptySet())!!.toSet()
 
     // ---- Parental controls -------------------------------------------------------------------
 
@@ -94,6 +125,16 @@ class AppSettings(private val prefs: Prefs) {
 
     fun setPin(pin: String) {
         prefs.edit().putString(KEY_PIN_HASH, hashPin(pin)).apply()
+        _pinIsSet.value = true
+    }
+
+    /** The stored PIN's hash, for account sync (the PIN itself is never stored). */
+    fun pinHash(): String? = prefs.getString(KEY_PIN_HASH, null)
+
+    /** Sets the PIN from another device's hash (null: no PIN). */
+    fun setPinHash(hash: String?) {
+        if (hash == null) { if (_pinIsSet.value) clearPin(); return }
+        prefs.edit().putString(KEY_PIN_HASH, hash).apply()
         _pinIsSet.value = true
     }
 
@@ -137,6 +178,9 @@ class AppSettings(private val prefs: Prefs) {
     fun removeRecentSearch(query: String) = saveRecentSearches(_recentSearches.value - query)
 
     fun clearRecentSearches() = saveRecentSearches(emptyList())
+
+    /** Replaces the list (account sync). */
+    fun setRecentSearches(list: List<String>) = saveRecentSearches(list.filter { it.isNotBlank() }.take(20))
 
     private fun saveRecentSearches(list: List<String>) {
         val kept = list.take(MAX_RECENT_SEARCHES)
@@ -344,6 +388,13 @@ class AppSettings(private val prefs: Prefs) {
     )
     val recentChannels: StateFlow<List<Long>> = _recentChannels.asStateFlow()
 
+    /** Replaces the list, newest first (account sync). */
+    fun setRecentChannels(ids: List<Long>) {
+        val kept = ids.distinct().take(MAX_RECENT_CHANNELS)
+        prefs.edit().putString(KEY_RECENT_CHANNELS, kept.joinToString(",")).apply()
+        _recentChannels.value = kept
+    }
+
     fun addRecentChannel(id: Long) {
         val kept = (listOf(id) + _recentChannels.value.filter { it != id }).take(MAX_RECENT_CHANNELS)
         prefs.edit().putString(KEY_RECENT_CHANNELS, kept.joinToString(",")).apply()
@@ -532,6 +583,9 @@ class AppSettings(private val prefs: Prefs) {
     fun removeStremioAddon(manifestUrl: String) {
         persistStremioAddons(_stremioAddons.value.filterNot { it.manifestUrl == manifestUrl })
     }
+
+    /** Replaces the list (account sync). */
+    fun setStremioAddons(list: List<StremioAddon>) = persistStremioAddons(list.distinctBy { it.manifestUrl.lowercase() })
 
     private fun persistStremioAddons(list: List<StremioAddon>) {
         prefs.edit().putString(KEY_STREMIO_ADDONS, addonJson.encodeToString(list)).apply()

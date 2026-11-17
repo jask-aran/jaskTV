@@ -39,6 +39,31 @@ interface ChannelDao {
     """)
     suspend fun matchingEpgIds(ids: List<String>): List<Channel>
 
+    /**
+     * Everything Live TV's Find page classifies: a slim row per playable live stream, without stream
+     * URLs. Disabled sources and hidden channels are excluded, as in every other live list.
+     */
+    @Query("""
+        SELECT c.id, c.sourceId, c.name, c.groupKey, c.qualityRank, c.categoryId, c.logoUrl,
+               cat.name AS categoryName
+        FROM channels c
+        INNER JOIN sources s ON s.id = c.sourceId AND s.enabled = 1
+        LEFT JOIN categories cat ON cat.sourceId = c.sourceId
+            AND cat.id = c.categoryId AND cat.kind = 'LIVE'
+        WHERE c.hidden = 0
+    """)
+    suspend fun liveFindRows(): List<LiveFindRow>
+
+    /** Event-slot rename only: never inserts or deletes, so a partial refresh cannot drop other channels. */
+    @Query("UPDATE channels SET name = :name, displayName = :displayName WHERE sourceId = :sourceId AND streamId = :streamId")
+    suspend fun rename(sourceId: Long, streamId: String, name: String, displayName: String)
+
+    @Query("SELECT streamId, name FROM channels WHERE sourceId = :sourceId AND categoryId = :categoryId")
+    suspend fun namesInCategory(sourceId: Long, categoryId: String): List<StreamName>
+
+    @Query("SELECT * FROM channels WHERE id IN (:ids)")
+    suspend fun byIds(ids: List<Long>): List<Channel>
+
     /** Bounded widget/external-launch read: deliberately excludes stream URLs and source secrets. */
     @Query("""
         SELECT c.id, c.displayName, c.customName, c.groupKey, c.qualityRank,
@@ -188,6 +213,14 @@ interface ChannelDao {
     @Query("UPDATE channels SET epgOverrideId = :epgId WHERE id = :id")
     suspend fun setEpgOverride(id: Long, epgId: String?)
 
+    /** What the user set on channels (favourite, hidden, renamed), by provider key, for account sync. */
+    @Query("SELECT sourceId, streamId, favourite, hidden, customName FROM channels WHERE favourite = 1 OR hidden = 1 OR customName IS NOT NULL")
+    suspend fun userMarks(): List<ChannelMarkRow>
+
+    /** Channels with a guide chosen by hand (account sync carries these to other devices). */
+    @Query("SELECT sourceId, streamId, epgOverrideId FROM channels WHERE epgOverrideId IS NOT NULL")
+    suspend fun epgOverrides(): List<EpgOverrideRow>
+
     @Query("SELECT * FROM channels")
     suspend fun allForMatching(): List<Channel>
 
@@ -245,3 +278,24 @@ interface ChannelDao {
 
 /** Projection for [ChannelDao.channelCountsByCategory]. */
 data class CategoryChannelCount(val sourceId: Long, val categoryId: String, val count: Int)
+
+/** Projection for [ChannelDao.liveFindRows]. */
+data class LiveFindRow(
+    val id: Long,
+    val sourceId: Long,
+    val name: String,
+    val groupKey: String,
+    val qualityRank: Int,
+    val categoryId: String?,
+    val logoUrl: String?,
+    val categoryName: String?,
+)
+
+/** Projection for [ChannelDao.namesInCategory]. */
+data class StreamName(val streamId: String, val name: String)
+
+/** A user's marks on one provider stream. */
+data class ChannelMarkRow(val sourceId: Long, val streamId: String, val favourite: Boolean, val hidden: Boolean, val customName: String?)
+
+/** A hand-chosen guide for one provider stream. */
+data class EpgOverrideRow(val sourceId: Long, val streamId: String, val epgOverrideId: String)

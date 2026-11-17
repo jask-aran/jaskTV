@@ -20,8 +20,11 @@ data class PlayerPlaybackStatus(val isPlaying: Boolean, val playWhenReady: Boole
 
 /** One PiP lease per player. Never infer playback from READY or a UI toggle. */
 @Composable
-fun BindPlayerPlayback(engine: PlayerEngine, onBackground: () -> Unit = {}): PlayerPlaybackStatus {
+fun BindPlayerPlayback(engine: PlayerEngine, nowPlaying: app.opentv.remote.NowPlaying.Item? = null, onBackground: () -> Unit = {}): PlayerPlaybackStatus {
     val status by engine.status.collectAsState()
+    // What's playing, for the account's other devices and a phone used as a remote.
+    LaunchedEffect(engine, nowPlaying) { nowPlaying?.let { app.opentv.remote.NowPlaying.set(it, engine) } }
+    DisposableEffect(engine) { onDispose { app.opentv.remote.NowPlaying.clear(engine) } }
     val background by rememberUpdatedState(onBackground)
     val token = remember(engine) { Any() }
 

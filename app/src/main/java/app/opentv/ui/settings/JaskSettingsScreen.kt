@@ -5,6 +5,8 @@
  */
 package app.opentv.ui.settings
 
+import androidx.compose.material.icons.outlined.SystemUpdate
+
 import app.opentv.core.get
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -142,6 +144,7 @@ fun JaskSettingsScreen(
                     Text(stringResource(R.string.nav_settings), color = JaskInk, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 }
             }
+            item { AccountGroup() }
             item {
                 Group(null) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -150,7 +153,10 @@ fun JaskSettingsScreen(
                         Column(Modifier.weight(1f)) {
                             Text(active?.name ?: "", color = JaskInk, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(stringResource(R.string.jask_profile_local), color = JaskDim, style = MaterialTheme.typography.bodySmall)
+                            // Signed in, profiles (and each one's history) sync to every device on the account.
+                            val signedIn = app.opentv.account.AccountManager.get(context).status.collectAsState().value is app.opentv.account.AccountManager.Status.Ready
+                            Text(if (signedIn) "Profile on all your devices" else stringResource(R.string.jask_profile_local), color = JaskDim,
+                                style = MaterialTheme.typography.bodySmall)
                         }
                         app.opentv.ui.JaskGlassCircle(Icons.Outlined.Edit, stringResource(R.string.profiles_rename), size = 40.dp) { renaming = true }
                     }
@@ -275,6 +281,7 @@ fun JaskSettingsScreen(
                     Link(Icons.Outlined.Lock, stringResource(R.string.settings_parental_title), stringResource(R.string.settings_parental_subtitle), onOpenParental)
                 }
             }
+            item { AppVersionGroup() }
             item { Spacer(Modifier.navigationBarsPadding()) }
         }
     }) {
@@ -415,6 +422,33 @@ internal fun KeySheet(title: String, note: String, saved: String, onSave: (Strin
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
                 TextButton(onClick = { onSave(field); onDismiss() }, enabled = field.isNotBlank()) { Text(stringResource(R.string.common_save)) }
+            }
+        }
+    }
+}
+
+
+/** This app's version, and updates from GitHub (release app only): check, download progress, install. */
+@Composable
+private fun AppVersionGroup() {
+    val context = LocalContext.current
+    val updater = remember { app.opentv.update.AppUpdater.get(context) }
+    val state by updater.state.collectAsState()
+    Group("jaskTV") {
+        val subtitle = if (!updater.enabled) "Development build: not updated from GitHub" else when (val st = state) {
+            is app.opentv.update.AppUpdater.State.Checking -> "Checking for updates…"
+            is app.opentv.update.AppUpdater.State.UpToDate -> "Up to date"
+            is app.opentv.update.AppUpdater.State.Available -> "Version ${st.info.versionName} is available"
+            is app.opentv.update.AppUpdater.State.Downloading -> "Downloading ${st.info.versionName}… ${(st.progress * 100).toInt()}%"
+            is app.opentv.update.AppUpdater.State.Ready -> "Installing ${st.info.versionName}…"
+            is app.opentv.update.AppUpdater.State.Failed -> st.message
+            else -> "Check for updates"
+        }
+        Link(Icons.Outlined.SystemUpdate, "Version ${updater.currentVersion}", subtitle) {
+            when (val st = state) {
+                is app.opentv.update.AppUpdater.State.Available -> updater.install(st.info)
+                is app.opentv.update.AppUpdater.State.Failed -> st.info?.let(updater::install) ?: updater.check()
+                else -> updater.check()
             }
         }
     }

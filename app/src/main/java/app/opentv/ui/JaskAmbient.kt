@@ -72,7 +72,11 @@ internal fun Modifier.jaskWavesBackground(ambient: JaskAmbient): Modifier {
     val inks = goal.mapIndexed { i, c -> animateColorAsState(c, tween(300), label = "ink$i").value }
     // The flat colour the dither averages to, so heroes can fade into it before the dots begin.
     ambient.wash = wavesWash(inks)
-    if (Build.VERSION.SDK_INT < 33 || remember { debugProp("debug.jasktv.nowaves") == "1" }) return drawBehind { drawRect(inks[1]) }
+    if (Build.VERSION.SDK_INT < 33 || remember { debugProp("debug.jasktv.nowaves") == "1" }) {
+        // Flat page: heroes must fade into exactly this colour, not the dither's average.
+        ambient.wash = inks[1]
+        return drawBehind { drawRect(inks[1]) }
+    }
     // Phones dim the lower page under the bottom navigation, as Conduit does; wide screens have no
     // bottom bar, so the waves run nearly undimmed to the bottom edge.
     val fade = if (LocalLayoutClass.current == LayoutClass.PHONE) 0.6f else 0.2f

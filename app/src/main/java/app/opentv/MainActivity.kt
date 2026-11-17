@@ -81,7 +81,6 @@ import app.opentv.ui.vod.MovieDetailScreen
 import app.opentv.ui.vod.PersonScreen
 import app.opentv.ui.vod.SeriesDetailScreen
 import app.opentv.ui.vod.VodPlayerScreen
-import app.opentv.update.UpdateGate
 
 class MainActivity : ComponentActivity() {
 
@@ -150,11 +149,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        app.opentv.remote.RemoteReceiver.attach(this)
+        app.opentv.update.AppUpdater.get(this).checkIfDue()
+        app.opentv.account.AccountManager.get(this).foreground()
         PipState.setActivityVisible(true)
         PipState.setInPip(inPipWindow())
     }
 
     override fun onStop() {
+        app.opentv.remote.RemoteReceiver.detach(this)
         // PiP is STARTED while visible. Stopping means even its floating window is gone.
         PipState.setActivityVisible(false)
         PipState.setInPip(false)
@@ -169,6 +172,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) handlePairLink(intent)
         savedInstanceState?.let {
             playerOrientationSession = PlayerOrientationSession(
                 active = it.getBoolean("player.session"),
@@ -212,6 +216,16 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handlePlayIntent(intent)
+        handlePairLink(intent)
+    }
+
+    /** A TV's sign-in QR code, opened by the phone's camera: ask whether to sign that TV in. */
+    private fun handlePairLink(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.path != "/pair") return
+        val params = (data.fragment ?: "").split('&').mapNotNull { it.split('=', limit = 2).takeIf { p -> p.size == 2 } }.associate { it[0] to it[1] }
+        val code = params["c"] ?: return
+        app.opentv.account.AccountManager.get(this).offerPairing(code, params["k"])
     }
 
     private fun handlePlayIntent(intent: Intent?) {
@@ -348,7 +362,10 @@ private fun OpenTvApp(isTelevision: Boolean) {
 
     // First run goes straight to setup — an empty channel list with no explanation is the
     // worst possible first impression.
-    val start = if (sourcesUi.sources.isEmpty()) Routes.ADD_SOURCE else Routes.HOME
+    // With an account server in this build, a fresh device opens to the welcome screen (inside HOME): sign in, or
+    // a TV's QR code for the phone to approve, or add a playlist. Without one, straight to adding a provider.
+    val accountAvailable = remember { app.opentv.account.AccountManager.get(navController.context).available }
+    val start = if (sourcesUi.sources.isEmpty() && !accountAvailable) Routes.ADD_SOURCE else Routes.HOME
 
     // External ID requests and resume-last share fresh privacy/recording validation.
     val bootContext = androidx.compose.ui.platform.LocalContext.current
@@ -357,6 +374,21 @@ private fun OpenTvApp(isTelevision: Boolean) {
             // Recreate the player so its remembered zap queue is the newly validated one.
             popUpTo(Routes.PLAYER) { inclusive = true }
             launchSingleTop = true
+        }
+    }
+
+    // Another device cast something here (or this device asked to "watch here"): open it in the player.
+    val remotePlay by app.opentv.remote.RemoteSignals.pending.collectAsState()
+    LaunchedEffect(remotePlay) {
+        val p = remotePlay ?: return@LaunchedEffect
+        app.opentv.remote.RemoteSignals.consume()
+        when (p) {
+            is app.opentv.remote.RemoteSignals.Play.Live -> app.opentv.core.PlayRequests.request(p.channelId)
+            is app.opentv.remote.RemoteSignals.Play.Vod -> runCatching {
+                val route = navController.currentBackStackEntry?.destination?.route
+                if (route == Routes.VOD_PLAYER || route == Routes.PLAYER) navController.popBackStack()
+                navController.navigate(Routes.vodPlayer(p.mediaKey, p.url, p.title, p.userAgent)) { launchSingleTop = true }
+            }
         }
     }
 
@@ -390,6 +422,11 @@ private fun OpenTvApp(isTelevision: Boolean) {
             }
         }
     }
+
+    // A TV asking to be signed in (its QR code scanned by this phone): asked over whichever screen is open.
+    app.opentv.ui.settings.PairOfferDialog()
+    // A new release on GitHub: asked once per version, over whichever screen is open.
+    app.opentv.update.UpdatePrompt()
 
     Box(Modifier.fillMaxSize()) {
         NavHost(navController = navController, startDestination = start) {

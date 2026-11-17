@@ -142,6 +142,9 @@ interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE streamUrl = :url LIMIT 1")
     suspend fun byStreamUrl(url: String): Episode?
 
+    @Query("SELECT * FROM episodes WHERE sourceId = :sourceId AND episodeId = :episodeId LIMIT 1")
+    suspend fun byProviderKey(sourceId: Long, episodeId: String): Episode?
+
     @Upsert
     suspend fun upsertAll(episodes: List<Episode>)
 

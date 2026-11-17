@@ -161,13 +161,27 @@ fun MainScreen(
                     onRefresh = { if (destination == JaskDestination.MOVIES || destination == JaskDestination.SHOWS) vodViewModel.refreshVod() else onRefresh() },
                     onInventory = { showInventory = true; destination = JaskDestination.SHOWS }),
                 // Browsing scope lives in the account popover; only Library has a header button (Downloads).
-                filterIcon = if (destination == JaskDestination.LIBRARY) androidx.compose.material.icons.Icons.Filled.DownloadForOffline else null,
-                filterLabel = if (destination == JaskDestination.LIBRARY) stringResource(R.string.jask_library_downloads) else null) {
-                when (destination) {
+                filterIcon = when (destination) {
+                    JaskDestination.LIBRARY -> androidx.compose.material.icons.Icons.Filled.DownloadForOffline
+                    JaskDestination.LIVE -> androidx.compose.material.icons.Icons.Filled.Tune
+                    else -> null
+                },
+                filterLabel = when (destination) {
+                    JaskDestination.LIBRARY -> stringResource(R.string.jask_library_downloads)
+                    JaskDestination.LIVE -> "Regions, sports and channels"
+                    else -> null
+                }) {
+                // No playlists on this device (checked against the database, not a list still loading): welcome, with sign-in.
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val stored by remember { app.opentv.core.ServiceLocator.get(context).database.sources().observeAll() }
+                    .collectAsState(initial = null)
+                if (stored?.isEmpty() == true) app.opentv.ui.settings.JaskWelcome(onAddSource)
+                else when (destination) {
                     JaskDestination.MOVIES -> MoviesScreen(onOpenMovie, onResume, {},
                         hasSources, isSyncing, vodViewModel)
                     JaskDestination.SHOWS -> SeriesScreen(onOpenSeries, onResume, {}, hasSources, isSyncing, vodViewModel)
-                    JaskDestination.LIVE -> Box(Modifier.fillMaxSize().padding(LocalJaskContentPadding.current)) {
+                    // Edge to edge: Live TV's hero runs under the header; its pages add the content padding themselves.
+                    JaskDestination.LIVE -> Box(Modifier.fillMaxSize()) {
                         app.opentv.ui.channels.MyTvScreen(query = liveQuery, onPlay = onPlayChannel)
                     }
                     JaskDestination.LIBRARY -> Box(Modifier.fillMaxSize()) {

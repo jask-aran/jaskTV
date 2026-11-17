@@ -101,6 +101,16 @@ class XtreamApi(
         }
     }
 
+    /** Stream id → current name for one live category. Event slots are renamed per event; this keeps them fresh cheaply. */
+    suspend fun liveNamesInCategory(source: Source, categoryId: String): Map<String, String> = withContext(Dispatchers.IO) {
+        getJson(source, "get_live_streams") { it.addQueryParameter("category_id", categoryId) }.arrayOrEmpty.mapNotNull { element ->
+            val obj = element.jsonObjectOrNull ?: return@mapNotNull null
+            val id = obj["stream_id"].asStringOrNull ?: return@mapNotNull null
+            val name = obj["name"].asStringOrNull ?: return@mapNotNull null
+            id to name
+        }.toMap()
+    }
+
     suspend fun liveStreams(source: Source): List<Channel> = withContext(Dispatchers.IO) {
         getJson(source, "get_live_streams").arrayOrEmpty.mapIndexedNotNull { index, element ->
             val obj = element.jsonObjectOrNull ?: return@mapIndexedNotNull null

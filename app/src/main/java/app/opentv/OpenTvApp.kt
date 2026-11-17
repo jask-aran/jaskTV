@@ -49,6 +49,14 @@ class OpenTvApp : Application(), ImageLoaderFactory {
             }
             .crossfade(false)
             .allowRgb565(true)
+            // Wikimedia (many IPTV-org channel logos) answers 403 to OkHttp's default User-Agent.
+            .okHttpClient {
+                okhttp3.OkHttpClient.Builder().addInterceptor { chain ->
+                    val request = chain.request()
+                    chain.proceed(if (request.header("User-Agent") != null) request
+                        else request.newBuilder().header("User-Agent", IMAGE_USER_AGENT).build())
+                }.build()
+            }
             .build()
 
     // So notifications and any app-context resources use the chosen language too, not just the UI.
@@ -63,9 +71,8 @@ class OpenTvApp : Application(), ImageLoaderFactory {
         app.opentv.core.AppText.init(this)
         app.opentv.widget.RecentWidgetUpdates.start(this, appScope)
         SyncWorker.schedule(this)
-        // Encrypted metadata sync: no daemon. WorkManager runs opportunistically when online.
-        app.opentv.sync.CloudSyncWorker.schedule(this)
-        app.opentv.sync.CloudSyncWorker.onOpen(this)
+        // jaskTV account (optional): if signed in, sync playlists and preferences.
+        app.opentv.account.AccountManager.get(this).start()
         appScope.launch(Dispatchers.IO) {
             runCatching {
                 val store = graph.localPlaylistStore
@@ -101,13 +108,6 @@ class OpenTvApp : Application(), ImageLoaderFactory {
             }
         }
 
-        // Free, server-less "cloud" sync through the user's own NAS, if they've opted in. Writes
-        // this device's bundle to the shared folder and merges in every other device's — favourites,
-        // watch history and NAS recordings. Fire-and-forget and fully guarded: a blank or unreachable
-        // NAS returns a result rather than throwing, so a bad launch never costs the user anything.
-        if (graph.settings.nasAutoSync.value) {
-            appScope.launch { runCatching { app.opentv.sync.NasSync(graph).sync() } }
-        }
 
         // A queue left mid-way (app killed, phone rebooted) picks up where it stopped.
         appScope.launch { runCatching { graph.downloadRepository.pump() } }
@@ -125,5 +125,10 @@ class OpenTvApp : Application(), ImageLoaderFactory {
             // the refresh button. ensureFeeds + auto-enable-by-region + matcher all live here.
             graph.epgRepository.syncAll(System.currentTimeMillis(), force = false)
         }
+    }
+
+    companion object {
+        /** Generic client name for image requests; no user or device details. */
+        const val IMAGE_USER_AGENT = "jaskTV/1.0 (Android)"
     }
 }

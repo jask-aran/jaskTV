@@ -81,6 +81,10 @@ interface SeriesDao {
     @Query("SELECT * FROM series WHERE sourceId = :sourceId AND seriesId = :seriesId LIMIT 1")
     suspend fun byProviderId(sourceId: Long, seriesId: String): Series?
 
+    /** Favourite shows by provider key, for account sync. */
+    @Query("SELECT sourceId, seriesId AS providerId FROM series WHERE favourite = 1")
+    suspend fun favouriteKeys(): List<ProviderKeyRow>
+
     /** Newest-first, for the "Recently Added" home row. Reactive so it fills in as VOD sync lands. */
     @Query("SELECT * FROM series ORDER BY addedMillis DESC LIMIT :limit")
     fun observeRecentlyAdded(limit: Int): Flow<List<Series>>

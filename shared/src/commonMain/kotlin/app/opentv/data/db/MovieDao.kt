@@ -155,6 +155,10 @@ abstract class MovieDao {
     @Query("SELECT * FROM movies WHERE sourceId = :sourceId AND streamId = :streamId LIMIT 1")
     abstract suspend fun byProviderKey(sourceId: Long, streamId: String): Movie?
 
+    /** Favourite movies by provider key, for account sync. */
+    @Query("SELECT sourceId, streamId AS providerId FROM movies WHERE favourite = 1")
+    abstract suspend fun favouriteKeys(): List<ProviderKeyRow>
+
     @Query("UPDATE movies SET favourite = :favourite WHERE id = :id")
     abstract suspend fun setFavourite(id: Long, favourite: Boolean)
 
@@ -192,3 +196,6 @@ abstract class MovieDao {
     @Query("DELETE FROM movies WHERE sourceId = :sourceId")
     abstract suspend fun deleteForSource(sourceId: Long)
 }
+
+/** A provider item: its source and the provider's own id. */
+data class ProviderKeyRow(val sourceId: Long, val providerId: String)

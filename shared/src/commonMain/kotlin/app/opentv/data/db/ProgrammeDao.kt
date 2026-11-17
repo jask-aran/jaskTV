@@ -43,6 +43,10 @@ interface ProgrammeDao {
         }
     }
 
+    /** What is on now on these guide channels (Live TV tiles). Uses the epgChannelId index. */
+    @Query("SELECT * FROM programmes WHERE epgChannelId IN (:ids) AND startUtcMillis <= :now AND endUtcMillis > :now")
+    suspend fun nowOn(ids: List<String>, now: Long): List<app.opentv.data.model.Programme>
+
     @Query("SELECT MIN(startUtcMillis) AS `start`, MAX(endUtcMillis) AS `end` FROM programmes")
     suspend fun phoneHorizon(): PhoneGuideHorizon
 

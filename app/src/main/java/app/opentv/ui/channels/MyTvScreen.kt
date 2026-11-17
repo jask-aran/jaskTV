@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -23,7 +24,6 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MyTvScreen(query: String, onPlay: (Channel) -> Unit, vm: ChannelsViewModel = viewModel()) {
-    val onFindChannels: () -> Unit = app.opentv.ui.LocalJaskOpenSearch.current
     val context = LocalContext.current
     val graph = remember(context) { ServiceLocator.get(context) }
     val repository = remember(context) { MyTvRepository(context) }
@@ -37,7 +37,12 @@ fun MyTvScreen(query: String, onPlay: (Channel) -> Unit, vm: ChannelsViewModel =
     var manage by remember { mutableStateOf(false) }
     var mapping by remember { mutableStateOf<MyTvRepository.Entry?>(null) }
     val filterRequest = app.opentv.ui.LocalJaskFilterRequest.current
-    LaunchedEffect(filterRequest) { if (filterRequest > 0) manage = true }
+    // Live TV opens on its home (sports, My TV tiles, browse); the timeline guide is a view behind "Guide".
+    var guide by rememberSaveable { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(guide) { guide = false }
+    val showFind = !guide
+    var findSheet by remember { mutableIntStateOf(0) }
+    LaunchedEffect(filterRequest) { if (filterRequest > 0) { if (showFind) findSheet++ else manage = true } }
     LaunchedEffect(saved, guideVersion, sources) { entries = saved.map { repository.resolve(it) } }
     LaunchedEffect(Unit) { vm.setCompactGuide(true); while (true) { now = System.currentTimeMillis(); delay(60_000) } }
     val rows = remember(entries) { entries.map { entry ->
@@ -69,11 +74,18 @@ fun MyTvScreen(query: String, onPlay: (Channel) -> Unit, vm: ChannelsViewModel =
         }
         onPlay(channel)
     }
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("My TV", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-            if (saved.isNotEmpty()) TextButton(onClick = { manage = true }) { Text("Manage") }
-            TextButton(onClick = onFindChannels) { Text("Add channels") }
+    val myTvTiles = remember(rows) { rows.map { row ->
+        app.opentv.livetv.find.FindChannel(row.key.toString(), row.primary.shownName, row.primary.logoUrl, "", null,
+            app.opentv.livetv.find.LiveGenre.OTHER, listOf(row.primary.id), null)
+    } }
+    if (showFind) {
+        LiveFind(query, { play(it) }, findSheet, myTvTiles, onGuide = { guide = true })
+        return
+    }
+    Column(Modifier.fillMaxSize().padding(app.opentv.ui.LocalJaskContentPadding.current)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            app.opentv.ui.settings.JaskPill("‹ Live TV") { guide = false }
+            if (saved.isNotEmpty()) app.opentv.ui.settings.JaskPill("Manage") { manage = true }
         }
         if (searching && shownRows.isEmpty() && addable.isEmpty() && !f1Query) {
             Text(androidx.compose.ui.res.stringResource(app.opentv.R.string.jask_no_matches, needle), Modifier.padding(24.dp),
@@ -84,7 +96,7 @@ fun MyTvScreen(query: String, onPlay: (Channel) -> Unit, vm: ChannelsViewModel =
                 if (f1Query) item(key = "f1") { F1Sessions(needle) { play(it) } }
             }
         } else if (saved.isEmpty()) {
-            MyTvEmptyState(onFindChannels)
+            MyTvEmptyState { guide = false }
         } else if (rows.isEmpty()) {
             Column(Modifier.padding(24.dp)) {
                 Text("Your saved channels are unavailable", style = MaterialTheme.typography.titleMedium)

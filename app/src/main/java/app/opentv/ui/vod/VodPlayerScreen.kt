@@ -202,7 +202,7 @@ fun VodPlayerScreen(
         }
     }
 
-    val playback = BindPlayerPlayback(controller) {
+    val playback = BindPlayerPlayback(controller, app.opentv.remote.NowPlaying.Item(mediaKey = mediaKey, title = title)) {
         val pos = controller.positionMillis
         val dur = controller.durationMillis
         sessionPosition = pos
@@ -226,9 +226,6 @@ fun VodPlayerScreen(
             val dur = controller.durationMillis
             kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.NonCancellable).launch {
                 savePosition(pos, dur)
-                // Publish the final resume point once playback ends, not just on a 30-minute
-                // timer. The worker waits for connectivity and does not require a running peer.
-                app.opentv.sync.CloudSyncWorker.onOpen(context)
             }
             controller.release()
             scope.cancel()
@@ -318,8 +315,27 @@ fun VodPlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
             .onPreviewKeyEvent { event ->
+                val down = event.type == KeyEventType.KeyDown
                 when {
                     event.key == Key.Back || event.key == Key.Escape -> false
+                    // The remote's media keys act at once, controls up or not (Android TV convention).
+                    down && (event.key == Key.MediaPlayPause || event.key == Key.MediaPlay || event.key == Key.MediaPause) -> {
+                        controller.setPlaying(when (event.key) { Key.MediaPlay -> true; Key.MediaPause -> false; else -> !controller.status.value.isPlaying })
+                        reveal(); true
+                    }
+                    down && (event.key == Key.MediaFastForward || event.key == Key.MediaSkipForward) -> {
+                        if (growingRec) seekRelative(15_000L) else controller.seekForward(); reveal(); true
+                    }
+                    down && (event.key == Key.MediaRewind || event.key == Key.MediaSkipBackward) -> {
+                        if (growingRec) seekRelative(-15_000L) else controller.seekBackward(); reveal(); true
+                    }
+                    // Controls hidden: left/right skip back/forward (and show where), as TV players do.
+                    down && !controlsVisible && event.key == Key.DirectionLeft -> {
+                        if (growingRec) seekRelative(-15_000L) else controller.seekBackward(); reveal(); true
+                    }
+                    down && !controlsVisible && event.key == Key.DirectionRight -> {
+                        if (growingRec) seekRelative(15_000L) else controller.seekForward(); reveal(); true
+                    }
                     event.type == KeyEventType.KeyDown && !controlsVisible -> { reveal(); true }
                     event.type == KeyEventType.KeyDown -> { interaction++; false }
                     else -> false

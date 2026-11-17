@@ -64,11 +64,6 @@ fun LibraryScreen(
         .collectAsState(initial = emptyList())
     val collections by remember(dao, profileId) { dao.observeCollections(profileId) }.collectAsState(initial = emptyList())
     val memberships by remember(dao) { dao.observeAllEntries() }.collectAsState(initial = emptyList())
-    LaunchedEffect(collections, memberships) {
-        // Debounce rapid edits into one network-constrained cloud sync request.
-        kotlinx.coroutines.delay(1_500)
-        app.opentv.sync.CloudSyncWorker.onOpen(context)
-    }
     val collectedChannels by remember(dao, profileId) { dao.observeAllCollectedChannels(profileId) }.collectAsState(initial = emptyList())
     val collectedMovies by remember(dao, profileId) { dao.observeAllCollectedMovies(profileId) }.collectAsState(initial = emptyList())
     val collectedShows by remember(dao, profileId) { dao.observeAllCollectedShows(profileId) }.collectAsState(initial = emptyList())

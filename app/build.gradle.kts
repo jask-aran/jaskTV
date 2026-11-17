@@ -1,8 +1,15 @@
+import java.util.Properties
+import java.net.URI
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+val localProperties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
 }
 
 android {
@@ -14,9 +21,19 @@ android {
         applicationId = "app.jasktv"
         minSdk = 23
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Set by the release workflow from the tag (v1.2.3 → 1.2.3 / 10203); local builds stay 1 / 0.1.0.
+        versionCode = providers.gradleProperty("jasktv.versionCode").orNull?.toInt() ?: 1
+        versionName = providers.gradleProperty("jasktv.versionName").orNull ?: "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Account server and Google sign-in, from the ignored local.properties (or -P/environment in CI).
+        // Either blank: sign-in is hidden and the app works without an account.
+        fun setting(key: String) = (providers.gradleProperty(key).orNull ?: localProperties.getProperty(key) ?: "").replace("\"", "")
+        buildConfigField("String", "ACCOUNT_SERVER", "\"${setting("jasktv.accountServer")}\"")
+        // Where in-app updates come from (GitHub Releases of this public repository).
+        buildConfigField("String", "UPDATE_REPO", "\"jask-aran/jaskTV\"")
+        // The account server's host, so its /pair links (the TV's QR code) open in the app.
+        manifestPlaceholders["accountHost"] = runCatching { URI(setting("jasktv.accountServer")).host }.getOrNull() ?: "localhost"
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${setting("jasktv.googleWebClientId")}\"")
     }
 
     signingConfigs {
@@ -130,6 +147,11 @@ dependencies {
     implementation(libs.androidx.paging.compose)
 
     implementation(libs.okhttp)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
+    implementation(libs.googleid)
+    implementation(libs.zxing.core)
+    implementation(libs.gms.code.scanner)
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

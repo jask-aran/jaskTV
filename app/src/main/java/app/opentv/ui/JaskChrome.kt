@@ -1,5 +1,9 @@
 package app.opentv.ui
 
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+
 import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
@@ -85,7 +89,12 @@ internal fun JaskChromeFrame(
         LocalJaskContentPadding provides if (wide) PaddingValues(top = statusBar + 80.dp, bottom = navBar + 16.dp)
             else PaddingValues(top = statusBar + 72.dp, bottom = navBar + 84.dp)) {
         // The waves are part of the recorded page, so the header and rail glass blur them too.
-        JaskSurfaceHost(Modifier.fillMaxSize().background(Color.Black), background = {
+        // The remote's search key (or a voice remote's) opens search, as everywhere on Android TV.
+        JaskSurfaceHost(Modifier.fillMaxSize().background(Color.Black).onPreviewKeyEvent { e ->
+            if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && e.key == androidx.compose.ui.input.key.Key.Search && searchEnabled) {
+                searching = true; JaskTvKeyboardOpen.value = true; true
+            } else false
+        }, background = {
             Box(Modifier.matchParentSize().jaskWavesBackground(ambient))
             content()
         }) {
@@ -104,6 +113,16 @@ internal fun JaskChromeFrame(
             else JaskBottomBar(current, onSelect, query, onQuery, searchEnabled, searching, { searching = it },
                 Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .padding(horizontal = 16.dp, vertical = 12.dp))
+            // TV: search's in-app keyboard along the bottom while searching; Back puts it away (then Back ends the search).
+            if (LocalLayoutClass.current == LayoutClass.TV) {
+                LaunchedEffect(searching) { JaskTvKeyboardOpen.value = searching }
+                if (searching && JaskTvKeyboardOpen.value) {
+                    androidx.activity.compose.BackHandler { JaskTvKeyboardOpen.value = false }
+                    JaskTvKeyboard(onType = { onQuery((query + it).take(60)) }, onBackspace = { onQuery(query.dropLast(1)) }, onClear = { onQuery("") },
+                        onHide = { JaskTvKeyboardOpen.value = false },
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp))
+                }
+            }
         }
     }
 }
@@ -359,6 +378,8 @@ internal fun JaskHeader(onFilter: () -> Unit, onAccount: () -> Unit, modifier: M
                 Icon(filterIcon, filterLabel ?: stringResource(R.string.catalogue_filters), Modifier.size(20.dp), tint = Color(0xFFF0F0F0))
             }
         }
+        // Your other devices and the remote, beside the account circle (only when signed in with more than one device).
+        JaskDevicesButton()
         Box {
             JaskGlassSurface(Modifier.size(48.dp), RoundedCornerShape(50), showFocus = true) {
                 IconButton(onAccount, Modifier.fillMaxSize()) {
@@ -385,7 +406,9 @@ internal fun JaskBottomBar(current: JaskDestination, onSelect: (JaskDestination)
     fun close() { onQuery(""); focusManager.clearFocus(); setSearching(false) }
     androidx.activity.compose.BackHandler(searching) { close() }
     LaunchedEffect(current) { if (query.isEmpty()) setSearching(false) }
-    LaunchedEffect(searching) { if (searching) runCatching { focus.requestFocus(); keyboard?.show() } }
+    val tv = LocalLayoutClass.current == LayoutClass.TV
+    // A TV types with the in-app keyboard (JaskTvKeyboard, shown by the chrome), not the system one.
+    LaunchedEffect(searching) { if (searching && !tv) runCatching { focus.requestFocus(); keyboard?.show() } }
     Row(modifier.widthIn(max = 420.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (searching) {
@@ -400,7 +423,9 @@ internal fun JaskBottomBar(current: JaskDestination, onSelect: (JaskDestination)
                             JaskDestination.SHOWS -> R.string.jask_search_shows
                             JaskDestination.LIBRARY -> R.string.jask_search_library
                         }), color = Color(0xFFBDBDBD), style = style, maxLines = 1)
-                        androidx.compose.foundation.text.BasicTextField(query, { onQuery(it.take(60)) },
+                        if (tv) Text(query, Modifier.fillMaxWidth().testTag("jask.search").focusRequester(focus).clickable { JaskTvKeyboardOpen.value = true },
+                            style = style, maxLines = 1)
+                        else androidx.compose.foundation.text.BasicTextField(query, { onQuery(it.take(60)) },
                             Modifier.fillMaxWidth().testTag("jask.search").focusRequester(focus), singleLine = true, textStyle = style,
                             cursorBrush = SolidColor(Color(0xFFF5F5F5)),
                             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
@@ -424,3 +449,7 @@ internal fun JaskBottomBar(current: JaskDestination, onSelect: (JaskDestination)
         }
     }
 }
+
+
+/** Whether search's in-app TV keyboard is up (one search bar at a time, so one shared state). */
+internal val JaskTvKeyboardOpen = androidx.compose.runtime.mutableStateOf(false)

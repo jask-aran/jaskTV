@@ -178,6 +178,8 @@ fun PlayerScreen(
 
     var variants by remember { mutableStateOf<List<Channel>>(emptyList()) }
     var currentId by remember { mutableStateOf<Long?>(null) }
+    // The channel on screen, for presence and the remote (zapping changes it).
+    LaunchedEffect(currentId) { currentId?.let { app.opentv.remote.NowPlaying.set(app.opentv.remote.NowPlaying.Item(channelId = it), controller) } }
     // The channel we were on before this one — powers the "Last channel" recall in the list.
     var previousId by remember { mutableStateOf<Long?>(null) }
     // Digits typed on the remote accumulate here, then jump to that channel number after a beat.
@@ -368,6 +370,11 @@ fun PlayerScreen(
                 when {
                     // Never swallow Back/Escape — they must reach the back handler.
                     event.key == Key.Back || event.key == Key.Escape -> false
+                    // The remote's play/pause (live pause holds when "Pause live TV" is on).
+                    event.key == Key.MediaPlayPause || event.key == Key.MediaPlay || event.key == Key.MediaPause -> {
+                        controller.setPlaying(when (event.key) { Key.MediaPlay -> true; Key.MediaPause -> false; else -> !controller.status.value.isPlaying })
+                        reveal(); true
+                    }
                     // Typing a channel number jumps to it, TiviMate-style.
                     digit != null -> {
                         numberEntry = (numberEntry + digit).take(4)
