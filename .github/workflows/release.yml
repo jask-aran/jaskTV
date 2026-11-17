@@ -43,6 +43,18 @@ jobs:
           test -s "$RUNNER_TEMP/upload.jks"
           echo "KEYSTORE_PATH=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
 
+      # v1.2.3 → versionName 1.2.3, versionCode 10203 (what the in-app updater compares). Manual runs: 0.0.<run>.
+      - name: Version from the tag
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            NAME="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+            CODE=$(( BASH_REMATCH[1] * 10000 + BASH_REMATCH[2] * 100 + BASH_REMATCH[3] ))
+          else
+            NAME="0.0.${GITHUB_RUN_NUMBER}"; CODE=1
+          fi
+          echo "VERSION_NAME=$NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+
       - name: Unit tests
         run: ./gradlew test
 
@@ -51,7 +63,9 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew assembleRelease
+          # The account server the app signs in to (a repository variable; the URL isn't secret).
+          ACCOUNT_SERVER: ${{ vars.ACCOUNT_SERVER }}
+        run: ./gradlew assembleRelease -Pjasktv.versionName="$VERSION_NAME" -Pjasktv.versionCode="$VERSION_CODE" -Pjasktv.accountServer="$ACCOUNT_SERVER"
 
       # A stable asset name matters: the install page and the /apk short link both look for
       # a file ending in .apk, and a predictable name keeps direct links working.
@@ -70,6 +84,10 @@ jobs:
           mkdir -p dist
           cp "$SOURCE" "dist/jasktv-${TAG}.apk"
           cp "$SOURCE" "dist/jasktv.apk"
+          # What the in-app updater reads (releases/latest/download/update.json): version, file and checksum.
+          SHA=$(sha256sum "dist/jasktv.apk" | cut -d' ' -f1)
+          printf '{"versionCode":%s,"versionName":"%s","apk":"jasktv.apk","sha256":"%s"}\n' "$VERSION_CODE" "$VERSION_NAME" "$SHA" > dist/update.json
+          cat dist/update.json
           echo "path=dist/jasktv-${TAG}.apk" >> "$GITHUB_OUTPUT"
           echo "signed=yes" >> "$GITHUB_OUTPUT"
 
@@ -97,6 +115,8 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.apk
+          files: |
+            dist/*.apk
+            dist/update.json
           generate_release_notes: false
           body_path: release-notes.md
