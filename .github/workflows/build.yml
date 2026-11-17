@@ -27,8 +27,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
+      # The runner image already has the Android SDK (setup-android@v3 failed installing a package that no longer exists).
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
