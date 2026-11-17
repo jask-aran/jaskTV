@@ -1,0 +1,26 @@
+// jaskTV account server. Top level is local development; `--env staging` deploys the test server.
+// A production environment gets added beside staging once the domain and Google sign-in are set up.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "jasktv-account",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "jasktv-accounts-local", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+  ],
+  "durable_objects": { "bindings": [{ "name": "ACCOUNT", "class_name": "Account" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Account"] }],
+  // Google OAuth web client IDs whose sign-in tokens are accepted (comma-separated). Empty: Google sign-in is off.
+  "vars": { "GOOGLE_CLIENT_IDS": "", "ENVIRONMENT": "local" },
+  "env": {
+    "staging": {
+      "name": "jasktv-account-staging",
+      "d1_databases": [
+        { "binding": "DB", "database_name": "jasktv-accounts-staging", "database_id": "fdd7d070-2f74-4df8-8f53-be2798f54bb8", "migrations_dir": "migrations" }
+      ],
+      "durable_objects": { "bindings": [{ "name": "ACCOUNT", "class_name": "Account" }] },
+      "vars": { "GOOGLE_CLIENT_IDS": "", "ENVIRONMENT": "staging", "ANDROID_CERTS": "0D:3D:1A:0C:5E:87:2E:63:AD:2B:FA:42:74:8B:9D:78:2E:9A:A5:28:D0:A2:42:AF:F5:20:64:52:12:47:C4:F4,8D:4E:6B:8B:7D:C3:A1:1F:84:38:3F:7A:2D:06:82:D6:44:64:51:42:F2:3F:6E:F9:A6:41:52:82:05:19:86:83" }
+    }
+  }
+}
