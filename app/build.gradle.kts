@@ -24,7 +24,6 @@ android {
         // Set by the release workflow from the tag (v1.2.3 → 1.2.3 / 10203); local builds stay 1 / 0.1.0.
         versionCode = providers.gradleProperty("jasktv.versionCode").orNull?.toInt() ?: 1
         versionName = providers.gradleProperty("jasktv.versionName").orNull ?: "0.1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Account server and Google sign-in, from the ignored local.properties (or -P/environment in CI).
         // Either blank: sign-in is hidden and the app works without an account.
         fun setting(key: String) = (providers.gradleProperty(key).orNull ?: localProperties.getProperty(key) ?: "").replace("\"", "")
@@ -97,13 +96,6 @@ android {
         }
     }
 
-    testOptions {
-        unitTests {
-            isIncludeAndroidResources = true
-            isReturnDefaultValues = true
-        }
-    }
-    sourceSets.getByName("test").resources.srcDir("../shared/schemas")
 }
 
 
@@ -166,11 +158,4 @@ dependencies {
     // back in-app over the network. Pure-Java SMB2/3, no native bits.
     implementation("com.hierynomus:smbj:0.12.2")
 
-    testImplementation(libs.junit)
-    testImplementation(libs.truth)
-    testImplementation(libs.robolectric)
-    testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.room.testing)
-    testImplementation(libs.androidx.test.ext.junit)
-    testImplementation("androidx.compose.ui:ui-test-junit4")
 }

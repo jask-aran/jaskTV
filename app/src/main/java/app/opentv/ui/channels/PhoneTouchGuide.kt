@@ -1,5 +1,6 @@
 package app.opentv.ui.channels
 
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -100,14 +101,14 @@ fun PhoneTouchGuide(
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(enabled = date > firstDate, onClick = { epochDay = date.minusDays(1).toEpochDay() }) {
+            IconButton(enabled = date > firstDate, onClick = { epochDay = date.minusDays(1).toEpochDay() }, modifier = Modifier.jaskFocusRing()) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, stringResource(R.string.phone_guide_previous_day))
             }
             Text(date.format(DateTimeFormatter.ofPattern("EEE d MMM")) + " · " + time(now), Modifier.weight(1f))
-            IconButton(enabled = date < lastDate, onClick = { epochDay = date.plusDays(1).toEpochDay() }) {
+            IconButton(enabled = date < lastDate, onClick = { epochDay = date.plusDays(1).toEpochDay() }, modifier = Modifier.jaskFocusRing()) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, stringResource(R.string.phone_guide_next_day))
             }
-            TextButton(onClick = { epochDay = today.toEpochDay(); offsetHours = hoursBeforeNow(PhoneGuideTimeline.day(today, zone).start) }) {
+            TextButton(onClick = { epochDay = today.toEpochDay(); offsetHours = hoursBeforeNow(PhoneGuideTimeline.day(today, zone).start) }, modifier = Modifier.jaskFocusRing()) {
                 Text(stringResource(R.string.phone_guide_now))
             }
         }
@@ -167,8 +168,9 @@ fun PhoneTouchGuide(
                                     Spacer(Modifier.width(6.dp))
                                 }
                                 Column {
+                                    // Its own colour: outside a Surface the default content colour is near-black on this dark cell.
                                     Text(row.primary.shownName, maxLines = if (canAdd) 2 else 3, overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.labelMedium)
+                                        style = MaterialTheme.typography.labelMedium, color = app.opentv.ui.settings.JaskInk)
                                     if (canAdd) AddToMyTvButton(row.primary, compact = true)
                                 }
                             }
@@ -182,7 +184,7 @@ fun PhoneTouchGuide(
                                         val label = "${programme.title}, ${time(programme.startUtcMillis)}–${time(programme.endUtcMillis)}"
                                         Box(Modifier.offset(x = PhoneGuideTimeline.position(clipped.start, visible.start, scale).dp)
                                             .width(PhoneGuideTimeline.position(clipped.end, clipped.start, scale).dp)
-                                             .fillMaxHeight().clipToBounds().background(MaterialTheme.colorScheme.secondaryContainer)
+                                             .fillMaxHeight().clipToBounds().background(MaterialTheme.colorScheme.onSurface.copy(alpha = .1f))
                                              .border(1.dp, Color.Black)
                                             .semantics { contentDescription = label }
                                             .clickable { onProgramme(current, programme) }) {
@@ -193,7 +195,7 @@ fun PhoneTouchGuide(
                                 }
                                 if (now in visible.start until visible.end) {
                                     Box(Modifier.offset(x = PhoneGuideTimeline.position(now, visible.start, scale).dp)
-                                        .width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
+                                        .width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.onSurface.copy(alpha = .85f)))
                                 }
                             }
                         }
@@ -213,17 +215,19 @@ fun PhoneTouchGuide(
         }
     }
     detailRow?.let { row ->
-        ModalBottomSheet(onDismissRequest = { detailRow = null }) {
-            Text(row.primary.shownName, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
-            TextButton(enabled = row.variants.isNotEmpty(), onClick = { detailRow = null; onPlay(row) }) { Text(stringResource(R.string.guide_watch_channel)) }
+        app.opentv.ui.JaskSheet(onDismiss = { detailRow = null }) {
+            Text(row.primary.shownName, color = app.opentv.ui.settings.JaskInk, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
+            TextButton(enabled = row.variants.isNotEmpty(), onClick = { detailRow = null; onPlay(row) }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.guide_watch_channel)) }
             if (row.programmes.isEmpty()) {
-                Text(stringResource(R.string.guide_no_info_channel), modifier = Modifier.padding(16.dp))
+                Text(stringResource(R.string.guide_no_info_channel), color = app.opentv.ui.settings.JaskDim, modifier = Modifier.padding(16.dp))
             }
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp).navigationBarsPadding()) {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                 items(row.programmes, key = { it.id }) { programme ->
-                    ListItem(headlineContent = { Text(programme.title) },
-                        supportingContent = { Text("${time(programme.startUtcMillis)}–${time(programme.endUtcMillis)}") },
-                        modifier = Modifier.clickable { detailRow = null; onProgramme(row, programme) })
+                    Column(Modifier.fillMaxWidth().clickable { detailRow = null; onProgramme(row, programme) }.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Text(programme.title, color = app.opentv.ui.settings.JaskInk, style = MaterialTheme.typography.bodyLarge)
+                        Text("${time(programme.startUtcMillis)}–${time(programme.endUtcMillis)}", color = app.opentv.ui.settings.JaskDim,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }

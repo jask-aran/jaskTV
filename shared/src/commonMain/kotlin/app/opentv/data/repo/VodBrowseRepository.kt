@@ -36,10 +36,17 @@ data class VodBrowseFilter(val sourceId: Long? = null, val category: VodCategory
 
 data class VodCategoryCount(val sourceId: Long, val categoryId: String, val count: Int)
 
+/**
+ * Paging for the browse grids. Loads ~20 rows ahead of the d-pad so the next page is in before it is reached
+ * (it was 2 rows, so "Loading titles…" showed on almost every scroll), and keeps every page it has loaded:
+ * a card is a few hundred bytes, while dropping pages made scrolling back reload (and jump) what was just seen.
+ */
+fun browsePaging() = PagingConfig(pageSize = 60, initialLoadSize = 180, prefetchDistance = 120,
+    maxSize = PagingConfig.MAX_SIZE_UNBOUNDED, enablePlaceholders = false)
+
 /** Room owns invalidation and LIMIT/OFFSET; no in-memory catalogue grouping or page-boundary loss. */
 class VodBrowseRepository(private val movies: MovieDao, private val series: SeriesDao) {
-    private fun config() = PagingConfig(pageSize = 48, initialLoadSize = 96, prefetchDistance = 12,
-        maxSize = 480, enablePlaceholders = false)
+    private fun config() = browsePaging()
 
     fun movies(filter: VodBrowseFilter) = Pager(config()) {
         movies.browseGroups(filter.effectiveSourceId, filter.category?.categoryId, filter.query.trim())

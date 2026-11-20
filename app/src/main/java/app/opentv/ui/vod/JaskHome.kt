@@ -1,10 +1,23 @@
 package app.opentv.ui.vod
 
+import androidx.compose.material.icons.outlined.Schedule
+import app.opentv.ui.jaskRowEnds
+import app.opentv.ui.jaskShelf
+import app.opentv.ui.jaskShelfItem
+import app.opentv.ui.jaskSlot
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import app.opentv.ui.jaskWhiteFill
+import app.opentv.ui.jaskFocusEntry
+import app.opentv.ui.jaskCardArt
+import app.opentv.ui.jaskCard
 import androidx.compose.foundation.background
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.launch
 import app.opentv.R
 import androidx.compose.ui.res.stringResource
@@ -51,6 +64,7 @@ import app.opentv.ui.VodViewModel.CatalogueHome
 import app.opentv.ui.VodViewModel.HomeStyle
 import app.opentv.ui.VodViewModel.HomeTitle
 import coil.compose.AsyncImage
+import coil.imageLoader
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -60,7 +74,9 @@ import java.util.Locale
  * LazyVerticalGrid of PagedVodGrid, so there is a single vertical scroll.
  */
 
-private fun rating(value: Double?) = value?.takeIf { it > 0 }?.let { "★ " + String.format(Locale.getDefault(), "%.1f", it) }
+/** Whose score a home title carries: TMDB's for titles matched to TMDB, the provider's for raw ("raw:…") or unmatched ones. */
+internal val HomeTitle.ratingSource get() =
+    if (key.startsWith("movie:") || key.startsWith("show:") || tmdbId != null) TmdbRating else ProviderRating
 
 /** Lets a full-span grid item ignore the grid's 16dp side padding. */
 private fun Modifier.bleed(side: androidx.compose.ui.unit.Dp) = layout { measurable, constraints ->
@@ -88,15 +104,20 @@ internal fun LazyGridScope.jaskHome(home: CatalogueHome, columns: Int, watchlist
                 // Wide screens: one sideways-scrolling shelf per section, edge to edge.
                 // Prefetch a screenful of cards when the shelf is about to scroll in, so a new shelf
                 // isn't composed all at once in the frame it appears.
+                // The strategy is a key of the remembered state: a new instance on each recomposition reset the shelf
+                // to its start every time the page recomposed (each d-pad move), so it never scrolled.
                 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-                val shelf = androidx.compose.foundation.lazy.rememberLazyListState(
-                    prefetchStrategy = androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 12))
-                androidx.compose.foundation.lazy.LazyRow(Modifier.bleed(16.dp), state = shelf,
+                val prefetch = androidx.compose.runtime.remember { androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 12) }
+                @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+                val shelf = androidx.compose.foundation.lazy.rememberLazyListState(prefetchStrategy = prefetch)
+                val shelfFocus = app.opentv.ui.rememberJaskShelfFocus(shelf)
+                androidx.compose.foundation.lazy.LazyRow(Modifier.bleed(16.dp).then(if (section.items.isNotEmpty()) Modifier.jaskSlot("home-shelf-${section.key}") else Modifier).jaskShelf(shelfFocus), state = shelf,
                     contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     items(section.items.size, key = { "shelf-${section.key}-${section.items[it].key}" }) { i ->
                         val title = section.items[i]
-                        if (section.style == HomeStyle.WIDE) JaskWideCard(title, Modifier.width(340.dp)) { onOpen(title) }
-                        else Box(Modifier.width(158.dp)) { JaskPosterCard(title.title, title.poster, title.facts()) { onOpen(title) } }
+                        val entry = Modifier.jaskShelfItem(shelfFocus, i)
+                        if (section.style == HomeStyle.WIDE) JaskWideCard(title, entry.width(340.dp)) { onOpen(title) }
+                        else Box(entry.width(158.dp)) { JaskPosterCard(title.title, title.poster, title.facts()) { onOpen(title) } }
                     }
                 }
             }
@@ -122,12 +143,18 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
     val wide = LocalLayoutClass.current != LayoutClass.PHONE
     val pager = rememberPagerState { titles.size }
     app.opentv.ui.JaskAmbientFrom(titles.getOrNull(pager.settledPage)?.let { it.backdrop ?: it.poster })
-    LaunchedEffect(pager.settledPage, titles.size) {
+    // D-pad: the hero's buttons are its slot; Left/Right past them change title. It holds still while you're on it.
+    val hero = remember { HeroFocus() }
+    val heroScope = rememberCoroutineScope()
+    LaunchedEffect(pager.settledPage, titles.size, hero.focused) {
+        if (hero.focused) return@LaunchedEffect
         delay(14_000)
         if (!pager.isScrollInProgress && titles.size > 1)
             pager.animateScrollToPage((pager.settledPage + 1) % titles.size, animationSpec = androidx.compose.animation.core.tween(1_100))
     }
-    val wash = app.opentv.ui.LocalJaskAmbient.current?.wash ?: JaskPageCanvas
+    // The page colour, read only while drawing (it animates after each change of title; see JaskGlassSurface).
+    val ambient = app.opentv.ui.LocalJaskAmbient.current
+    val wash = { ambient?.wash ?: JaskPageCanvas }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val tail = with(density) { 200.dp.toPx() }
     val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
@@ -142,6 +169,7 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
         .onGloballyPositioned { top = it.positionInRoot().y }
     else Modifier.aspectRatio(0.9f).drawBehind {
         // Phone: below the hero (outside the pager, which clips), its colour fades into the dithered page.
+        val wash = wash()
         drawRect(Brush.verticalGradient(listOf(wash, wash.copy(alpha = 0f)), startY = size.height - 1f, endY = size.height + tail),
             topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - 1f), size = androidx.compose.ui.geometry.Size(size.width, tail))
     })) {
@@ -150,13 +178,24 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
         val heroPx = with(density) { heroH.toPx() }
         HorizontalPager(pager, Modifier.fillMaxSize().then(if (wide) Modifier.graphicsLayer {
             alpha = ((heroPx + top) / (heroPx * 0.6f)).coerceIn(0f, 1f)
-        } else Modifier), key = { titles[it].key }) { page ->
+        } else Modifier), key = { titles[it].key },
+            // The next title is composed (and its art loaded) before it slides in, not during the slide.
+            beyondViewportPageCount = 1) { page ->
             val t = titles[page]
             Box(Modifier.fillMaxSize()) {
-                if (wide) Box(Modifier.fillMaxSize().heroFadeOut(heroPx - with(density) { 24.dp.toPx() })) {
-                    AsyncImage(t.backdrop?.replace("/t/p/w1280/", "/t/p/original/"), null, contentScale = ContentScale.Crop,
+                // The art fades into the page colour under the shelf by painting that colour over it, not by masking
+                // it through an off-screen layer (heroFadeOut): two full-screen off-screen buffers per frame of a slide.
+                if (wide) Box(Modifier.fillMaxSize().drawWithContent {
+                    drawContent()
+                    val wash = wash(); val start = heroPx - 24.dp.toPx()
+                    drawRect(Brush.verticalGradient(0f to wash.copy(alpha = 0f), 0.45f to wash.copy(alpha = 0.4f), 1f to wash,
+                        startY = start, endY = size.height), topLeft = androidx.compose.ui.geometry.Offset(0f, start))
+                }) {
+                    // Wide screens show the backdrop near its own shape, and a TV's UI is 1080p: TMDB's 1280-wide
+                    // copy, not the original (often 3840 wide, ~9x the pixels to download and decode per title).
+                    AsyncImage(t.backdrop, null, contentScale = ContentScale.Crop,
                         alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize().padding(top = shift))
-                    Box(Modifier.fillMaxSize().drawBehind { heroScrims(heroPx, with(density) { shift.toPx() }, wash) })
+                    Box(Modifier.fillMaxSize().drawBehind { heroScrims(heroPx, with(density) { shift.toPx() }, wash()) })
                 } else {
                     // Art → the ambient colour (flat, no dots over the art) → below the hero, that colour
                     // fades into the dithered background (drawn past the item's bottom, under the rows).
@@ -165,43 +204,67 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                         0f to Color.Black.copy(alpha = 0.55f), 0.2f to Color.Transparent, 0.55f to Color.Transparent,
                         0.8f to Color.Black.copy(alpha = 0.18f), 1f to Color.Transparent)))
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash)))
+                    Box(Modifier.fillMaxSize().drawBehind { val wash = wash()
+                        drawRect(Brush.verticalGradient(0.5f to wash.copy(alpha = 0f), 0.8f to wash.copy(alpha = .75f), 1f to wash)) })
                 }
-                val facts = HeroFacts(rank = t.rank.takeIf { caption == null }, rating = t.rating, quality = qualityBadge(t.quality),
-                    networkLogo = t.networkLogo, network = t.network, text = listOfNotNull(t.year?.toString(), t.status),
-                    noSource = !t.available, caption = caption)
-                // The tappable hero is only the visible part above the shelf. With a d-pad, focus goes
-                // to Play and Watchlist instead of the whole picture.
+                // Touch: tapping the art opens the title. Only the part above the shelf; the d-pad uses the buttons.
                 Box(Modifier.fillMaxWidth().then(if (wide) Modifier.height(heroH) else Modifier.fillMaxHeight())
-                    .then(if (wide) Modifier.focusProperties { canFocus = false } else Modifier).clickable { onOpen(t) }) {
-                if (wide) Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 44.dp, end = 44.dp, bottom = 36.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Column(Modifier.widthIn(max = 600.dp)) {
-                            Text(t.title, color = Color.White, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Spacer(Modifier.height(10.dp))
-                            JaskHeroBadges(facts, center = false)
-                            t.overview?.let {
-                                Spacer(Modifier.height(12.dp))
-                                Text(it, color = Color(0xFFDADADA), style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                            }
+                    .focusProperties { canFocus = false }.clickable { onOpen(t) })
+            }
+        }
+        // Only the art slides. The title, facts, synopsis and buttons are drawn once, over the pager, and change in place
+        // (a short fade) when the next title takes over: moving and re-laying them out on every frame of the slide was
+        // most of its cost. Nothing here takes touches, so swipes and taps reach the art.
+        val t = titles[pager.currentPage.coerceIn(0, titles.lastIndex)]
+        val textAlpha = remember { androidx.compose.animation.core.Animatable(1f) }
+        LaunchedEffect(t.key) { textAlpha.snapTo(0f); textAlpha.animateTo(1f, androidx.compose.animation.core.tween(260)) }
+        // The network logo only once it has loaded: until then (or if it fails) the network's name, so the facts
+        // line never shows an empty slot between two dots while the logo downloads.
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val logoUrl = t.networkLogo?.takeIf(String::isNotBlank)
+        var logoReady by remember(logoUrl) { mutableStateOf(false) }
+        LaunchedEffect(logoUrl) {
+            if (logoUrl != null) logoReady = runCatching {
+                context.imageLoader.execute(coil.request.ImageRequest.Builder(context).data(logoUrl).build()) is coil.request.SuccessResult
+            }.getOrDefault(false)
+        }
+        // The hero's tag colours are the media page's (FactBadges), which has no neutral tag for the provider's own
+        // score: those titles show no score here, as before they showed a wrong "TMDB".
+        val facts = HeroFacts(rank = t.rank.takeIf { caption == null }, rating = t.rating.takeIf { t.ratingSource == TmdbRating },
+            quality = qualityBadge(t.quality),
+            networkLogo = logoUrl.takeIf { logoReady }, network = t.network, text = listOfNotNull(t.year?.toString(), t.status),
+            noSource = !t.available, caption = caption, comingSoon = t.comingSoon)
+        Box(Modifier.fillMaxWidth().then(if (wide) Modifier.height(heroH) else Modifier.fillMaxHeight())) {
+            if (wide) Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 44.dp, end = 44.dp, bottom = 36.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).graphicsLayer { alpha = textAlpha.value * ((heroPx + top) / (heroPx * 0.6f)).coerceIn(0f, 1f) }) {
+                    Column(Modifier.widthIn(max = 600.dp)) {
+                        Text(t.title, color = Color.White, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(10.dp))
+                        JaskHeroBadges(facts, center = false)
+                        t.overview?.let {
+                            Spacer(Modifier.height(12.dp))
+                            Text(it, color = Color(0xFFDADADA), style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         }
                     }
-                    Spacer(Modifier.width(32.dp))
-                    HeroActions(t, watchlist) { onOpen(t) }
-                } else Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(t.title, color = Color.White, style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(8.dp))
-                    JaskHeroBadges(facts, center = true)
-                    t.overview?.let {
-                        Spacer(Modifier.height(8.dp))
-                        Text(it, color = Color(0xFFCFCFCF), style = MaterialTheme.typography.bodySmall,
-                            textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
                 }
+                Spacer(Modifier.width(32.dp))
+                // Pinned to the bottom of the text: the button stays put whatever the title's length or synopsis.
+                HeroActions(t, watchlist, hero, current = true, modifier = Modifier.align(Alignment.Bottom),
+                    onStep = { d -> if (titles.size > 1) { hero.wanted = true
+                        heroScope.launch { pager.animateScrollToPage((pager.currentPage + d + titles.size) % titles.size,
+                            animationSpec = androidx.compose.animation.core.tween(450)) } } }) { onOpen(t) }
+            } else Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 18.dp)
+                .graphicsLayer { alpha = textAlpha.value }, horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(t.title, color = Color.White, style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(8.dp))
+                JaskHeroBadges(facts, center = true)
+                t.overview?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = Color(0xFFCFCFCF), style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -218,43 +281,57 @@ internal fun JaskFeatured(titles: List<HomeTitle>, modifier: Modifier, caption: 
 /** Saves a home title to the Watchlist without opening it; supplied by the Movies and Shows homes. */
 internal class HomeWatchlist(val isSaved: suspend (HomeTitle) -> Boolean, val toggle: suspend (HomeTitle) -> Unit)
 
-/** Wide hero, right side: Play (opens the title) and a Watchlist toggle. */
+/** The hero's d-pad state: whether its buttons have focus, and whether the next title should take it. */
+private class HeroFocus { var focused by mutableStateOf(false); var wanted = false }
+
+/**
+ * Wide hero, right side: Play (or Details, for a title not on your sources) and a Watchlist toggle. There's always
+ * a button, so the hero can always be reached with the d-pad. Left/Right past the ends change title ([onStep]).
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-private fun HeroActions(t: HomeTitle, watchlist: HomeWatchlist?, onOpen: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var saved by remember(t.key) { mutableStateOf<Boolean?>(null) }
-    if (watchlist != null && t.available) LaunchedEffect(t.key) { saved = watchlist.isSaved(t) }
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (t.available) Row(Modifier.jaskFocusLift().height(52.dp).clip(RoundedCornerShape(50)).background(Color.White).clickable(onClick = onOpen)
-            .padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(androidx.compose.material.icons.Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(24.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Play", color = Color.Black, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        }
-        saved?.let { on ->
-            Box(Modifier.jaskFocusLift().size(52.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.38f))
-                .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
-                .clickable { saved = !on; scope.launch { watchlist?.toggle(t) } }, contentAlignment = Alignment.Center) {
-                Icon(if (on) androidx.compose.material.icons.Icons.Filled.Star else androidx.compose.material.icons.Icons.Outlined.StarOutline,
-                    stringResource(R.string.jask_watchlist), tint = Color.White, modifier = Modifier.size(24.dp))
+private fun HeroActions(t: HomeTitle, @Suppress("UNUSED_PARAMETER") watchlist: HomeWatchlist?, hero: HeroFocus, current: Boolean,
+    modifier: Modifier = Modifier, onStep: (Int) -> Unit, onOpen: () -> Unit) {
+    val requester = remember { androidx.compose.ui.focus.FocusRequester() }
+    // The title just stepped to with Left/Right: take focus as soon as it's the current page.
+    LaunchedEffect(current) { if (current && hero.wanted) { hero.wanted = false; androidx.compose.runtime.withFrameNanos { }; runCatching { requester.requestFocus() } } }
+    // One button, the same for every title: it opens the title's page (where Play and the Watchlist are).
+    Box(modifier.then(if (current) Modifier.jaskSlot("home-featured") else Modifier).focusRequester(requester)
+        .onFocusChanged { if (current) hero.focused = it.hasFocus }
+        .focusProperties {
+            exit = { d ->
+                when (d) {
+                    androidx.compose.ui.focus.FocusDirection.Left -> { onStep(-1); androidx.compose.ui.focus.FocusRequester.Cancel }
+                    androidx.compose.ui.focus.FocusDirection.Right -> { onStep(+1); androidx.compose.ui.focus.FocusRequester.Cancel }
+                    else -> androidx.compose.ui.focus.FocusRequester.Default
+                }
             }
+        }.focusGroup()) {
+        Row(Modifier.jaskFocusLift(key = "hero:open").jaskFocusEntry().height(52.dp).clip(RoundedCornerShape(50)).jaskWhiteFill(RoundedCornerShape(50)).clickable(onClick = onOpen)
+            .padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Info, null, tint = Color.White, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Details", color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         }
+        // No corner mark: the hero's facts line already says "Coming 16 Dec" or "Not on your sources".
     }
 }
 
 /** Landscape backdrop card with the title on the art (new releases / airing now). */
 @Composable
 private fun JaskWideCard(t: HomeTitle, modifier: Modifier, onClick: () -> Unit) {
-    Box(modifier.aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF282522)).clickable(onClick = onClick)) {
-        AsyncImage(t.backdrop ?: t.poster, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+    val source = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Box(modifier.jaskCard(source, key = "wide:${t.key}", onClick = onClick).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp))
+        .background(Color(0xFF282522)).jaskCardArt(source)) {
+        AsyncImage(t.backdrop?.replace("/t/p/w1280/", "/t/p/w780/") ?: t.poster, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
             colorFilter = if (t.available) null else UnavailableArt, alpha = if (t.available) 1f else .7f)
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.8f))))
-        if (!t.available) UnavailableMark(Modifier.align(Alignment.TopEnd).padding(6.dp))
+        if (!t.available) UnavailableMark(Modifier.align(Alignment.TopEnd).padding(6.dp), t.comingSoon)
         Column(Modifier.align(Alignment.BottomStart).padding(8.dp)) {
             Text(t.title, color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(listOfNotNull(t.network, t.status, t.year?.toString().takeIf { t.network == null }, rating(t.rating)).joinToString("  ·  "), color = Color(0xFFD0D0D0),
-                style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            JaskFactsLine(listOfNotNull(t.network, t.status, t.year?.toString().takeIf { t.network == null }), t.rating, t.ratingSource,
+                color = Color(0xFFD0D0D0), style = MaterialTheme.typography.labelSmall, small = true)
         }
     }
 }
@@ -304,7 +381,7 @@ internal fun JaskSearchResults(hits: List<HomeTitle>?, emptyText: String, onOpen
 @Composable
 private fun JaskHitRow(t: HomeTitle, onClick: () -> Unit) {
     val art = app.opentv.ui.rememberArtBackdrop(t.poster, cells = 16)
-    Row(Modifier.fillMaxWidth().height(124.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E1C1B)).clickable(onClick = onClick)) {
+    Row(Modifier.fillMaxWidth().jaskFocusLift(1.03f, key = "hit:${t.key}").height(124.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E1C1B)).clickable(onClick = onClick)) {
         Box(Modifier.fillMaxHeight().aspectRatio(2f / 3f).background(Color(0xFF282522)).then(Modifier.jaskArtSource(art))) {
             AsyncImage(t.poster, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             t.rank?.let { rank -> CompositionLocalProvider(app.opentv.ui.LocalJaskBackdrop provides art) {
@@ -318,18 +395,8 @@ private fun JaskHitRow(t: HomeTitle, onClick: () -> Unit) {
             Text(t.title, color = Color(0xFFF6F3EF), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                rating(t.rating)?.let { Text(it, color = Color(0xFFF5C518), style = MaterialTheme.typography.labelMedium) }
-                t.year?.let { Text("$it", color = Color(0xFFBDBDBD), style = MaterialTheme.typography.labelMedium) }
-                qualityBadge(t.quality)?.let {
-                    Text(it, color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.border(1.dp, Color.White.copy(alpha = .7f), RoundedCornerShape(3.dp)).padding(horizontal = 3.dp))
-                }
-                t.status?.let { Text(it, color = Color(0xFFBDBDBD), style = MaterialTheme.typography.labelMedium) }
-                if (!t.networkLogo.isNullOrBlank()) AsyncImage(t.networkLogo, t.network, contentScale = ContentScale.Fit,
-                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color(0xFFE0E0E0)), modifier = Modifier.height(11.dp).widthIn(max = 40.dp))
-                else t.network?.let { Text(it, color = Color(0xFFBDBDBD), style = MaterialTheme.typography.labelMedium, maxLines = 1) }
-            }
+            // One plain line, like the cards: year · quality · status · network, then the tagged score.
+            JaskFactsLine(listOfNotNull(t.year?.toString(), qualityBadge(t.quality), t.status, t.network), t.rating, t.ratingSource)
             t.overview?.takeIf(String::isNotBlank)?.let {
                 Spacer(Modifier.height(6.dp))
                 Text(it, color = Color(0xFFB0B0B0), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
@@ -341,15 +408,16 @@ private fun JaskHitRow(t: HomeTitle, onClick: () -> Unit) {
 
 /** Card badges for a home/search title, the same everywhere a [HomeTitle] is drawn. */
 internal fun HomeTitle.facts() = PosterFacts(rank = rank, rating = rating, status = status, quality = quality,
-    networkLogo = networkLogo, network = network, noSource = !available)
+    networkLogo = networkLogo, network = network, noSource = !available, comingSoon = comingSoon, ratingSource = ratingSource)
 
 /** Small frosted "not on your sources" mark for wide art and rows. */
 @Composable
-internal fun UnavailableMark(modifier: Modifier = Modifier) {
+internal fun UnavailableMark(modifier: Modifier = Modifier, comingSoon: String? = null) {
     Row(modifier.clip(RoundedCornerShape(50)).background(Color(0x99000000)).padding(horizontal = 7.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Icon(androidx.compose.material.icons.Icons.Outlined.CloudOff, null, tint = Color(0xFFFFC7BD), modifier = Modifier.size(12.dp))
-        Text(stringResource(R.string.jask_not_on_sources), color = Color(0xFFF2F2F2), style = MaterialTheme.typography.labelSmall)
+        Icon(if (comingSoon != null) androidx.compose.material.icons.Icons.Outlined.Schedule else androidx.compose.material.icons.Icons.Outlined.CloudOff,
+            null, tint = if (comingSoon != null) Color.White else Color(0xFFFFC7BD), modifier = Modifier.size(12.dp))
+        Text(comingSoon ?: stringResource(R.string.jask_not_on_sources), color = Color(0xFFF2F2F2), style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -361,12 +429,21 @@ internal fun UnavailableMark(modifier: Modifier = Modifier) {
 internal fun rememberHomeOpener(open: suspend (HomeTitle) -> Unit): (HomeTitle) -> Unit {
     var preview by remember { mutableStateOf<HomeTitle?>(null) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    preview?.let { UnavailableSheet(it) { preview = null } }
+    preview?.let { t -> UnavailableSheet(t) { preview = null } }
     return { t -> if (!t.available) preview = t else scope.launch { open(t) } }
 }
 
 @Composable
 private fun UnavailableSheet(t: HomeTitle, onDismiss: () -> Unit) {
+    val vm: app.opentv.ui.VodViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val finders by vm.hasFinders.collectAsState()
+    val play = LocalJaskPlayUrl.current
+    // Not on your sources: torrents through a core on this network may still have it (films; shows come later).
+    val route = rememberTorrentRoute()
+    var found by remember { mutableStateOf<List<app.opentv.torrent.Release>?>(null) }
+    LaunchedEffect(t.key) { if (route != null && t.key.startsWith("movie:")) found = runCatching { vm.findReleases(t.title, t.year, t.tmdbId) }.getOrDefault(emptyList()) }
+    val template = app.opentv.data.model.Download(mediaKey = "tmdb:${t.tmdbId}", kind = "MOVIE", title = t.title,
+        posterUrl = t.poster, tag = null, sourceUrl = "", systemId = 0, createdMillis = 0)
     app.opentv.ui.JaskSheet(onDismiss) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
             AsyncImage(t.poster, null, contentScale = ContentScale.Crop,
@@ -374,17 +451,31 @@ private fun UnavailableSheet(t: HomeTitle, onDismiss: () -> Unit) {
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(t.title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(listOfNotNull(t.year?.toString(), rating(t.rating)).joinToString("  ·  "), color = Color(0xFFCFCFCF),
+                JaskFactsLine(listOfNotNull(t.year?.toString()), t.rating, t.ratingSource, color = Color(0xFFCFCFCF),
                     style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.height(8.dp))
-                UnavailableMark()
+                UnavailableMark(comingSoon = t.comingSoon)
                 Spacer(Modifier.height(8.dp))
-                Text(stringResource(R.string.jask_not_on_sources_body), color = Color(0xFFBDBDBD), style = MaterialTheme.typography.bodySmall)
+                Text(if (t.comingSoon != null) "Not out on digital yet, so none of your sources has it. Copies sometimes turn up early: the torrents below are checked now."
+                    else stringResource(R.string.jask_not_on_sources_body), color = Color(0xFFBDBDBD), style = MaterialTheme.typography.bodySmall)
             }
         }
         t.overview?.takeIf(String::isNotBlank)?.let {
             Text(it, color = Color(0xFFD6D6D6), style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
+        }
+        if (t.key.startsWith("movie:")) {
+            val best = remember(found) { found?.let { bestForDevice(it, episode = false) } }
+            var mode by remember { mutableStateOf(SourceMode.WATCH) }
+            Row(Modifier.padding(horizontal = 20.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                app.opentv.ui.settings.JaskChoicePill("Watch", selected = mode == SourceMode.WATCH) { mode = SourceMode.WATCH }
+                app.opentv.ui.settings.JaskChoicePill("Download", selected = mode == SourceMode.DOWNLOAD) { mode = SourceMode.DOWNLOAD }
+            }
+            SourcesPanel(mode = mode, provider = emptyList(), torrentRoute = route,
+                torrents = found?.map { r -> SourceRow(r.name, torrentDetail(r), recommended = if (r == best) recommendReason(r) else null,
+                    play = { vm.playableRelease(r)?.let { url -> onDismiss(); play("tmdb:${t.tmdbId}", url, t.title); true } ?: false },
+                    download = { vm.downloadRelease(r, template) }) },
+                modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 12.dp))
         }
     }
 }

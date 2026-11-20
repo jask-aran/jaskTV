@@ -5,6 +5,7 @@
  */
 package app.opentv.ui
 
+import app.opentv.ui.jaskFocusRing
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -88,11 +89,11 @@ fun RecordingBackgroundDialog(onAllow: () -> Unit, onDismiss: () -> Unit) {
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onDismiss) {
+                TextButton(onClick = onDismiss, modifier = Modifier.jaskFocusRing()) {
                     Text(stringResource(R.string.rec_background_prompt_not_now))
                 }
                 Spacer(Modifier.width(8.dp))
-                Button(onClick = onAllow, modifier = Modifier.focusRequester(allowFocus)) {
+                Button(onClick = onAllow, modifier = Modifier.jaskFocusRing().then(Modifier.focusRequester(allowFocus))) {
                     Text(stringResource(R.string.rec_background_prompt_allow))
                 }
             }

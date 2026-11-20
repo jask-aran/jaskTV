@@ -232,6 +232,15 @@ class AppSettings(private val prefs: Prefs) {
      * How jaskTV draws glass: "auto" (chosen per device), "live" (real-time blur of the page),
      * "frosted" (pre-blurred artwork, tinted chrome) or "solid" (no blur at all).
      */
+    private val _matchFrameRate = MutableStateFlow(prefs.getBoolean(KEY_MATCH_FRAME_RATE, true))
+    /** Switch the TV's refresh rate to suit the video while it plays (25/50 fps sport on a 60 Hz output judders). */
+    val matchFrameRate: StateFlow<Boolean> = _matchFrameRate.asStateFlow()
+
+    fun setMatchFrameRate(on: Boolean) {
+        prefs.edit().putBoolean(KEY_MATCH_FRAME_RATE, on).apply()
+        _matchFrameRate.value = on
+    }
+
     private val _glassMode = MutableStateFlow(prefs.getString(KEY_GLASS_MODE, null) ?: "auto")
     val glassMode: StateFlow<String> = _glassMode.asStateFlow()
 
@@ -565,6 +574,21 @@ class AppSettings(private val prefs: Prefs) {
         _omdbApiKey.value = trimmed
     }
 
+    // ---- Torrents: Prowlarr finds releases, TorrServer streams them --------------------------
+
+    /** TorrServer's address ("http://192.168.1.20:8090"). Blank: torrent releases aren't offered. */
+    private val _torrServerUrl = MutableStateFlow(prefs.getString(KEY_TORRSERVER, "").orEmpty())
+    val torrServerUrl: StateFlow<String> = _torrServerUrl.asStateFlow()
+    fun setTorrServerUrl(url: String) { val v = url.trim().trimEnd('/'); prefs.edit().putString(KEY_TORRSERVER, v).apply(); _torrServerUrl.value = v }
+
+    /** Prowlarr's address and API key (Settings → General in Prowlarr). Blank: Prowlarr isn't searched. */
+    private val _prowlarrUrl = MutableStateFlow(prefs.getString(KEY_PROWLARR, "").orEmpty())
+    val prowlarrUrl: StateFlow<String> = _prowlarrUrl.asStateFlow()
+    fun setProwlarrUrl(url: String) { val v = url.trim().trimEnd('/'); prefs.edit().putString(KEY_PROWLARR, v).apply(); _prowlarrUrl.value = v }
+    private val _prowlarrKey = MutableStateFlow(prefs.getString(KEY_PROWLARR_KEY, "").orEmpty())
+    val prowlarrKey: StateFlow<String> = _prowlarrKey.asStateFlow()
+    fun setProwlarrKey(key: String) { val v = key.trim(); prefs.edit().putString(KEY_PROWLARR_KEY, v).apply(); _prowlarrKey.value = v }
+
     // ---- Stremio add-ons ---------------------------------------------------------------------
 
     /**
@@ -603,6 +627,7 @@ class AppSettings(private val prefs: Prefs) {
         private const val KEY_SUBTITLES = "subtitles_enabled"
         private const val KEY_PREVIEW_VIDEO = "guide_preview_video"
         private const val KEY_GLASS_MODE = "glass_mode"
+        private const val KEY_MATCH_FRAME_RATE = "match_frame_rate"
         private const val KEY_UI_SCALE = "ui_scale"
         private const val KEY_PREVIEW_SOUND = "guide_preview_sound"
         private const val KEY_PIN_HASH = "parental_pin_hash"
@@ -636,6 +661,9 @@ class AppSettings(private val prefs: Prefs) {
         private const val KEY_VOD_SYNCED_AT = "vod_synced_at"
         private const val KEY_TMDB_KEY = "tmdb_api_key"
         private const val KEY_OMDB_KEY = "omdb_api_key"
+        private const val KEY_TORRSERVER = "torrserver_url"
+        private const val KEY_PROWLARR = "prowlarr_url"
+        private const val KEY_PROWLARR_KEY = "prowlarr_api_key"
         private const val KEY_STREMIO_ADDONS = "stremio_addons"
         private const val KEY_PAD_START = "rec_pad_start_min"
         private const val KEY_PAD_END = "rec_pad_end_min"

@@ -52,7 +52,9 @@ class AppUpdater private constructor(private val context: Context) {
     val state: StateFlow<State> = _state.asStateFlow()
 
     /** Only the release app updates itself (a debug build is a different app, signed with another key). */
-    val enabled: Boolean get() = BuildConfig.UPDATE_REPO.isNotBlank() && !BuildConfig.DEBUG && Build.FINGERPRINT != "robolectric"
+    // Release builds only. A `-PjaskPerf` debug build is not debuggable (DEBUG false) but is a different package
+    // (app.jasktv.debug, debug key), so a release APK can never update it; it used to offer one anyway.
+    val enabled: Boolean get() = BuildConfig.UPDATE_REPO.isNotBlank() && BuildConfig.BUILD_TYPE == "release" && Build.FINGERPRINT != "robolectric"
     val currentVersion: String get() = BuildConfig.VERSION_NAME
 
     /** The version the user said "Later" to (the prompt isn't shown again for it; Settings still offers it). */

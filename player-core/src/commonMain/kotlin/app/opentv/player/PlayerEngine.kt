@@ -61,7 +61,40 @@ interface PlayerEngine {
     fun setSubtitlesEnabled(enabled: Boolean)
     fun selectTrack(track: PlayerTrack)
     fun disableText()
+
+    /** What is playing right now, for the stream info card. Cheap; polled about once a second. */
+    fun stats(): PlayerStats = PlayerStats()
 }
+
+/**
+ * A snapshot of the stream for the stream info card. 0 or null means unknown. [bytesLoaded] counts
+ * everything read from the network since this engine started; the card turns its change over time
+ * into a live bitrate, which works for continuous IPTV streams that never report a bitrate.
+ */
+data class PlayerStats(
+    val width: Int = 0,
+    val height: Int = 0,
+    val frameRate: Float = 0f,
+    /** Frame rate read from the video frames' own timestamps (0 until enough steady frames have played). */
+    val measuredFrameRate: Float = 0f,
+    /** RFC 6381 codec string or MIME type, e.g. "avc1.640028" or "video/avc". */
+    val videoCodec: String? = null,
+    val audioCodec: String? = null,
+    val audioChannels: Int = 0,
+    val audioBitrate: Int = 0,
+    /** Bits per second the stream says it carries, when it says. */
+    val declaredBitrate: Int = 0,
+    val bytesLoaded: Long = 0,
+    val droppedFrames: Int = 0,
+    val renderedFrames: Int = 0,
+    val bufferAheadMillis: Long = 0,
+    /** Media position loaded up to; with [bytesLoaded] this gives the stream's own bitrate even while loading pauses. */
+    val bufferedPositionMillis: Long = 0,
+    /** Qualities on offer (an adaptive stream's variants); 1 for a single-quality stream. */
+    val variantCount: Int = 0,
+    /** "HLS", "DASH", "MPEG-TS"… from the address. */
+    val format: String? = null,
+)
 
 /** Draws the engine's video. One implementation per platform toolkit. */
 interface PlayerSurfaceHost {

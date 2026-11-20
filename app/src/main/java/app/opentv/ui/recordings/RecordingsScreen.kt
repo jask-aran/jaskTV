@@ -5,6 +5,7 @@
  */
 package app.opentv.ui.recordings
 
+import app.opentv.ui.jaskFocusLift
 import app.opentv.ui.LocalLayoutClass
 import app.opentv.ui.LayoutClass
 import android.app.Application
@@ -434,6 +435,7 @@ private fun ActionButton(icon: ImageVector, label: String, onClick: () -> Unit) 
     val fg = if (focused) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
     Box(
         Modifier
+            .jaskFocusLift(1.03f)
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             .onFocusChanged { focused = it.isFocused }

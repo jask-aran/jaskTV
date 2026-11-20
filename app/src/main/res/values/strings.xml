@@ -18,6 +18,7 @@
 
     <!-- ============================ Navigation rail ============================ -->
     <string name="nav_live_tv">Live TV</string>
+    <string name="nav_sports">Sports</string>
     <string name="nav_movies">Movies</string>
     <string name="nav_shows">Shows</string>
     <string name="nav_search">Search</string>
@@ -285,7 +286,7 @@
     <string name="dl_failed">Download failed</string>
     <string name="dl_delete">Delete</string>
     <string name="dl_delete_confirm">Delete “%1$s” from this device?</string>
-    <string name="dl_empty">Nothing downloaded yet. Open a film or a series and tap Download to watch it offline.</string>
+    <string name="dl_empty">Nothing downloaded yet. Open a film or a show and choose Download to watch it offline.</string>
     <string name="dl_no_space">Not enough free space — at least 1.5 GB is needed.</string>
     <string name="dl_started">Downloading “%1$s”. While it downloads, some providers won’t let you watch anything else.</string>
     <string name="dl_used">%1$s used · %2$s free</string>
@@ -424,5 +425,5 @@
     <string tools:ignore="MissingTranslation" name="jask_settings_sources_guide">Sources and guide</string>
     <string tools:ignore="MissingTranslation" name="jask_settings_more">More</string>
     <string tools:ignore="MissingTranslation" name="jask_settings_no_sources">No sources yet</string>
-    <string tools:ignore="MissingTranslation" name="jask_settings_sources_count">%1$d sources · %2$d on</string>
+    <string tools:ignore="MissingTranslation" name="jask_settings_sources_count">%2$d of %1$d on</string>
 </resources>

@@ -137,23 +137,26 @@ fun MainScreen(
         var libraryQuery by rememberSaveable { mutableStateOf("") }
         val query = when (destination) {
             JaskDestination.MOVIES, JaskDestination.SHOWS -> browseQuery
-            JaskDestination.LIVE -> liveQuery
+            JaskDestination.LIVE, JaskDestination.SPORTS -> liveQuery
             JaskDestination.LIBRARY -> libraryQuery
         }
         val setQuery: (String) -> Unit = { text -> when (destination) {
             JaskDestination.MOVIES, JaskDestination.SHOWS -> vodViewModel.setBrowseQuery(text)
-            JaskDestination.LIVE -> liveQuery = text
+            JaskDestination.LIVE, JaskDestination.SPORTS -> liveQuery = text
             JaskDestination.LIBRARY -> libraryQuery = text
         } }
         fun clearQueries() { vodViewModel.setBrowseQuery(""); liveQuery = ""; libraryQuery = "" }
         BackHandler(query.isNotEmpty()) { setQuery("") }
         BackHandler(query.isEmpty() && destination != JaskDestination.MOVIES) { destination = JaskDestination.MOVIES }
         val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+        // On TV choosing a tab keeps the cursor on it (clearing focus there leaves the d-pad with nothing to move from).
+        val isTv = LocalLayoutClass.current == LayoutClass.TV
         val sources by vodViewModel.sources.collectAsState()
         val vodSource by vodViewModel.selectedVodSource.collectAsState()
         val showUnavailable by vodViewModel.showUnavailable.collectAsState()
-        CompositionLocalProvider(LocalJaskFilterRequest provides filterRequest) {
-            JaskChromeFrame(destination, { if (it != destination) clearQueries(); focusManager.clearFocus()
+        CompositionLocalProvider(LocalJaskFilterRequest provides filterRequest,
+            app.opentv.ui.vod.LocalJaskPlayUrl provides { key, url, title -> onResume(key, url, title) }) {
+            JaskChromeFrame(destination, { if (it != destination) clearQueries(); if (!isTv) focusManager.clearFocus()
                     destination = it; showInventory = false; filterRequest = 0 },
                 query = query, onQuery = setQuery, onFilter = { filterRequest++ },
                 accountMenu = accountMenu(activeProfileName, vodViewModel, sources, vodSource, showUnavailable, isSyncing,
@@ -163,12 +166,12 @@ fun MainScreen(
                 // Browsing scope lives in the account popover; only Library has a header button (Downloads).
                 filterIcon = when (destination) {
                     JaskDestination.LIBRARY -> androidx.compose.material.icons.Icons.Filled.DownloadForOffline
-                    JaskDestination.LIVE -> androidx.compose.material.icons.Icons.Filled.Tune
+                    JaskDestination.LIVE, JaskDestination.SPORTS -> androidx.compose.material.icons.Icons.Filled.Tune
                     else -> null
                 },
                 filterLabel = when (destination) {
                     JaskDestination.LIBRARY -> stringResource(R.string.jask_library_downloads)
-                    JaskDestination.LIVE -> "Regions, sports and channels"
+                    JaskDestination.LIVE, JaskDestination.SPORTS -> "Regions, sports and channels"
                     else -> null
                 }) {
                 // No playlists on this device (checked against the database, not a list still loading): welcome, with sign-in.
@@ -179,10 +182,15 @@ fun MainScreen(
                 else when (destination) {
                     JaskDestination.MOVIES -> MoviesScreen(onOpenMovie, onResume, {},
                         hasSources, isSyncing, vodViewModel)
-                    JaskDestination.SHOWS -> SeriesScreen(onOpenSeries, onResume, {}, hasSources, isSyncing, vodViewModel)
+                    JaskDestination.SHOWS -> SeriesScreen(onOpenSeries, onResume, {}, hasSources, isSyncing, vodViewModel,
+                        inventory = showInventory, onCloseInventory = { showInventory = false })
                     // Edge to edge: Live TV's hero runs under the header; its pages add the content padding themselves.
                     JaskDestination.LIVE -> Box(Modifier.fillMaxSize()) {
                         app.opentv.ui.channels.MyTvScreen(query = liveQuery, onPlay = onPlayChannel)
+                    }
+                    // Sports: the same live TV screen led by the schedules (games, then where they're on).
+                    JaskDestination.SPORTS -> Box(Modifier.fillMaxSize()) {
+                        app.opentv.ui.channels.MyTvScreen(query = liveQuery, onPlay = onPlayChannel, sports = true)
                     }
                     JaskDestination.LIBRARY -> Box(Modifier.fillMaxSize()) {
                         app.opentv.ui.library.JaskLibrary(libraryQuery, vodViewModel, onPlayChannel, onOpenMovie, onOpenSeries, onResume)

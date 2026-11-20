@@ -9,23 +9,25 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.serialization.json.*
 import java.io.IOException
 
-/** Serial worker-owned client. No requests are made by cards or detail composition. */
+/** Worker-owned client, rate-limited by [TmdbGate]. No requests are made by cards or detail composition. */
 class CanonicalMovieResolver(private val http: OkHttpClient, private val settings: AppSettings) {
     private val json = Json { ignoreUnknownKeys = true }
 
     private suspend fun get(path: String, query: String? = null, year: Int? = null): JsonObject? {
-        delay(500) // At most two requests/second, including detail and failed lookups.
         val url = "https://api.themoviedb.org/3/".toHttpUrl().newBuilder()
             .addPathSegments(path).addQueryParameter("api_key", settings.tmdbApiKey.value.trim())
         if (query != null) url.addQueryParameter("query", query).addQueryParameter("include_adult", "false")
         if (year != null) url.addQueryParameter("year", year.toString())
-        return http.newCall(Request.Builder().url(url.build()).build()).execute().use {
-            if (it.code == 404) return null
-            if (!it.isSuccessful) throw IOException("Metadata service HTTP ${it.code}")
+        val request = Request.Builder().url(url.build()).build()
+        return TmdbGate.request({ http.newCall(request) }) {
             json.parseToJsonElement(it.body?.string() ?: throw IOException("Empty metadata response")).jsonObject
         }
     }
 
+    /**
+     * One request per title: a TMDB id from the provider is looked up directly; otherwise a search, whose result
+     * already has the poster, backdrop, overview and rating (genres and runtime come later, with the title's page).
+     */
     suspend fun resolve(movie: Movie): Pair<CanonicalMovie?, MovieMatchDecision> {
         val explicit = movie.tmdbId?.toIntOrNull()?.takeIf { it > 0 }
         if (explicit != null) {
@@ -37,11 +39,10 @@ class CanonicalMovieResolver(private val http: OkHttpClient, private val setting
         val query = MovieMatching.query(movie.name)
         if (query.isBlank()) return null to MovieMatchDecision.Unmatched
         val year = MovieMatching.releaseYear(movie.name, movie.year)
-        val results = get("search/movie", query, year)?.get("results")?.jsonArray.orEmpty()
-            .mapNotNull { candidate(it.jsonObject) }
-        val decision = MovieMatching.decide(movie.name, year, results)
+        val raw = get("search/movie", query, year)?.get("results")?.jsonArray.orEmpty().map { it.jsonObject }
+        val decision = MovieMatching.decide(movie.name, year, raw.mapNotNull { candidate(it) })
         val title = if (decision is MovieMatchDecision.Accepted) {
-            get("movie/${decision.candidate.id}")?.let(::metadata)
+            raw.firstOrNull { it.text("id")?.toIntOrNull() == decision.candidate.id }?.let(::metadata)
         } else null
         // A disappearing candidate must not produce an accepted link with missing metadata.
         return title to if (decision is MovieMatchDecision.Accepted && title == null) MovieMatchDecision.Unmatched else decision

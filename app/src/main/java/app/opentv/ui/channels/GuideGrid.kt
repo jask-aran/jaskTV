@@ -5,6 +5,7 @@
  */
 package app.opentv.ui.channels
 
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -60,9 +61,6 @@ import app.opentv.data.model.Programme
 import app.opentv.data.model.shownName
 import app.opentv.ui.ChannelsViewModel
 import coil.compose.AsyncImage
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -139,7 +137,7 @@ private fun ChannelListRow(
             Spacer(Modifier.height(2.dp))
             val nowProg = row.now
             Text(
-                text = nowProg?.let { "${clockFormat.format(Date(it.startUtcMillis))}  ${it.title}" }
+                text = nowProg?.let { "${liveClock(it.startUtcMillis)}  ${it.title}" }
                     ?: stringResource(R.string.guide_no_info),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -166,7 +164,7 @@ private fun ChannelListRow(
             row.next?.let { next ->
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    stringResource(R.string.guide_next_prefix, clockFormat.format(Date(next.startUtcMillis)), next.title),
+                    stringResource(R.string.guide_next_prefix, liveClock(next.startUtcMillis), next.title),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     maxLines = 1,
@@ -174,7 +172,7 @@ private fun ChannelListRow(
                 )
             }
         }
-        IconButton(onClick = onToggleFavourite, modifier = Modifier.size(40.dp)) {
+        IconButton(onClick = onToggleFavourite, modifier = Modifier.jaskFocusRing().then(Modifier.size(40.dp))) {
             Icon(
                 imageVector = if (row.primary.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
                 contentDescription = if (row.primary.favourite) stringResource(R.string.common_remove_favourite)
@@ -200,4 +198,3 @@ private val ROW_HEIGHT = 64.dp
 private val MIN_BLOCK_WIDTH = 72.dp
 private val HALF_HOUR_WIDTH: Dp = (30 * MINUTE_DP).dp
 
-private val clockFormat = SimpleDateFormat("HH:mm", Locale.getDefault())

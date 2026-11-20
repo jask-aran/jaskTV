@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -126,9 +127,11 @@ private fun DevicesSheet(ready: AccountManager.Status.Ready, onClose: () -> Unit
     var tick by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) { while (true) { delay(1_000); tick++ } }
 
-    Dialog(onClose, DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(Modifier.padding(16.dp).widthIn(max = 520.dp).fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Color(0xFF1C1B1A))
-            .padding(20.dp).verticalScroll(rememberScrollState())) {
+    // The same frosted glass as every other sheet: drawn in-window over the page (a Dialog is its own window and
+    // can't blur what's behind it). A Dialog only where there's no overlay host.
+    val card: @Composable (Modifier) -> Unit = { glass ->
+      JaskGlassSurface(glass.padding(16.dp).widthIn(max = 520.dp).fillMaxWidth(), RoundedCornerShape(28.dp)) {
+        Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
             val remote = remoteFor
             if (remote != null) {
                 LaunchedEffect(remote.id) { account.probe(remote.id) }
@@ -139,7 +142,10 @@ private fun DevicesSheet(ready: AccountManager.Status.Ready, onClose: () -> Unit
             Spacer(Modifier.height(4.dp))
             Text("The remote works when both are on the same Wi-Fi.", color = Dim, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(12.dp))
-            for (d in ready.devices.filter { it.id != ready.deviceId }) {
+            // One row per device: a reinstall leaves an old record with the same name; keep the live or latest one.
+            val others = ready.devices.filter { it.id != ready.deviceId && it.kind != "core" && it.kind != "web" }
+                .groupBy { it.kind to it.name }.values.map { same -> same.maxBy { (if (it.id in linked) 1L shl 62 else 0L) + it.lastSeen } }
+            for (d in others) {
                 val p = playing[d.id]?.takeIf(::fresh)
                 val near = d.id in linked
                 DeviceRow(d, p, near, rtt[d.id], tick)
@@ -150,7 +156,18 @@ private fun DevicesSheet(ready: AccountManager.Status.Ready, onClose: () -> Unit
                 } else Spacer(Modifier.height(10.dp))
             }
         }
+      }
     }
+    val hosted = JaskOverlayEntry(true) {
+        androidx.activity.compose.BackHandler(onBack = onClose)
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .35f))
+            .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null, onClick = onClose),
+            contentAlignment = Alignment.Center) {
+            JaskFocusReturn.ReturnOnClose()
+            card(Modifier.clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) {})
+        }
+    }
+    if (!hosted) Dialog(onClose, DialogProperties(usePlatformDefaultWidth = false)) { card(Modifier) }
 }
 
 @Composable
@@ -160,8 +177,9 @@ private fun DeviceRow(d: AccountDevice, p: LanLink.Presence?, near: Boolean, rtt
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(d.name, color = Ink, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val where = if (near) "On this Wi-Fi" + (rtt?.let { " · $it ms" } ?: "") else "Away · seen " + android.text.format.DateUtils.getRelativeTimeSpanString(maxOf(d.lastSeen, p?.at ?: 0))
-            val what = p?.title?.let { (if (p.playing || p.kind == "live") "Playing " else "Paused · ") + it + (p.detail?.let { d -> " · $d" } ?: "") }
+            val where = if (near) "On this Wi-Fi" + (rtt?.let { " · $it ms" } ?: "") else if (p != null) "Not on this Wi-Fi" else "Away · seen " + maxOf(d.lastSeen, p?.at ?: 0).let { at ->
+                if (System.currentTimeMillis() - at < 60_000) "just now" else android.text.format.DateUtils.getRelativeTimeSpanString(at) }
+            val what = p?.title?.let { (if (p.playing || p.kind == "live") "Playing · " else "Paused · ") + app.opentv.ui.vod.cleanShowTitle(it) + (p.detail?.let { d -> " · $d" } ?: "") }
             Text(what ?: where, color = if (what != null) Ink else Dim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (what != null) {
                 Text(where, color = Dim, style = MaterialTheme.typography.labelSmall)
@@ -210,7 +228,7 @@ private fun androidx.compose.foundation.layout.ColumnScope.RemotePad(d: AccountD
     }
     fun key(code: Int) = press(RemoteCommand("key", key = code))
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Devices", tint = Ink) }
+        IconButton(onBack, modifier = Modifier.jaskFocusRing()) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Devices", tint = Ink) }
         Column(Modifier.weight(1f)) {
             Text(d.name + (rtt?.let { "  ·  $it ms" } ?: ""), color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(p?.title?.let { it + (p.detail?.let { x -> " · $x" } ?: "") } ?: "Nothing playing", color = Dim,
@@ -268,3 +286,37 @@ private fun RoundKey(icon: ImageVector, label: String, big: Boolean = false, onC
         .clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         Icon(icon, label, Modifier.size(if (big) 34.dp else 26.dp), tint = Ink)
     }
+
+/**
+ * "Play on": sends what's on screen to another of your devices on this Wi-Fi. [button] draws the control and
+ * gets the open action; nothing is drawn when there's no other device on the account. With [mediaKey] null it
+ * sends what this device is playing, from the exact spot, and stops it here ([onSent] then leaves the player);
+ * with a "movie:"/"ep:" key it sends that title from its saved spot.
+ */
+@Composable
+internal fun JaskPlayOn(mediaKey: String?, onSent: () -> Unit = {}, onOpenChange: (Boolean) -> Unit = {}, button: @Composable (open: () -> Unit) -> Unit) {
+    val context = LocalContext.current
+    val account = remember { AccountManager.get(context) }
+    val status by account.status.collectAsState()
+    val ready = status as? AccountManager.Status.Ready ?: return
+    val others = ready.devices.filter { it.id != ready.deviceId && it.kind != "core" && it.kind != "web" }
+    if (others.isEmpty()) return
+    val lanReady by account.lanReady.collectAsState()
+    val linked by remember(lanReady) { account.lanLinked }.collectAsState()
+    var open by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(open) { onOpenChange(open) }
+    Box {
+        button { open = true }
+        JaskMenu(open, { open = false }, listOf(JaskMenuItem("Play on", header = true)) + others.sortedByDescending { it.id in linked }.map { d ->
+            val near = d.id in linked
+            JaskMenuItem(d.name, enabled = near, icon = if (d.kind == "tv") Icons.Filled.Tv else Icons.Filled.PhoneAndroid,
+                subtitle = if (near) "On this Wi-Fi" else "Not on this Wi-Fi") {
+                val done: (Boolean) -> Unit = { ok ->
+                    android.widget.Toast.makeText(context, if (ok) "Playing on ${d.name}" else "Couldn't reach ${d.name}", android.widget.Toast.LENGTH_SHORT).show()
+                    if (ok) onSent()
+                }
+                if (mediaKey == null) account.castTo(d.id, done) else account.castKeyTo(d.id, mediaKey, done)
+            }
+        })
+    }
+}

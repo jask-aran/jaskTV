@@ -17,6 +17,8 @@ import app.opentv.data.model.StreamKind
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -24,7 +26,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.decodeToSequence
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -103,7 +104,8 @@ class XtreamApi(
 
     /** Stream id → current name for one live category. Event slots are renamed per event; this keeps them fresh cheaply. */
     suspend fun liveNamesInCategory(source: Source, categoryId: String): Map<String, String> = withContext(Dispatchers.IO) {
-        getJson(source, "get_live_streams") { it.addQueryParameter("category_id", categoryId) }.arrayOrEmpty.mapNotNull { element ->
+        // Straight from the provider: this is how renamed event channels stay fresh.
+        getJson(source, "get_live_streams", viaCore = false) { it.addQueryParameter("category_id", categoryId) }.arrayOrEmpty.mapNotNull { element ->
             val obj = element.jsonObjectOrNull ?: return@mapNotNull null
             val id = obj["stream_id"].asStringOrNull ?: return@mapNotNull null
             val name = obj["name"].asStringOrNull ?: return@mapNotNull null
@@ -112,7 +114,39 @@ class XtreamApi(
     }
 
     suspend fun liveStreams(source: Source): List<Channel> = withContext(Dispatchers.IO) {
-        getJson(source, "get_live_streams").arrayOrEmpty.mapIndexedNotNull { index, element ->
+        channelsFrom(source, getJson(source, "get_live_streams"))
+    }
+
+    /**
+     * The live channels, from jasktv-core as only what changed since this device's last copy when it can ([ListCopy.delta]:
+     * the channels returned are the changed ones, [ListCopy.removed] the stream ids gone), else whole.
+     */
+    suspend fun liveStreamsCopy(source: Source): Pair<List<Channel>, ListCopy> = withContext(Dispatchers.IO) {
+        coreCopy(source, "get_live_streams")?.let { (response, copy) ->
+            val parsed = response.use { r -> r.body?.string()?.let { runCatching { json.parseToJsonElement(it) }.getOrNull() } }
+            if (parsed != null) return@withContext channelsFrom(source, parsed) to copy
+        }
+        liveStreams(source) to ListCopy.WHOLE
+    }
+
+    /**
+     * Only what changed in the live list since this device's last copy from jasktv-core: mostly renamed event slots
+     * (core re-reads them every few minutes). Null when no core can answer with changes (no core, or this device has
+     * never copied from it): nothing big is ever downloaded here.
+     */
+    suspend fun liveChangesFromCore(source: Source): Pair<List<Channel>, ListCopy>? = withContext(Dispatchers.IO) {
+        val core = coreFor(source, "get_live_streams") ?: return@withContext null
+        if ("deltas" !in core.capabilities) return@withContext null
+        val key = "${core.id}|${app.opentv.account.sync.LanCatalogue.sourceKey(source)}|get_live_streams"
+        if (app.opentv.account.CoreDirectory.since(key) <= 0) return@withContext null
+        val (response, copy) = coreCopy(source, "get_live_streams") ?: return@withContext null
+        if (!copy.delta) { response.close(); return@withContext null }
+        val parsed = response.use { r -> r.body?.string()?.let { runCatching { json.parseToJsonElement(it) }.getOrNull() } } ?: return@withContext null
+        channelsFrom(source, parsed) to copy
+    }
+
+    private fun channelsFrom(source: Source, body: JsonElement): List<Channel> =
+        body.arrayOrEmpty.mapIndexedNotNull { index, element ->
             val obj = element.jsonObjectOrNull ?: return@mapIndexedNotNull null
             val streamId = obj["stream_id"].asStringOrNull ?: return@mapIndexedNotNull null
             val name = obj["name"].asStringOrNull ?: return@mapIndexedNotNull null
@@ -132,70 +166,88 @@ class XtreamApi(
                 sortIndex = obj["num"].asIntOrNull ?: index,
             )
         }
-    }
 
     /**
      * The movie library, handed over in batches as it downloads. A big provider's
      * get_vod_streams runs to tens of MB; reading it whole (text + JSON tree + models at once)
      * blew the heap on phones, so it is streamed element by element instead.
      */
-    suspend fun movies(source: Source, onBatch: suspend (List<Movie>) -> Unit) =
-        streamArray(source, "get_vod_streams") { batch -> onBatch(batch.mapNotNull { movieFrom(source, it) }) }
+    suspend fun movies(source: Source, onBatch: suspend (List<Movie>) -> Unit): ListCopy =
+        streamRows(source, "get_vod_streams", MovieField.KEYS) { rows -> onBatch(rows.mapNotNull { movieFrom(source, it) }) }
 
-    private fun movieFrom(source: Source, element: JsonElement): Movie? {
-            val obj = element.jsonObjectOrNull ?: return null
-            val streamId = obj["stream_id"].asStringOrNull ?: return null
-            val name = obj["name"].asStringOrNull ?: return null
-            val extension = obj["container_extension"].asStringOrNull?.takeIf { it.isNotBlank() }
-            return Movie(
-                sourceId = source.id,
-                streamId = streamId,
-                name = name,
-                categoryId = obj["category_id"].asStringOrNull,
-                posterUrl = obj["stream_icon"].asStringOrNull?.takeIf { it.isNotBlank() },
-                rating = obj["rating"].asDoubleOrNull,
-                year = obj["year"].asIntOrNull,
-                plot = obj["plot"].asStringOrNull,
-                durationSeconds = obj["duration_secs"].asIntOrNull,
-                containerExtension = extension,
-                streamUrl = vodStreamUrl(source, streamId, extension),
-                addedMillis = obj["added"].asLongOrNull?.times(1000) ?: 0L,
-                // Rich metadata is best-effort here: the streams list carries it on some panels
-                // and not others. Whatever is missing is back-filled from get_vod_info on the
-                // first detail open. See asBackdropUrl for the array-or-string handling.
-                backdropUrl = obj.asBackdropUrl("movie_image", "cover_big"),
-                cast = obj["cast"].asStringOrNull ?: obj["actors"].asStringOrNull,
-                director = obj["director"].asStringOrNull,
-                genre = obj["genre"].asStringOrNull,
-                tmdbId = obj["tmdb_id"].asStringOrNull ?: obj["tmdb"].asStringOrNull,
-            )
+    /** Fields read from each get_vod_streams element; everything else is skipped unread. */
+    private object MovieField {
+        const val ID = 0; const val NAME = 1; const val EXT = 2; const val CATEGORY = 3; const val ICON = 4; const val RATING = 5
+        const val YEAR = 6; const val PLOT = 7; const val DURATION = 8; const val ADDED = 9; const val BACKDROP_PATH = 10
+        const val BACKDROP = 11; const val MOVIE_IMAGE = 12; const val COVER_BIG = 13; const val CAST = 14; const val ACTORS = 15
+        const val DIRECTOR = 16; const val GENRE = 17; const val TMDB_ID = 18; const val TMDB = 19
+        val KEYS = arrayOf("stream_id", "name", "container_extension", "category_id", "stream_icon", "rating", "year", "plot",
+            "duration_secs", "added", "backdrop_path", "backdrop", "movie_image", "cover_big", "cast", "actors", "director",
+            "genre", "tmdb_id", "tmdb")
+    }
+
+    private fun movieFrom(source: Source, r: Array<String?>): Movie? {
+        val streamId = r[MovieField.ID] ?: return null
+        val name = r[MovieField.NAME] ?: return null
+        val extension = r[MovieField.EXT]?.takeIf { it.isNotBlank() }
+        return Movie(
+            sourceId = source.id,
+            streamId = streamId,
+            name = name,
+            categoryId = r[MovieField.CATEGORY],
+            posterUrl = r[MovieField.ICON]?.takeIf { it.isNotBlank() },
+            rating = r[MovieField.RATING]?.toDoubleOrNull(),
+            year = r[MovieField.YEAR].wholeInt(),
+            plot = r[MovieField.PLOT],
+            durationSeconds = r[MovieField.DURATION].wholeInt(),
+            containerExtension = extension,
+            streamUrl = vodStreamUrl(source, streamId, extension),
+            addedMillis = r[MovieField.ADDED].wholeLong()?.times(1000) ?: 0L,
+            // Rich metadata is best-effort here: the streams list carries it on some panels and not others. Whatever
+            // is missing is back-filled from get_vod_info on the first detail open. Same order as asBackdropUrl.
+            backdropUrl = r[MovieField.BACKDROP_PATH] ?: r[MovieField.BACKDROP]
+                ?: r[MovieField.MOVIE_IMAGE]?.takeIf { it.isNotBlank() } ?: r[MovieField.COVER_BIG]?.takeIf { it.isNotBlank() },
+            cast = r[MovieField.CAST] ?: r[MovieField.ACTORS],
+            director = r[MovieField.DIRECTOR],
+            genre = r[MovieField.GENRE],
+            tmdbId = r[MovieField.TMDB_ID] ?: r[MovieField.TMDB],
+        )
     }
 
     /** The series library in batches, streamed for the same reason as [movies]. */
-    suspend fun series(source: Source, onBatch: suspend (List<Series>) -> Unit) =
-        streamArray(source, "get_series") { batch -> onBatch(batch.mapNotNull { seriesFrom(source, it) }) }
+    suspend fun series(source: Source, onBatch: suspend (List<Series>) -> Unit): ListCopy =
+        streamRows(source, "get_series", SeriesField.KEYS) { rows -> onBatch(rows.mapNotNull { seriesFrom(source, it) }) }
 
-    private fun seriesFrom(source: Source, element: JsonElement): Series? {
-            val obj = element.jsonObjectOrNull ?: return null
-            val seriesId = obj["series_id"].asStringOrNull ?: return null
-            val name = obj["name"].asStringOrNull ?: return null
-            return Series(
-                sourceId = source.id,
-                seriesId = seriesId,
-                name = name,
-                categoryId = obj["category_id"].asStringOrNull,
-                posterUrl = obj["cover"].asStringOrNull?.takeIf { it.isNotBlank() },
-                rating = obj["rating"].asDoubleOrNull,
-                year = obj["year"].asIntOrNull ?: obj["releaseDate"].asStringOrNull?.take(4)?.toIntOrNull(),
-                plot = obj["plot"].asStringOrNull,
-                addedMillis = obj["last_modified"].asLongOrNull?.times(1000) ?: 0L,
-                // get_series carries most of this inline on the majority of panels; anything
-                // missing is back-filled from get_series_info on the first detail open.
-                backdropUrl = obj.asBackdropUrl("cover_big", "cover"),
-                cast = obj["cast"].asStringOrNull ?: obj["actors"].asStringOrNull,
-                genre = obj["genre"].asStringOrNull,
-                tmdbId = obj["tmdb_id"].asStringOrNull ?: obj["tmdb"].asStringOrNull,
-            )
+    /** Fields read from each get_series element; everything else is skipped unread. */
+    private object SeriesField {
+        const val ID = 0; const val NAME = 1; const val CATEGORY = 2; const val COVER = 3; const val RATING = 4; const val YEAR = 5
+        const val RELEASE = 6; const val PLOT = 7; const val MODIFIED = 8; const val BACKDROP_PATH = 9; const val BACKDROP = 10
+        const val COVER_BIG = 11; const val CAST = 12; const val ACTORS = 13; const val GENRE = 14; const val TMDB_ID = 15; const val TMDB = 16
+        val KEYS = arrayOf("series_id", "name", "category_id", "cover", "rating", "year", "releaseDate", "plot", "last_modified",
+            "backdrop_path", "backdrop", "cover_big", "cast", "actors", "genre", "tmdb_id", "tmdb")
+    }
+
+    private fun seriesFrom(source: Source, r: Array<String?>): Series? {
+        val seriesId = r[SeriesField.ID] ?: return null
+        val name = r[SeriesField.NAME] ?: return null
+        return Series(
+            sourceId = source.id,
+            seriesId = seriesId,
+            name = name,
+            categoryId = r[SeriesField.CATEGORY],
+            posterUrl = r[SeriesField.COVER]?.takeIf { it.isNotBlank() },
+            rating = r[SeriesField.RATING]?.toDoubleOrNull(),
+            year = r[SeriesField.YEAR].wholeInt() ?: r[SeriesField.RELEASE]?.take(4)?.toIntOrNull(),
+            plot = r[SeriesField.PLOT],
+            addedMillis = r[SeriesField.MODIFIED].wholeLong()?.times(1000) ?: 0L,
+            // get_series carries most of this inline on the majority of panels; anything missing is back-filled from
+            // get_series_info on the first detail open. Same order as asBackdropUrl ("cover_big", then "cover").
+            backdropUrl = r[SeriesField.BACKDROP_PATH] ?: r[SeriesField.BACKDROP]
+                ?: r[SeriesField.COVER_BIG]?.takeIf { it.isNotBlank() } ?: r[SeriesField.COVER]?.takeIf { it.isNotBlank() },
+            cast = r[SeriesField.CAST] ?: r[SeriesField.ACTORS],
+            genre = r[SeriesField.GENRE],
+            tmdbId = r[SeriesField.TMDB_ID] ?: r[SeriesField.TMDB],
+        )
     }
 
     /**
@@ -271,6 +323,28 @@ class XtreamApi(
     }
 
     /**
+     * What a provider's copy of a movie is technically (picture size, codecs, bitrate, length), from `get_vod_info`'s
+     * `info.video` / `info.audio` blocks (ffprobe output on most panels). Null when the panel doesn't say.
+     */
+    suspend fun movieTech(source: Source, streamId: String): VodTech? = withContext(Dispatchers.IO) {
+        val body = runCatching { getJson(source, "get_vod_info") { it.addQueryParameter("vod_id", streamId) } }.getOrNull() ?: return@withContext null
+        val info = body.jsonObjectOrNull?.get("info").jsonObjectOrNull ?: return@withContext null
+        val video = info["video"].jsonObjectOrNull
+        val audio = info["audio"].jsonObjectOrNull
+        val tech = VodTech(
+            width = video?.get("width").asIntOrNull, height = video?.get("height").asIntOrNull,
+            videoCodec = video?.get("codec_name").asStringOrNull,
+            hdr = video?.get("color_transfer").asStringOrNull?.let { it == "smpte2084" || it == "arib-std-b67" } == true,
+            audioCodec = audio?.get("codec_name").asStringOrNull, channels = audio?.get("channels").asIntOrNull,
+            bitrateKbps = info["bitrate"].asIntOrNull, durationSeconds = info["duration_secs"].asIntOrNull,
+        )
+        tech.takeIf { it.height != null || it.videoCodec != null || it.bitrateKbps != null }
+    }
+
+    data class VodTech(val width: Int?, val height: Int?, val videoCodec: String?, val hdr: Boolean, val audioCodec: String?,
+        val channels: Int?, val bitrateKbps: Int?, val durationSeconds: Int?)
+
+    /**
      * Rich metadata for a single series, from `get_series_info`'s `info` object. Same contract as
      * [movieInfo]; series carry no director. This shares the `get_series_info` endpoint with
      * [episodes] but is a separate call — the detail screen fetches episodes and info independently,
@@ -294,6 +368,14 @@ class XtreamApi(
 
     /** Opens the XMLTV guide as a stream. The caller must close it. */
     suspend fun openEpgStream(source: Source): InputStream = withContext(Dispatchers.IO) {
+        // jasktv-core's copy of the guide first (fetched from the same address, every six hours): the provider's
+        // connection isn't held while a TV downloads 60 MB.
+        coreRequest(source, "xmltv")?.let { r ->
+            val response = runCatching { coreHttp.newCall(r).execute() }.getOrNull()
+            if (response != null && response.isSuccessful && response.body != null) return@withContext response.body!!.byteStream()
+            response?.close()
+            app.opentv.account.CoreDirectory.forget()
+        }
         val url = source.epgUrl?.toHttpUrlOrNull() ?: xmltvUrl(source)
         val response = http.newCall(request(source, url)).execute()
         if (!response.isSuccessful) {
@@ -341,9 +423,31 @@ class XtreamApi(
 
     // ---- Plumbing ------------------------------------------------------------------------
 
-    private fun getJson(
+    /**
+     * Runs a blocking OkHttp call so that cancelling the coroutine (Pause syncing, leaving the screen) aborts the
+     * download straight away. A blocking read never checks for cancellation, so a 70 MB catalogue would otherwise
+     * finish downloading and parsing first. [block] runs on the IO pool; the response is closed afterwards.
+     */
+    private suspend fun <T> okhttp3.Call.cancellable(
+        on: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+        block: suspend (okhttp3.Response) -> T,
+    ): T = kotlinx.coroutines.coroutineScope {
+        val call = this@cancellable
+        // Unconfined: the abort runs at once on the cancelling thread, even if [on]'s threads are all busy reading.
+        val watcher = launch(Dispatchers.Unconfined) { try { kotlinx.coroutines.awaitCancellation() } finally { call.cancel() } }
+        try {
+            withContext(on) { call.execute().use { block(it) } }
+        } catch (e: java.io.IOException) {
+            // The abort surfaces as an IOException ("Canceled"): report it as the cancellation it is.
+            if (call.isCanceled()) throw kotlinx.coroutines.CancellationException("Download stopped").apply { initCause(e) }
+            throw e
+        } finally { watcher.cancel() }
+    }
+
+    private suspend fun getJson(
         source: Source,
         action: String?,
+        viaCore: Boolean = true,
         extra: (HttpUrl.Builder) -> Unit = {},
     ): JsonElement {
         val builder = baseUrl(source).newBuilder()
@@ -353,13 +457,23 @@ class XtreamApi(
         if (action != null) builder.addQueryParameter("action", action)
         extra(builder)
 
-        http.newCall(request(source, builder.build())).execute().use { response ->
+        // Categories and live lists: from jasktv-core's copy when one answers (same bytes as the provider's).
+        if (viaCore && action in CORE_CACHED) coreRequest(source, action!!)?.let { r ->
+            val parsed = try {
+                coreHttp.newCall(r).cancellable { response ->
+                    response.body?.string()?.takeIf { response.isSuccessful && it.isNotBlank() }?.let { runCatching { json.parseToJsonElement(it) }.getOrNull() }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { app.opentv.account.CoreDirectory.forget(); null }
+            if (parsed != null) return parsed
+        }
+
+        return http.newCall(request(source, builder.build())).cancellable { response ->
             if (!response.isSuccessful) {
                 throw XtreamException(describeHttpFailure(response.code))
             }
             val text = response.body?.string().orEmpty()
             if (text.isBlank()) throw XtreamException(AppText.get(R.string.err_empty_response))
-            return try {
+            try {
                 json.parseToJsonElement(text)
             } catch (e: Exception) {
                 // Panels behind a captive portal or Cloudflare return HTML here. Saying
@@ -373,43 +487,151 @@ class XtreamApi(
     }
 
     /**
-     * Streams a player_api JSON array, calling [onBatch] every [STREAM_BATCH] elements, so memory
-     * stays flat however large the catalogue is. A non-array reply (some panels send `{}` for
-     * "nothing") yields no batches.
+     * Streams a player_api JSON array of objects, calling [onBatch] every [STREAM_BATCH] elements, so memory stays flat
+     * however large the catalogue is. A non-array reply (some panels send `{}` for "nothing") yields no batches.
+     *
+     * Each element becomes an array of [keys]' values as strings (numbers and booleans as written; for an array, its
+     * first non-blank string; empty and literal "null" become null). Fields not in [keys] are skipped without being
+     * read into memory. Parsing into a JSON tree first cost ~20 MB of short-lived objects a second on a big list,
+     * and the collections that followed cost the UI frames.
      */
     // Parsing 180k titles is the heaviest CPU work in the app: background priority (see BackgroundWork).
-    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
-    private suspend fun streamArray(
+    private suspend fun streamRows(
         source: Source,
         action: String,
-        onBatch: suspend (List<JsonElement>) -> Unit,
-    ) = withContext(app.opentv.core.BackgroundWork.dispatcher) {
+        keys: Array<String>,
+        onBatch: suspend (List<Array<String?>>) -> Unit,
+    ): ListCopy = withContext(app.opentv.core.BackgroundWork.dispatcher) {
         val url = baseUrl(source).newBuilder()
             .encodedPath("/player_api.php")
             .addQueryParameter("username", source.username.orEmpty())
             .addQueryParameter("password", source.password.orEmpty())
             .addQueryParameter("action", action)
             .build()
-        http.newCall(request(source, url)).execute().use { response ->
+        val index = HashMap<String, Int>(keys.size * 2).apply { keys.forEachIndexed { i, k -> put(k, i) } }
+        // From jasktv-core when one answers: only what changed since this device's last copy, or the whole list; the
+        // provider when it doesn't (or fails). Rows are upserted by provider id, so a copy cut off halfway and then
+        // read again from the provider is harmless.
+        coreCopy(source, action)?.let { (response, copy) ->
+            // Not a list, or a whole copy with nothing in it (a core whose cache is empty or broken): use the provider.
+            // Taken as a whole list, an empty copy emptied the film inventory until the next good sync.
+            val ok = try {
+                val rows = response.use { readRows(it, keys, index, onBatch) }
+                rows > 0 || (rows == 0 && copy.delta)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { app.opentv.account.CoreDirectory.forget(); false }
+            if (ok) return@withContext copy
+        }
+        http.newCall(request(source, url)).cancellable(app.opentv.core.BackgroundWork.dispatcher) { response ->
             if (!response.isSuccessful) throw XtreamException(describeHttpFailure(response.code))
-            val stream = java.io.BufferedInputStream(response.body?.byteStream() ?: return@use)
+            readRows(response, keys, index, onBatch)
+        }
+        ListCopy.WHOLE
+    }
+
+    private suspend fun readRows(
+        response: okhttp3.Response,
+        keys: Array<String>,
+        index: Map<String, Int>,
+        onBatch: suspend (List<Array<String?>>) -> Unit,
+    ): Int {
+        // Rows read; -1 when the body isn't a JSON array at all (an error object, an empty body).
+        var count = -1
+        run {
+            val stream = java.io.BufferedInputStream(response.body?.byteStream() ?: return@run, 64 * 1024)
             // Peek at the first non-blank byte: only an array is streamable.
             stream.mark(64)
             var first: Int
             do { first = stream.read() } while (first != -1 && first.toChar().isWhitespace())
             stream.reset()
-            if (first != '['.code) return@use
-            val batch = ArrayList<JsonElement>(STREAM_BATCH)
-            for (element in json.decodeToSequence(stream, JsonElement.serializer(), kotlinx.serialization.json.DecodeSequenceMode.ARRAY_WRAPPED)) {
-                batch += element
+            if (first != '['.code) return@run
+            count = 0
+            val reader = android.util.JsonReader(java.io.InputStreamReader(stream, Charsets.UTF_8)).apply { isLenient = true }
+            val batch = ArrayList<Array<String?>>(STREAM_BATCH)
+            reader.beginArray()
+            while (reader.hasNext()) {
+                if (reader.peek() != android.util.JsonToken.BEGIN_OBJECT) { reader.skipValue(); continue }
+                val row = arrayOfNulls<String>(keys.size)
+                reader.beginObject()
+                while (reader.hasNext()) {
+                    val at = index[reader.nextName()]
+                    if (at == null) reader.skipValue() else row[at] = reader.readField()
+                }
+                reader.endObject()
+                batch += row
+                count++
                 if (batch.size >= STREAM_BATCH) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     onBatch(batch.toList())
                     batch.clear()
                 }
             }
             if (batch.isNotEmpty()) onBatch(batch.toList())
         }
+        return count
     }
+
+    /** One field's value as a string (see [streamRows]); objects are skipped. */
+    private fun android.util.JsonReader.readField(): String? = when (peek()) {
+        android.util.JsonToken.STRING, android.util.JsonToken.NUMBER -> nextString().takeIf { it.isNotEmpty() && it != "null" }
+        android.util.JsonToken.BOOLEAN -> nextBoolean().toString()
+        android.util.JsonToken.NULL -> { nextNull(); null }
+        android.util.JsonToken.BEGIN_ARRAY -> {
+            beginArray()
+            var found: String? = null
+            while (hasNext()) {
+                if (found == null && peek() == android.util.JsonToken.STRING) found = nextString().takeIf { it.isNotBlank() && it != "null" }
+                else skipValue()
+            }
+            endArray()
+            found
+        }
+        else -> { skipValue(); null }
+    }
+
+    private fun String?.wholeInt(): Int? = this?.substringBefore('.')?.toIntOrNull()
+    private fun String?.wholeLong(): Long? = this?.substringBefore('.')?.toLongOrNull()
+
+    // ---- jasktv-core ----
+
+    /** Core's copy of one of [CORE_CACHED] for this playlist, when a core answers and keeps them. */
+    private fun coreRequest(source: Source, action: String): Request? = coreFor(source, action)?.let { coreRequest(source, action, it) }
+
+    /** The best answering core that keeps [action]'s list (live lists: only a full core keeps them). */
+    private fun coreFor(source: Source, action: String): app.opentv.account.CoreDirectory.Endpoint? {
+        if (source.kind != app.opentv.data.model.SourceKind.XTREAM || (action !in CORE_CACHED && action != "xmltv")) return null
+        return app.opentv.account.CoreDirectory.endpoint(when (action) { in CORE_LIVE -> "live-cache"; "xmltv" -> "guide"; else -> "xtream-cache" })
+    }
+
+    private fun coreRequest(source: Source, action: String, core: app.opentv.account.CoreDirectory.Endpoint): Request =
+        Request.Builder().url("${core.base}/xtream/${app.opentv.account.sync.LanCatalogue.sourceKey(source)}/$action")
+            .header("Authorization", "Bearer ${core.secret}").build()
+
+    /**
+     * Asks jasktv-core for [action]'s list: only the changes since this device's last copy from that core when it keeps
+     * them, else the whole list. The open response (read it, then close it) and how it came. Null: no core answered.
+     */
+    private fun coreCopy(source: Source, action: String): Pair<okhttp3.Response, ListCopy>? {
+        val core = coreFor(source, action) ?: return null
+        val plain = coreRequest(source, action, core)
+        val key = "${core.id}|${app.opentv.account.sync.LanCatalogue.sourceKey(source)}|$action"
+        val since = if ("deltas" in core.capabilities) app.opentv.account.CoreDirectory.since(key) else 0L
+        val request = if (since > 0) plain.newBuilder().url(plain.url.newBuilder().addQueryParameter("since", since.toString()).build()).build() else plain
+        val response = runCatching { coreHttp.newCall(request).execute() }.getOrNull()
+        if (response == null || !response.isSuccessful) { response?.close(); app.opentv.account.CoreDirectory.forget(); return null }
+        val now = response.header("X-Core-Now")?.toLongOrNull()
+        val delta = response.header("X-Core-Delta") == "1"
+        val removed = if (!delta) emptyList() else runCatching {
+            val r = plain.newBuilder().url(plain.url.newBuilder().addPathSegment("removed").addQueryParameter("since", since.toString()).build()).build()
+            coreHttp.newCall(r).execute().use { res ->
+                if (!res.isSuccessful) throw java.io.IOException("removed: HTTP ${res.code}")
+                (json.parseToJsonElement(res.body!!.string()) as? JsonArray)?.mapNotNull { it.asStringOrNull }.orEmpty()
+            }
+        }.getOrElse { response.close(); return null }
+        return response to ListCopy(delta, removed) { now?.let { app.opentv.account.CoreDirectory.setSince(key, it) } }
+    }
+
+    /** Core is on the home network: a short connect timeout, so a core that just went away costs seconds. */
+    private val coreHttp: OkHttpClient by lazy { http.newBuilder().connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build() }
 
     private fun request(source: Source, url: HttpUrl): Request =
         Request.Builder()
@@ -513,3 +735,16 @@ private val JsonElement?.asDoubleOrNull: Double?
 
 /** Catalogue elements handed to the database per write while streaming a big list. */
 private const val STREAM_BATCH = 1_000
+
+/** What jasktv-core keeps a copy of: the film, series and live lists (live: only while under half an hour old). */
+/**
+ * How a list arrived. [delta]: from jasktv-core as only the entries that changed since this device's last copy, with
+ * [removed] the ids gone; else whole. Call [commit] once everything is stored: it records the copy, so the next one
+ * asks for changes from here.
+ */
+class ListCopy(val delta: Boolean, val removed: List<String>, val commit: () -> Unit) {
+    companion object { val WHOLE = ListCopy(false, emptyList()) {} }
+}
+
+private val CORE_LIVE = setOf("get_live_streams", "get_live_categories")
+private val CORE_CACHED = setOf("get_vod_streams", "get_series", "get_vod_categories", "get_series_categories") + CORE_LIVE

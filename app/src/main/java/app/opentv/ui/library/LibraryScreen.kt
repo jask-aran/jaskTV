@@ -4,7 +4,11 @@
  */
 package app.opentv.ui.library
 
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -12,6 +16,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
@@ -25,6 +31,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import app.opentv.ui.JaskMenu
+import app.opentv.ui.JaskMenuItem
+import app.opentv.ui.vod.JaskFactsLine
+import app.opentv.ui.vod.ProviderRating
+import app.opentv.ui.vod.cleanShowTitle
 import androidx.compose.ui.unit.dp
 import app.opentv.core.ServiceLocator
 import app.opentv.data.model.Channel
@@ -115,12 +128,12 @@ fun LibraryScreen(
     val orderedMovies = when (sort) {
         "Rating" -> moviesToShow.sortedWith(compareByDescending<Movie> { it.rating ?: -1.0 }.thenBy { it.name })
         "Year" -> moviesToShow.sortedWith(compareByDescending<Movie> { it.year ?: 0 }.thenBy { it.name })
-        else -> moviesToShow.sortedBy { it.name.lowercase() }
+        else -> moviesToShow.sortedBy { cleanShowTitle(it.name).lowercase() }
     }
     val orderedShows = when (sort) {
         "Rating" -> showsToShow.sortedWith(compareByDescending<Series> { it.rating ?: -1.0 }.thenBy { it.name })
         "Year" -> showsToShow.sortedWith(compareByDescending<Series> { it.year ?: 0 }.thenBy { it.name })
-        else -> showsToShow.sortedBy { it.name.lowercase() }
+        else -> showsToShow.sortedBy { cleanShowTitle(it.name).lowercase() }
     }
 
     var editor by remember { mutableStateOf<UserCollection?>(null) }
@@ -138,15 +151,15 @@ fun LibraryScreen(
         ) {
             listOf("All", "Channels", "Movies", "Shows", "Downloads").forEach { name ->
                 FilterChip(selected = section == name, onClick = { section = name },
-                    label = { Text(name) })
+                    label = { Text(name) }, colors = neutralChipColors())
             }
             collections.forEach { collection ->
                 FilterChip(selected = collectionId == collection.id,
                     onClick = { section = "collection:${collection.id}" },
-                    label = { Text(collection.name, maxLines = 1) },
+                    label = { Text(collection.name, maxLines = 1) }, colors = neutralChipColors(),
                     leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(16.dp)) })
             }
-            TextButton(onClick = { creating = true }) {
+            TextButton(onClick = { creating = true }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Text("Collection")
             }
@@ -156,14 +169,15 @@ fun LibraryScreen(
         val filterRequest = app.opentv.ui.LocalJaskFilterRequest.current
         LaunchedEffect(filterRequest) { if (filterRequest > 0) libraryFilters = true }
         if (libraryFilters) AlertDialog(onDismissRequest = { libraryFilters = false },
-            title = { Text("Library") }, confirmButton = { TextButton(onClick = { libraryFilters = false }) { Text("Done") } },
+            containerColor = DialogGlass, titleContentColor = Color.White, textContentColor = SubtleInk,
+            title = { Text("Library") }, confirmButton = { TextButton(onClick = { libraryFilters = false }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text("Done") } },
             text = { Column {
                 listOf("All", "Channels", "Movies", "Shows", "Downloads").forEach { name ->
-                    TextButton(onClick = { section = name; libraryFilters = false }) { Text(name) }
+                    TextButton(onClick = { section = name; libraryFilters = false }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text(name) }
                 }
-                collections.forEach { collection -> TextButton(onClick = { section = "collection:${collection.id}"; libraryFilters = false }) { Text(collection.name) } }
-                TextButton(onClick = { sort = when (sort) { "Name" -> "Rating"; "Rating" -> "Year"; else -> "Name" } }) { Text("Sort: $sort") }
-                TextButton(onClick = { libraryFilters = false; creating = true }) { Text("New collection") }
+                collections.forEach { collection -> TextButton(onClick = { section = "collection:${collection.id}"; libraryFilters = false }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text(collection.name) } }
+                TextButton(onClick = { sort = when (sort) { "Name" -> "Rating"; "Rating" -> "Year"; else -> "Name" } }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text("Sort: $sort") }
+                TextButton(onClick = { libraryFilters = false; creating = true }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text("New collection") }
             } })
         if (collectionId != null) {
             val selected = collections.firstOrNull { it.id == collectionId }
@@ -171,26 +185,18 @@ fun LibraryScreen(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(selected.name, modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = { editor = selected }) {
-                    Icon(Icons.Filled.Edit, contentDescription = "Rename collection")
-                }
-                IconButton(onClick = { confirmDelete = selected }) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Delete collection")
-                }
+                Text(selected.name, modifier = Modifier.weight(1f), color = TitleInk,
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                app.opentv.ui.JaskGlassCircle(Icons.Filled.Edit, "Rename collection", size = 40.dp) { editor = selected }
+                Spacer(Modifier.width(8.dp))
+                app.opentv.ui.JaskGlassCircle(Icons.Filled.Delete, "Delete collection", size = 40.dp) { confirmDelete = selected }
             }
         } else if (section != "Downloads" && !app.opentv.ui.LocalJaskTouchShell.current) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                TextButton(onClick = { sorting = true }) { Text("Sort: $sort") }
-                DropdownMenu(expanded = sorting, onDismissRequest = { sorting = false }) {
-                    listOf("Name", "Rating", "Year").forEach { option ->
-                        DropdownMenuItem(text = { Text(option) }, onClick = {
-                            sort = option
-                            sorting = false
-                        })
-                    }
-                }
+                TextButton(onClick = { sorting = true }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text("Sort: $sort") }
+                JaskMenu(sorting, { sorting = false }, listOf("Name", "Rating", "Year").map { option ->
+                    JaskMenuItem(option, checked = option == sort) { sort = option }
+                })
             }
         }
 
@@ -208,7 +214,7 @@ fun LibraryScreen(
             if (isEmpty) {
                 Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                     Text("Nothing saved here. Star a title or channel, then add it to a collection.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        color = SubtleInk)
                 }
             } else LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -239,9 +245,9 @@ fun LibraryScreen(
                     item(key = "head-movies") { Heading("Movies", orderedMovies.size) }
                     items(orderedMovies, key = { "movie-${it.id}" }) { movie ->
                         val ref = SavedRef("movie", movie.sourceId, movie.streamId)
-                        LibraryRow(movie.name, listOfNotNull(movie.year?.toString(),
-                                movie.rating?.let { "★ %.1f".format(it) }).joinToString(" · "),
-                            { onOpenMovie(movie) }, onOrganize = { organize = ref },
+                        // Saved rows are the provider's own entries: its name cleaned, its year and its score.
+                        LibraryRow(cleanShowTitle(movie.name), listOfNotNull(movie.year?.toString()).joinToString(" · "),
+                            { onOpenMovie(movie) }, rating = movie.rating, onOrganize = { organize = ref },
                             onRemove = { scope.launch {
                                 if (collectionId != null) dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
                                 else {
@@ -255,9 +261,8 @@ fun LibraryScreen(
                     item(key = "head-shows") { Heading("Shows", orderedShows.size) }
                     items(orderedShows, key = { "show-${it.id}" }) { show ->
                         val ref = SavedRef("show", show.sourceId, show.seriesId)
-                        LibraryRow(show.name, listOfNotNull(show.year?.toString(),
-                                show.rating?.let { "★ %.1f".format(it) }).joinToString(" · "),
-                            { onOpenSeries(show) }, onOrganize = { organize = ref },
+                        LibraryRow(cleanShowTitle(show.name), listOfNotNull(show.year?.toString()).joinToString(" · "),
+                            { onOpenSeries(show) }, rating = show.rating, onOrganize = { organize = ref },
                             onRemove = { scope.launch {
                                 if (collectionId != null) dao.remove(collectionId, ref.kind, ref.sourceId, ref.key)
                                 else {
@@ -295,10 +300,14 @@ fun LibraryScreen(
         val valid = normalized.isNotBlank() && normalized.length <= 60 &&
             collections.none { it.id != original?.id && it.name.equals(normalized, ignoreCase = true) }
         AlertDialog(onDismissRequest = { creating = false; editor = null },
+            containerColor = DialogGlass, titleContentColor = Color.White, textContentColor = SubtleInk,
             title = { Text(if (original == null) "New collection" else "Rename collection") },
             text = {
                 OutlinedTextField(value = name, onValueChange = { name = it.take(60) },
-                    singleLine = true, label = { Text("Name") })
+                    singleLine = true, label = { Text("Name") }, colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                        focusedBorderColor = Color.White, unfocusedBorderColor = Color(0xFF6E6E6E),
+                        focusedLabelColor = Color.White, unfocusedLabelColor = SubtleInk))
             }, confirmButton = {
                 TextButton(enabled = valid, onClick = {
                     scope.launch {
@@ -310,14 +319,15 @@ fun LibraryScreen(
                     }
                     creating = false
                     editor = null
-                }) { Text("Save") }
+                }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text("Save") }
             }, dismissButton = {
-                TextButton(onClick = { creating = false; editor = null }) { Text("Cancel") }
+                TextButton(onClick = { creating = false; editor = null }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text("Cancel") }
             })
     }
 
     confirmDelete?.let { item ->
         AlertDialog(onDismissRequest = { confirmDelete = null },
+            containerColor = DialogGlass, titleContentColor = Color.White, textContentColor = SubtleInk,
             title = { Text("Delete ${item.name}?") },
             text = { Text("This removes the collection, not its channels, movies or downloads.") },
             confirmButton = {
@@ -325,45 +335,47 @@ fun LibraryScreen(
                     scope.launch { dao.delete(item.id) }
                     if (collectionId == item.id) section = "All"
                     confirmDelete = null
-                }) { Text("Delete") }
+                }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text("Delete") }
             }, dismissButton = {
-                TextButton(onClick = { confirmDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { confirmDelete = null }, modifier = Modifier.jaskFocusRing(), colors = neutralTextButton()) { Text("Cancel") }
             })
     }
 
+    // The same frosted sheet as every other choice in the app.
     organize?.let { media ->
-        AlertDialog(onDismissRequest = { organize = null },
-            title = { Text("Add to collections") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (collections.isEmpty()) Text("Create a collection to organise this item.")
-                    collections.forEach { collection ->
-                        val contains = memberships.any {
-                            it.collectionId == collection.id && it.kind == media.kind &&
-                                it.sourceId == media.sourceId && it.itemKey == media.key
-                        }
-                        Row(Modifier.fillMaxWidth().clickable {
-                            scope.launch {
-                                if (contains) dao.remove(collection.id, media.kind, media.sourceId, media.key)
-                                else dao.add(media.asEntry(collection.id))
-                            }
-                        }, verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = contains, onCheckedChange = null)
-                            Text(collection.name)
-                        }
-                    }
+        app.opentv.ui.JaskSheet({ organize = null }) {
+            Text("Add to collections", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+            if (collections.isEmpty()) Text("Create a collection to organise this item.", color = SubtleInk,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+            collections.forEach { collection ->
+                val contains = memberships.any {
+                    it.collectionId == collection.id && it.kind == media.kind && it.sourceId == media.sourceId && it.itemKey == media.key
                 }
-            }, confirmButton = {
-                TextButton(onClick = { organize = null }) { Text("Done") }
-            }, dismissButton = {
-                TextButton(onClick = { organize = null; creating = true }) { Text("New collection") }
-            })
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp).clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(alpha = .06f)).clickable {
+                        scope.launch {
+                            if (contains) dao.remove(collection.id, media.kind, media.sourceId, media.key)
+                            else dao.add(media.asEntry(collection.id))
+                        }
+                    }.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (contains) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+                        null, tint = if (contains) Color.White else SubtleInk, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text(collection.name, color = Color.White, style = MaterialTheme.typography.titleSmall)
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                app.opentv.ui.settings.JaskPill("New collection", onClick = { organize = null; creating = true })
+                app.opentv.ui.settings.JaskPill("Done", onClick = { organize = null })
+            }
+        }
     }
 }
 
 @Composable
 private fun Heading(title: String, count: Int) {
-    Text("$title · $count", style = MaterialTheme.typography.titleMedium,
+    Text("$title · $count", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = TitleInk,
         modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
 }
 
@@ -372,23 +384,36 @@ private fun LibraryRow(
     title: String, subtitle: String, onOpen: () -> Unit, onOrganize: () -> Unit,
     onRemove: (() -> Unit)?,
     onMap: (() -> Unit)? = null,
+    /** The provider's score (these are its own rows, not matched to TMDB), drawn with its source's tag. */
+    rating: Double? = null,
 ) {
     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).clickable(onClick = onOpen).padding(vertical = 8.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            if (subtitle.isNotBlank()) Text(subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = TitleInk)
+            JaskFactsLine(listOf(subtitle).filter(String::isNotBlank), rating, ProviderRating,
+                color = SubtleInk, style = MaterialTheme.typography.bodySmall)
         }
-        if (onMap != null) IconButton(onClick = onMap) {
-            Icon(Icons.Filled.Link, contentDescription = "Map channel identity")
-        }
-        IconButton(onClick = onOrganize) {
-            Icon(Icons.Filled.Folder, contentDescription = "Organise in collections")
-        }
-        if (onRemove != null) IconButton(onClick = onRemove) {
-            Icon(Icons.Filled.Close, contentDescription = "Remove from this view")
+        // Glass circles, as on the media page and the Library's sort button.
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (onMap != null) app.opentv.ui.JaskGlassCircle(Icons.Filled.Link, "Map channel identity", size = 40.dp, onClick = onMap)
+            app.opentv.ui.JaskGlassCircle(Icons.Filled.Folder, "Organise in collections", size = 40.dp, onClick = onOrganize)
+            if (onRemove != null) app.opentv.ui.JaskGlassCircle(Icons.Filled.Close, "Remove from this view", size = 40.dp, onClick = onRemove)
         }
     }
-    HorizontalDivider()
+    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
 }
+
+private val TitleInk = Color(0xFFF4F4F4)
+private val SubtleInk = Color(0xFFBDBDBD)
+/** Dialogs on this page: dark neutral glass instead of the theme's tinted surface. */
+private val DialogGlass = Color(0xFF242322)
+
+/** Text buttons in white instead of the theme's periwinkle primary. */
+@Composable
+private fun neutralTextButton() = ButtonDefaults.textButtonColors(contentColor = Color(0xFFF2F2F2), disabledContentColor = Color(0xFF6E6E6E))
+
+/** Filter chips selected in grey/white glass, not the theme's tinted container. */
+@Composable
+private fun neutralChipColors() = FilterChipDefaults.filterChipColors(
+    containerColor = Color.Transparent, labelColor = SubtleInk,
+    selectedContainerColor = Color.White.copy(alpha = 0.24f), selectedLabelColor = Color.White, selectedLeadingIconColor = Color.White)

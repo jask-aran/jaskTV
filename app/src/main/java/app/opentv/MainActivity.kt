@@ -27,6 +27,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -147,7 +150,14 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    /** D-pad sounds need to know which key moved focus (see JaskSounds); the UI handles the key as usual. */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        app.opentv.ui.JaskSounds.key(event)
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onStart() {
+        app.opentv.account.CoreDirectory.foreground()
         super.onStart()
         app.opentv.remote.RemoteReceiver.attach(this)
         app.opentv.update.AppUpdater.get(this).checkIfDue()
@@ -171,7 +181,13 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (BuildConfig.APPLICATION_ID.endsWith(".debug") && intent?.getBooleanExtra("jaskAudit", false) == true) app.opentv.ui.channels.StreamProbe.auditPending = true
+        app.opentv.livetv.StreamHealth.init(this)
+        app.opentv.ui.channels.readScreenLines(this)
+        // Debug app only: `--ez jaskHealthClear true` forgets what live streams have done (emulator test plays).
+        if (BuildConfig.APPLICATION_ID.endsWith(".debug") && intent?.getBooleanExtra("jaskHealthClear", false) == true) app.opentv.livetv.StreamHealth.clear()
         super.onCreate(savedInstanceState)
+        app.opentv.ui.JaskSounds.attach(this)
         if (savedInstanceState == null) handlePairLink(intent)
         savedInstanceState?.let {
             playerOrientationSession = PlayerOrientationSession(
@@ -182,7 +198,18 @@ class MainActivity : ComponentActivity() {
                 naturalLandscape = it.getBoolean("player.naturalLandscape"),
             )
         }
-        enableEdgeToEdge()
+        // The jaskTV pages are dark whatever the system theme: light clock and icons on both bars (the default follows
+        // the system, which drew dark icons over dark pages on a phone in light mode).
+        enableEdgeToEdge(
+            statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
+        // The window reaches into the camera-cutout side in landscape too (before Android 15 it stopped short, and a light
+        // strip showed down that edge). The content is kept clear of the cutout below, so the strip is the dark window.
+        if (android.os.Build.VERSION.SDK_INT >= 30) window.attributes = window.attributes.apply {
+            layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS }
+        else if (android.os.Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply {
+            layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES }
         if (savedInstanceState == null) handlePlayIntent(intent)
         val isTelevision = isRunningOnTelevision(this)
 
@@ -197,12 +224,15 @@ class MainActivity : ComponentActivity() {
             }
             OpenTvTheme(darkTheme = darkTheme, phone = !isTelevision) {
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().windowInsetsPadding(
+                        androidx.compose.foundation.layout.WindowInsets.displayCutout.only(androidx.compose.foundation.layout.WindowInsetsSides.Horizontal)),
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     val layoutClass = rememberLayoutClass(isTelevision)
+                    // The jaskTV focus ring and wash everywhere (sheets, menus, person pages), not only inside JaskTheme.
                     CompositionLocalProvider(LocalLayoutClass provides layoutClass,
-                        app.opentv.ui.LocalJaskMaterial provides app.opentv.ui.rememberJaskMaterial(isTelevision)) {
+                        app.opentv.ui.LocalJaskMaterial provides app.opentv.ui.rememberJaskMaterial(isTelevision),
+                        androidx.compose.foundation.LocalIndication provides app.opentv.ui.JaskIndication) {
                         app.opentv.ui.JaskUiScale(layoutClass) { OpenTvApp(isTelevision = isTelevision) }
                     }
                 }
@@ -308,7 +338,7 @@ object Routes {
 
     // A person's name goes in a query arg, URL-encoded, so spaces and punctuation survive the round
     // trip — the same inline-encode/decode approach as the VOD player below.
-    const val PERSON = "person?name={name}"
+    const val PERSON = "person?name={name}&tmdb={tmdb}"
 
     // VOD plays carry the stream inline; a movie/episode is a one-off URL, not a stored id
     // the player can look up the way a channel is.
@@ -318,7 +348,7 @@ object Routes {
     fun seriesDetail(seriesId: Long) = "series/$seriesId"
     fun movieDetail(movieId: Long) = "movie/$movieId"
     fun editSource(sourceId: Long) = "edit-source/$sourceId"
-    fun person(name: String) = "person?name=${java.net.URLEncoder.encode(name, "UTF-8")}"
+    fun person(name: String, tmdb: Int = 0) = "person?name=${java.net.URLEncoder.encode(name, "UTF-8")}&tmdb=$tmdb"
     fun vodPlayer(key: String, url: String, title: String, ua: String): String {
         // Strict percent-encoding (space = %20, '+' = %2B). Navigation decodes query arguments once;
         // the old URLEncoder + second URLDecoder pass turned every '+' into a space — breaking
@@ -524,6 +554,8 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     onOpenGuide = { navController.navigate(Routes.EPG_SETTINGS) },
                     onOpenParental = { navController.navigate(Routes.PARENTAL) },
                     onOpenChannels = { navController.navigate(Routes.CHANNELS) },
+                    onAddSource = { navController.navigate(Routes.ADD_SOURCE) },
+                    onEditSource = { src -> navController.navigate(Routes.editSource(src.id)) },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -563,6 +595,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
 
             browsingDestination(Routes.SERIES_DETAIL, edgeToEdgeOnTouch = true) { entry ->
                 val seriesId = entry.arguments?.getString("seriesId")?.toLongOrNull() ?: return@browsingDestination
+                app.opentv.ui.JaskMediaAmbient {
                 SeriesDetailScreen(
                     seriesId = seriesId,
                     viewModel = vodViewModel,
@@ -574,11 +607,16 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     onOpenSeries = { series -> navController.navigate(Routes.seriesDetail(series.id)) },
                     onOpenPerson = { name -> navController.navigate(Routes.person(name)) },
                     onBack = { navController.popBackStack() },
+                    onOpenMovieId = { id -> navController.navigate(Routes.movieDetail(id)) },
+                    onOpenSeriesId = { id -> navController.navigate(Routes.seriesDetail(id)) },
+                    onOpenPersonId = { id, name -> navController.navigate(Routes.person(name, id)) },
                 )
+                }
             }
 
             browsingDestination(Routes.MOVIE_DETAIL, edgeToEdgeOnTouch = true) { entry ->
                 val movieId = entry.arguments?.getString("movieId")?.toLongOrNull() ?: return@browsingDestination
+                app.opentv.ui.JaskMediaAmbient {
                 MovieDetailScreen(
                     movieId = movieId,
                     viewModel = vodViewModel,
@@ -600,19 +638,28 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     onOpenMovie = { movie -> navController.navigate(Routes.movieDetail(movie.id)) },
                     onOpenPerson = { name -> navController.navigate(Routes.person(name)) },
                     onBack = { navController.popBackStack() },
+                    onOpenMovieId = { id -> navController.navigate(Routes.movieDetail(id)) },
+                    onOpenSeriesId = { id -> navController.navigate(Routes.seriesDetail(id)) },
+                    onOpenPersonId = { id, name -> navController.navigate(Routes.person(name, id)) },
                 )
+                }
             }
 
-            browsingDestination(Routes.PERSON) { entry ->
+            browsingDestination(Routes.PERSON, edgeToEdgeOnTouch = true) { entry ->
                 val name = entry.arguments?.getString("name")
                     ?.let { java.net.URLDecoder.decode(it, "UTF-8") }.orEmpty()
+                app.opentv.ui.JaskMediaAmbient {
                 PersonScreen(
                     name = name,
                     viewModel = vodViewModel,
                     onOpenMovie = { movie -> navController.navigate(Routes.movieDetail(movie.id)) },
                     onOpenSeries = { series -> navController.navigate(Routes.seriesDetail(series.id)) },
                     onBack = { navController.popBackStack() },
+                    tmdbId = entry.arguments?.getString("tmdb")?.toIntOrNull() ?: 0,
+                    onOpenMovieId = { id -> navController.navigate(Routes.movieDetail(id)) },
+                    onOpenSeriesId = { id -> navController.navigate(Routes.seriesDetail(id)) },
                 )
+                }
             }
 
             composable(Routes.VOD_PLAYER) { entry ->

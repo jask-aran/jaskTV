@@ -119,8 +119,20 @@ class PlayerController(
      * player's HTTP layer. Setting it on the factory applies it to data sources created for
      * subsequent loads, which is exactly the granularity we need.
      */
+    /** Bytes read from the network since this engine started, for the stream info card's live bitrate. */
+    private val bytesLoaded = java.util.concurrent.atomic.AtomicLong()
+    private val frameClock = FrameClock()
+
     private val httpFactory = OkHttpDataSource.Factory(httpClient).apply {
         setDefaultRequestProperties(mapOf("User-Agent" to DEFAULT_USER_AGENT))
+        setTransferListener(object : androidx.media3.datasource.TransferListener {
+            override fun onTransferInitializing(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
+            override fun onTransferStart(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
+            override fun onBytesTransferred(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
+                bytesLoaded.addAndGet(bytesTransferred.toLong())
+            }
+            override fun onTransferEnd(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
+        })
     }
 
     private val dataSourceFactory: androidx.media3.datasource.DataSource.Factory =
@@ -174,6 +186,9 @@ class PlayerController(
     }
 
     /** Android-only escape hatch for the surface host. Screens must not use this. */
+    /** The view the full player draws video into (set by ExoPlayerSurfaceHost), for checking what's on screen. */
+    @Volatile internal var videoView: android.view.View? = null
+
     internal val player: ExoPlayer = ExoPlayer.Builder(context)
         .setSeekBackIncrementMs(SEEK_INCREMENT_MILLIS)
         .setSeekForwardIncrementMs(SEEK_INCREMENT_MILLIS)
@@ -209,6 +224,7 @@ class PlayerController(
         )
         .build()
         .apply {
+            setVideoFrameMetadataListener { presentationTimeUs, _, _, _ -> frameClock.frame(presentationTimeUs) }
             addListener(object : Player.Listener {
                 override fun onTracksChanged(tracks: Tracks) {
                     _mediaTracks.value = tracks
@@ -241,6 +257,7 @@ class PlayerController(
                         title = request?.title.orEmpty(),
                         message = PlaybackErrors.describe(error),
                         canRetry = consecutiveFailures < MAX_AUTO_RESTARTS,
+                        httpCode = (error.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode,
                     )
                     // One silent restart covers the common case of a provider dropping the
                     // connection when another device on the account starts streaming.
@@ -259,6 +276,8 @@ class PlayerController(
         // reaches the player, so we never stack prepares.
         switchJob?.cancel()
         current = request
+        // A download from the same provider stands aside while this plays (one-connection accounts).
+        if (!preview) app.opentv.data.repo.DownloadEngine.playing(request.url.takeIf { it.startsWith("http") })
 
         switchJob = scope.launch {
             if (debounce) delay(switchDebounceMillis)
@@ -349,6 +368,40 @@ class PlayerController(
             .build()
     }
 
+    override fun stats(): PlayerStats = runCatching {
+        val v = player.videoFormat
+        val a = player.audioFormat
+        val counters = player.videoDecoderCounters
+        fun Int.known() = if (this > 0) this else 0
+        val uri = player.currentMediaItem?.localConfiguration?.uri?.toString()?.lowercase().orEmpty()
+        PlayerStats(
+            width = v?.width?.known() ?: 0,
+            height = v?.height?.known() ?: 0,
+            frameRate = v?.frameRate?.takeIf { it > 0f } ?: 0f,
+            measuredFrameRate = frameClock.rate(),
+            videoCodec = v?.codecs ?: v?.sampleMimeType,
+            audioCodec = a?.codecs ?: a?.sampleMimeType,
+            audioChannels = a?.channelCount?.known() ?: 0,
+            audioBitrate = a?.bitrate?.known() ?: 0,
+            declaredBitrate = v?.bitrate?.known() ?: 0,
+            bytesLoaded = bytesLoaded.get(),
+            droppedFrames = counters?.droppedBufferCount ?: 0,
+            renderedFrames = counters?.renderedOutputBufferCount ?: 0,
+            bufferAheadMillis = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0),
+            bufferedPositionMillis = player.bufferedPosition.coerceAtLeast(0),
+            variantCount = player.currentTracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO }.sumOf { it.length },
+            format = when {
+                ".m3u8" in uri -> "HLS"
+                ".mpd" in uri -> "DASH"
+                ".ts" in uri || "/live/" in uri -> "MPEG-TS"
+                ".mkv" in uri -> "Matroska"
+                ".mp4" in uri -> "MP4"
+                uri.startsWith("rtsp") -> "RTSP"
+                else -> null
+            },
+        )
+    }.getOrDefault(PlayerStats())
+
     override val isSeekable: Boolean get() = player.isCurrentMediaItemSeekable
     override val positionMillis: Long get() = player.currentPosition
     override val durationMillis: Long get() = player.duration
@@ -379,6 +432,7 @@ class PlayerController(
     override fun stop() {
         switchJob?.cancel()
         current = null
+        if (!preview) app.opentv.data.repo.DownloadEngine.playing(null)
         player.stop()
         player.clearMediaItems()
         _mediaTracks.value = Tracks.EMPTY
@@ -389,6 +443,7 @@ class PlayerController(
 
     override fun release() {
         switchJob?.cancel()
+        if (!preview) app.opentv.data.repo.DownloadEngine.playing(null)
         player.release()
     }
 
@@ -496,4 +551,38 @@ private fun PlayerTrackType.toMedia3Type(): Int = when (this) {
     PlayerTrackType.VIDEO -> C.TRACK_TYPE_VIDEO
     PlayerTrackType.AUDIO -> C.TRACK_TYPE_AUDIO
     PlayerTrackType.TEXT -> C.TRACK_TYPE_TEXT
+}
+
+/**
+ * The video's frame rate from its frames' own timestamps (called on the playback thread as each frame is about
+ * to show). 48 frames of 24 fps span 2000 ms, of 23.976 fps 2002 ms: the timestamps tell them apart within ~2 s,
+ * which counting frames against the wall clock can't do in under a minute. Each gap is counted in frame steps
+ * (a dropped frame is two steps), and a jump (seek, channel change, timestamp wrap) starts the window again.
+ */
+internal class FrameClock(private val window: Int = 48) {
+    private val stamps = LongArray(window + 1)
+    private var count = 0
+    @Volatile private var lastRate = 0f
+
+    @Synchronized fun frame(presentationUs: Long) {
+        if (count > 0) {
+            val gap = presentationUs - stamps[(count - 1) % stamps.size]
+            if (gap <= 0 || gap > 250_000) { count = 0; lastRate = 0f }
+        }
+        stamps[count % stamps.size] = presentationUs
+        count++
+        if (count >= stamps.size) lastRate = compute()
+    }
+
+    @Synchronized private fun compute(): Float {
+        val ordered = LongArray(stamps.size) { stamps[(count - stamps.size + it) % stamps.size] }
+        val gaps = LongArray(ordered.size - 1) { ordered[it + 1] - ordered[it] }
+        val step = gaps.sorted()[gaps.size / 2].toDouble()
+        if (step <= 0) return 0f
+        var frames = 0L; for (g in gaps) frames += kotlin.math.max(1L, Math.round(g / step))
+        val span = ordered.last() - ordered.first()
+        return if (span > 0) (frames * 1_000_000.0 / span).toFloat() else 0f
+    }
+
+    fun rate(): Float = lastRate
 }

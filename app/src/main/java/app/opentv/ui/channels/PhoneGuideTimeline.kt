@@ -12,14 +12,15 @@ object PhoneGuideTimeline {
 
     data class Window(val start: Long, val end: Long)
 
-    private val clock = DateTimeFormatter.ofPattern("HH:mm")
-    private val ambiguousClock = DateTimeFormatter.ofPattern("HH:mm xxx")
+    // Live TV's one clock (see liveClock): "9:00 am".
+    private val clock = DateTimeFormatter.ofPattern("h:mm a")
+    private val ambiguousClock = DateTimeFormatter.ofPattern("h:mm a xxx")
 
     /** Offset is useful only in a repeated local hour, not on every ordinary timeline tick. */
     fun timeLabel(millis: Long, zone: ZoneId): String {
         val local = Instant.ofEpochMilli(millis).atZone(zone)
         val ambiguous = zone.rules.getValidOffsets(local.toLocalDateTime()).size > 1
-        return local.format(if (ambiguous) ambiguousClock else clock)
+        return local.format(if (ambiguous) ambiguousClock else clock).replace("AM", "am").replace("PM", "pm")
     }
 
     fun day(date: LocalDate, zone: ZoneId): Window = Window(

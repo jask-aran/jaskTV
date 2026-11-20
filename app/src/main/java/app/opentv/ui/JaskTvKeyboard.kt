@@ -1,5 +1,10 @@
 package app.opentv.ui
 
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,10 +42,18 @@ import androidx.compose.ui.unit.dp
  * leaves the results to browse; OK on the search bar brings it back.
  */
 @Composable
-internal fun JaskTvKeyboard(onType: (String) -> Unit, onBackspace: () -> Unit, onClear: () -> Unit, onHide: () -> Unit, modifier: Modifier = Modifier) {
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+internal fun JaskTvKeyboard(onType: (String) -> Unit, onBackspace: () -> Unit, onClear: () -> Unit, onHide: () -> Unit,
+    modifier: Modifier = Modifier, onDownOut: () -> Unit = onHide) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
-    Column(modifier.clip(RoundedCornerShape(22.dp)).background(Color(0xF0181716)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // Down from the bottom row puts the keyboard away and goes to the results; Left/Right/Up stop at its edges.
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    Column(modifier.onKeyEvent { e ->
+        if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || e.key != androidx.compose.ui.input.key.Key.DirectionDown) return@onKeyEvent false
+        if (!focus.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)) onDownOut()
+        true
+    }.focusProperties { exit = { FocusRequester.Cancel } }.focusGroup().clip(RoundedCornerShape(22.dp)).background(Color(0xF0181716)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         listOf("abcdefghijklm", "nopqrstuvwxyz", "1234567890").forEachIndexed { row, keys ->
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 keys.forEachIndexed { i, c ->
@@ -61,7 +74,7 @@ internal fun JaskTvKeyboard(onType: (String) -> Unit, onBackspace: () -> Unit, o
 
 @Composable
 private fun Key(text: String?, width: Dp, modifier: Modifier = Modifier, icon: ImageVector? = null, label: String? = null, onClick: () -> Unit) =
-    Box(modifier.width(width).height(44.dp).clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = .08f)).clickable(onClick = onClick),
+    Box(modifier.jaskFocusLift(1.12f).width(width).height(44.dp).clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = .08f)).clickable(onClick = onClick),
         contentAlignment = Alignment.Center) {
         if (icon != null) Icon(icon, label, tint = Color(0xFFF4F1ED))
         else Text(text.orEmpty(), color = Color(0xFFF4F1ED), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)

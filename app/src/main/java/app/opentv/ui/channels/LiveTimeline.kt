@@ -3,7 +3,6 @@ package app.opentv.ui.channels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,13 +20,23 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import kotlinx.coroutines.launch
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -137,7 +146,8 @@ internal fun LazyListScope.sportsTimeline(
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.padding(bottom = 8.dp)) {
             items(sports, key = { it.key }) { s ->
-                SportTile(s, cards[s.key].orEmpty().count { it.options.isNotEmpty() && EventMatcher.isLive(it.event, now) }) { onSport(s.key) }
+                // Live games known to have a picture (see NoPicture.showing): no count that flashes and then drops.
+                SportTile(s, cards[s.key].orEmpty().count { it.options.isNotEmpty() && EventMatcher.isLive(it.event, now) && NoPicture.showing(it) }) { onSport(s.key) }
             }
         }
     }
@@ -151,7 +161,7 @@ internal fun LazyListScope.sportsTimeline(
     val soon = if (view.full) upcoming else upcoming.groupBy { it.focus.event.sport }.values.flatMap { ofSport ->
         ofSport.filter { it.start < now + 36 * HOUR }.take(PER_SPORT).ifEmpty { ofSport.take(1) }
     }.sortedBy { it.start }
-    val earlierText = if (earlier.isEmpty()) null else if (view.earlier) "Hide earlier games" else "Earlier · ${earlier.size} replays"
+    val earlierText = if (earlier.isEmpty()) null else if (view.earlier) "Hide earlier games" else "Earlier · ${earlier.size} " + if (earlier.size == 1) "replay" else "replays"
     val moreText = if (soon.size < upcoming.size || view.full) (if (view.full) "Show less" else "Show the whole week · ${upcoming.size - soon.size} more") else null
     if (wide) {
         item(key = "tl-strip") {
@@ -176,7 +186,8 @@ internal fun LazyListScope.sportsTimeline(
 private val StripHeight = 352.dp
 private val ColumnWidth = 264.dp
 private const val GAME_DP = 72
-private const val WEEKEND_DP = 116
+/** A race weekend's card: its header, then a row per session (see [WeekendBlock]). */
+private fun weekendDp(e: Entry) = 62 + 28 * e.sessions.size
 private const val GAP_DP = 8
 
 /** One column of the sideways timeline: a moment and what starts then (a long slot runs over several columns). */
@@ -188,11 +199,12 @@ private class StripColumn(val id: String, val slot: String, val start: Long?, va
  * a moment's games. Earlier games, then what's on now, then what's next. A moment with more games than fit folds
  * to a "+N more" tile; opened, it runs on over further columns. The links (earlier, whole week, every game) end the row.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun TimelineStrip(earlier: List<Entry>, live: List<Entry>, soon: List<Entry>, now: Long, view: TimelineView,
     onView: (TimelineView) -> Unit, onOpen: (EventCard) -> Unit, links: List<Pair<String, () -> Unit>>) {
     val capacity = StripHeight.value.toInt() - 48
-    fun height(e: Entry) = (if (e.weekend) WEEKEND_DP else GAME_DP) + GAP_DP
+    fun height(e: Entry) = (if (e.weekend) weekendDp(e) else GAME_DP) + GAP_DP
     fun columns(id: String, start: Long?, entries: List<Entry>): List<StripColumn> {
         val open = id in view.openSlots
         val chunks = arrayListOf(mutableListOf<Entry>())
@@ -215,6 +227,8 @@ private fun TimelineStrip(earlier: List<Entry>, live: List<Entry>, soon: List<En
         (if (live.isNotEmpty()) columns("live", null, live) else emptyList()) +
         soon.groupBy { it.start / 60_000 }.flatMap { (m, e) -> columns("u-$m", m * 60_000, e) }
     val today = LocalDate.now(zone)
+    val lanes = remember { StripLanes() }
+    val focus = LocalFocusManager.current
     // As tall as its fullest column, so a quiet day doesn't leave a band of empty space.
     val tallest = all.maxOfOrNull { c -> c.items.sumOf { height(it) } + (if (c.fold != null) GAME_DP + GAP_DP else 0) } ?: GAME_DP
     LazyRow(Modifier.fillMaxWidth().height((tallest + 44 + 4).dp.coerceAtMost(StripHeight)), contentPadding = PaddingValues(horizontal = 16.dp),
@@ -228,17 +242,31 @@ private fun TimelineStrip(earlier: List<Entry>, live: List<Entry>, soon: List<En
             } else null
             if (day != null) lastDay = day
             item(key = col.id) {
-                Column(Modifier.width(ColumnWidth).fillMaxHeight()) {
+                // Focus anywhere in the column keeps its head (the time, "On now") in view below the top bar, not only
+                // the focused game: on entering the column and after each Up/Down inside it.
+                val bring = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+                val scope = androidx.compose.runtime.rememberCoroutineScope()
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val above = app.opentv.ui.LocalJaskContentPadding.current.calculateTopPadding() + 8.dp
+                val reveal: () -> Unit = {
+                    scope.launch {
+                        runCatching { with(density) { bring.bringIntoView(androidx.compose.ui.geometry.Rect(0f, -above.toPx(), ColumnWidth.toPx(), 44.dp.toPx())) } }
+                    }
+                }
+                Column(Modifier.width(ColumnWidth).fillMaxHeight()
+                    .bringIntoViewRequester(bring)
+                    .onFocusChanged { if (it.hasFocus) reveal() }.lane(lanes, col.id, focus, reveal)) {
                     StripHead(col, dayLabel, now)
                     Column(verticalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
+                        val gate = Modifier.laneGate(lanes, col.id)
                         col.items.forEach { e ->
                             key(e.key) {
-                                if (e.weekend) WeekendBlock(e, now, onOpen)
-                                else GameBlock(e.focus, now, false, Modifier.fillMaxWidth().height(GAME_DP.dp)) { onOpen(e.focus) }
+                                if (e.weekend) WeekendBlock(e, now, onOpen, gate)
+                                else GameBlock(e.focus, now, false, gate.fillMaxWidth().height(GAME_DP.dp)) { onOpen(e.focus) }
                             }
                         }
                         col.fold?.let { label ->
-                            FoldTile(label, Modifier.fillMaxWidth().height(GAME_DP.dp)) {
+                            FoldTile(label, gate.fillMaxWidth().height(GAME_DP.dp)) {
                                 onView(view.copy(openSlots = if (col.slot in view.openSlots) view.openSlots - col.slot else view.openSlots + col.slot))
                             }
                         }
@@ -247,12 +275,42 @@ private fun TimelineStrip(earlier: List<Entry>, live: List<Entry>, soon: List<En
             }
         }
         if (links.isNotEmpty()) item(key = "links") {
-            Column(Modifier.width(260.dp).padding(top = 44.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.width(260.dp).padding(top = 44.dp).lane(lanes, "links", focus), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 links.forEach { (text, action) -> TimelineLink(text, 8.dp, action) }
             }
         }
     }
 }
+
+/**
+ * Up and Down in the sideways timeline stay in the focused moment's column, and from its last game leave the strip for
+ * the row below. Left to 2D search, Down from a short column picked a lower game in another column (often far left)
+ * over the row underneath. While a key is handled only that column's items can take focus.
+ */
+private class StripLanes { var only: String? = null }
+
+/** On each focusable in a column too: a scroll container (the session strip) stops properties set further up. */
+private fun Modifier.laneGate(lanes: StripLanes, id: String): Modifier =
+    focusProperties { canFocus = lanes.only == null || lanes.only == id }
+
+private fun Modifier.lane(lanes: StripLanes, id: String, focus: FocusManager, after: () -> Unit = {}): Modifier =
+    laneGate(lanes, id)
+        .onPreviewKeyEvent { e ->
+            val native = e.nativeKeyEvent
+            val direction = when (native.keyCode) {
+                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> FocusDirection.Down
+                android.view.KeyEvent.KEYCODE_DPAD_UP -> FocusDirection.Up
+                else -> null
+            }
+            if (direction == null) return@onPreviewKeyEvent false
+            // Both halves of the press are ours, so nothing else moves focus a second time on key up.
+            if (native.action == android.view.KeyEvent.ACTION_DOWN) {
+                lanes.only = id
+                val moved = try { focus.moveFocus(direction) } finally { lanes.only = null }
+                if (moved) after()
+            }
+            true
+        }
 
 /** A column's head: the day where it changes, the time (or "On now"), and the rail running through. */
 @Composable
@@ -265,12 +323,9 @@ private fun StripHead(col: StripColumn, dayLabel: String?, now: Long) {
         Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.Bottom) {
             if (col.start == null) Text("On now", Modifier.clip(RoundedCornerShape(50)).background(LiveRed).padding(horizontal = 8.dp, vertical = 2.dp),
                 color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-            else if (col.first) {
-                val t = Instant.ofEpochMilli(col.start).atZone(ZoneId.systemDefault())
-                Text(DateTimeFormatter.ofPattern("h:mm").format(t), color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(" " + DateTimeFormatter.ofPattern("a").format(t).lowercase(), color = JaskDim, style = MaterialTheme.typography.labelSmall)
-                dayLabel?.let { Text("  $it", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold) }
-            }
+            // The same words as everywhere else (liveWhen): the day where it changes ("Tomorrow 12:30 am"), else the time.
+            else if (col.first) Text(if (dayLabel != null) liveWhen(col.start) else liveClock(col.start), color = Color.White,
+                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
         if (col.first) Box(Modifier.align(Alignment.BottomStart).padding(bottom = 4.dp).size(10.dp).clip(CircleShape)
             .background(if (col.start == null) LiveRed else Color(0xFF8D8985)))
@@ -280,7 +335,7 @@ private fun StripHead(col: StripColumn, dayLabel: String?, now: Long) {
 @Composable
 private fun TimelineLink(text: String, start: Dp, onClick: () -> Unit) =
     Box(Modifier.fillMaxWidth().padding(start = start - 8.dp, end = 16.dp)) {
-        Text(text, Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 8.dp),
+        Text(text, Modifier.jaskFocusLift(1.06f).clip(RoundedCornerShape(50)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 8.dp),
             color = JaskDim, style = MaterialTheme.typography.labelLarge)
     }
 
@@ -326,10 +381,10 @@ private fun Slot(id: String, start: Long?, entries: List<Entry>, now: Long, view
     }) {
         Box(Modifier.width(16.dp + TimeColumn).height(64.dp)) {
             if (start != null) Column(Modifier.padding(start = 16.dp, top = 18.dp)) {
-                val t = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault())
-                Text(DateTimeFormatter.ofPattern("h:mm").format(t), color = Color.White, style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold)
-                Text(DateTimeFormatter.ofPattern("a").format(t).lowercase(), color = JaskDim, style = MaterialTheme.typography.labelSmall)
+                // One clock everywhere ("9:00 am"); the day is the heading above.
+                // Small enough to stay clear of the rail's dot at 70dp.
+                Text(liveClock(start), color = Color.White, style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
             }
             Box(Modifier.padding(start = railX - 5.dp, top = 26.dp).size(10.dp).clip(CircleShape)
                 .background(if (start == null) LiveRed else Color(0xFF8D8985)))
@@ -376,10 +431,10 @@ private fun FoldTile(label: String, modifier: Modifier, onClick: () -> Unit) {
 }
 
 /** The line under a game's title: its match and series for cricket, else its sport. */
-private fun subtitle(event: SportEvent): String = when (Sports.byKey(event.sport)?.shape) {
+private fun subtitle(event: SportEvent, replay: Boolean = false): String = when (Sports.byKey(event.sport)?.shape) {
     SportShape.SERIES -> listOfNotNull(event.session, seriesName(event.league)).joinToString(" · ")
     else -> Sports.byKey(event.sport)?.label.orEmpty()
-} + if (event.finished) " · Replay" else ""
+} + if (event.finished) (if (replay) " · Replay" else " · Ended") else ""
 
 /** A game on the timeline: its teams' colours, logos, title, and where it's on (or how far in, when live). */
 @Composable
@@ -408,12 +463,16 @@ private fun GameBlock(card: EventCard, now: Long, compact: Boolean, modifier: Mo
                 Text(heroTitle(event), color = Color.White, style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold, maxLines = if (compact) 2 else 1, overflow = TextOverflow.Ellipsis,
                     lineHeight = if (compact) MaterialTheme.typography.labelMedium.fontSize * 1.15f else androidx.compose.ui.unit.TextUnit.Unspecified)
-                val where = card.options.firstOrNull()?.title?.let { it + if (card.options.size > 1) " +${card.options.size - 1}" else "" }
+                val where = card.leadOption()?.title?.let { liveName(it) + if (card.options.size > 1) " +${card.options.size - 1}" else "" }
                     ?: "Not on your channels"
                 Text(where, color = Color.White.copy(alpha = .75f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (live) LiveProgress(event, now, Modifier.padding(top = 5.dp))
-                else if (!compact || event.sport == "cricket") Text(subtitle(event), color = Color.White.copy(alpha = .5f),
-                    style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                else if (!compact || event.sport == "cricket") {
+                    // Not when it only repeats the line above ("NBA Pass" over "NBA").
+                    val sub = subtitle(event, card.options.any { it.state == app.opentv.livetv.find.WatchState.REPLAY })
+                    if (!where.contains(sub, ignoreCase = true)) Text(sub, color = Color.White.copy(alpha = .5f),
+                        style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }
@@ -452,15 +511,17 @@ private val SPONSOR = Regex("""^(Heineken|Pirelli|Aramco|Qatar Airways|MSC Cruis
  * strip (done ones ticked, the live one red, the next one lit). Each session opens its own ways to watch.
  */
 @Composable
-private fun WeekendBlock(entry: Entry, now: Long, onOpen: (EventCard) -> Unit) {
+private fun WeekendBlock(entry: Entry, now: Long, onOpen: (EventCard) -> Unit, gate: Modifier = Modifier) {
     val event = entry.focus.event
     val (a, b) = event.colours()
     val shape = RoundedCornerShape(14.dp)
     val live = EventMatcher.isLive(event, now)
+    // Down from the weekend lands on its first session, not whichever chip sits under the card's middle.
+    val firstSession = remember { FocusRequester() }
     Column(Modifier.fillMaxWidth().alpha(if (entry.watchable) 1f else .5f).clip(shape)
         .background(Brush.horizontalGradient(listOf(lerp(a, Color.Black, .15f), lerp(b, Color.Black, .45f))))
         .border(if (live) 1.5.dp else 1.dp, if (live) LiveRed else Color.White.copy(alpha = .08f), shape)) {
-        Row(Modifier.fillMaxWidth().clickable { onOpen(entry.focus) }.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 6.dp),
+        Row(gate.focusProperties { down = firstSession }.jaskFocusLift(1.02f).fillMaxWidth().clickable { onOpen(entry.focus) }.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically) {
             if (event.leagueLogo != null) AsyncImage(event.leagueLogo, null, Modifier.size(34.dp), contentScale = ContentScale.Fit)
             else Text(event.league, color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Black,
@@ -469,30 +530,31 @@ private fun WeekendBlock(entry: Entry, now: Long, onOpen: (EventCard) -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(weekendTitle(event), color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val where = entry.sessions.flatMap { it.options }.distinctBy { it.title }
+                val where = rankWays(event.sport, entry.sessions.flatMap { it.options }.distinctBy { it.title })
                 val label = (if (live) "${shortSession(event.session)} live" else "Next: " + shortSession(event.session)) +
-                    " · " + (where.firstOrNull()?.title?.let { it + if (where.size > 1) " +${where.size - 1}" else "" } ?: "Not on your channels")
+                    " · " + (where.firstOrNull()?.title?.let { liveName(it) + if (where.size > 1) " +${where.size - 1}" else "" } ?: "Not on your channels")
                 Text(label, color = Color.White.copy(alpha = .75f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // A row per session, all in view: nothing scrolled out of sight can take focus. Down from the header lands on
+        // the first; the next one is marked by an outline and "Next" (never a white fill, which reads as focus).
+        Column(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val zone = ZoneId.systemDefault()
-            val day = DateTimeFormatter.ofPattern("EEE")
-            val time = DateTimeFormatter.ofPattern("h:mma")
-            entry.sessions.forEach { s ->
+            entry.sessions.forEachIndexed { i, s ->
                 val sLive = EventMatcher.isLive(s.event, now)
                 val done = s.event.finished && !sLive
                 val next = s === entry.focus && !sLive
-                val at = Instant.ofEpochMilli(s.event.startUtc).atZone(zone)
-                Column(Modifier.jaskFocusLift(1.05f).clip(RoundedCornerShape(10.dp))
-                    .background(when { sLive -> LiveRed; next -> Color.White; else -> Color.Black.copy(alpha = .28f) })
-                    .clickable { onOpen(s) }.padding(horizontal = 10.dp, vertical = 5.dp)) {
-                    val ink = if (next) Color.Black else Color.White
-                    Text((if (done) "✓ " else "") + shortSession(s.event.session), color = ink, style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    Text(if (sLive) "Live" else day.format(at) + " " + time.format(at).lowercase().removeSuffix("m"),
-                        color = ink.copy(alpha = if (done) .55f else .8f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                val rowShape = RoundedCornerShape(8.dp)
+                Row(gate.then(if (i == 0) Modifier.focusRequester(firstSession) else Modifier).jaskFocusLift(1.03f).fillMaxWidth().height(24.dp)
+                    .clip(rowShape).background(if (sLive) LiveRed else Color.Black.copy(alpha = if (next) .4f else .22f))
+                    .border(1.dp, if (next) Color.White.copy(alpha = .85f) else Color.Transparent, rowShape)
+                    .clickable { onOpen(s) }.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val ink = Color.White.copy(alpha = if (done) .55f else 1f)
+                    Text((if (done) "✓ " else "") + shortSession(s.event.session), Modifier.weight(1f), color = ink,
+                        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    if (next) Text("Next  ", color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    Text(if (sLive) "Live" else liveWhen(s.event.startUtc, zone), color = ink.copy(alpha = if (done) .55f else .85f),
+                        style = MaterialTheme.typography.labelSmall, maxLines = 1)
                 }
             }
         }

@@ -45,7 +45,7 @@ interface ChannelDao {
      */
     @Query("""
         SELECT c.id, c.sourceId, c.name, c.groupKey, c.qualityRank, c.categoryId, c.logoUrl,
-               cat.name AS categoryName
+               cat.name AS categoryName, c.epgChannelId
         FROM channels c
         INNER JOIN sources s ON s.id = c.sourceId AND s.enabled = 1
         LEFT JOIN categories cat ON cat.sourceId = c.sourceId
@@ -210,6 +210,10 @@ interface ChannelDao {
     @Query("UPDATE channels SET matchedEpgId = :epgId WHERE id = :id")
     suspend fun setMatchedEpgId(id: Long, epgId: String?)
 
+    /** Many guide matches in one transaction (channel id to guide id). */
+    @Transaction
+    suspend fun setMatchedEpgIds(changes: List<Pair<Long, String?>>) { changes.forEach { (id, epgId) -> setMatchedEpgId(id, epgId) } }
+
     @Query("UPDATE channels SET epgOverrideId = :epgId WHERE id = :id")
     suspend fun setEpgOverride(id: Long, epgId: String?)
 
@@ -233,6 +237,30 @@ interface ChannelDao {
 
     @Query("DELETE FROM channels WHERE sourceId = :sourceId")
     suspend fun deleteForSource(sourceId: Long)
+
+    @Query("DELETE FROM channels WHERE id IN (:ids)")
+    suspend fun deleteIds(ids: List<Long>)
+
+    @Query("SELECT * FROM channels WHERE sourceId = :sourceId AND streamId IN (:streamIds)")
+    suspend fun byStreamIds(sourceId: Long, streamIds: List<String>): List<Channel>
+
+    /**
+     * Only what changed since the last copy (from jasktv-core): [changed] channels merged onto their existing rows the
+     * way [replaceCatalogue] does (keeping every user mark and the stored order), and [removedStreamIds] deleted.
+     */
+    @Transaction
+    suspend fun applyChanges(sourceId: Long, changed: List<Channel>, removedStreamIds: List<String>, syncStamp: Long) {
+        changed.chunked(UPSERT_CHUNK).forEach { part ->
+            val existing = byStreamIds(sourceId, part.map { it.streamId }).associateBy { it.streamId }
+            upsertAll(part.map { channel ->
+                val previous = existing[channel.streamId] ?: return@map channel.copy(lastSeenMillis = syncStamp)
+                channel.copy(id = previous.id, favourite = previous.favourite, hidden = previous.hidden || channel.hidden,
+                    sortIndex = previous.sortIndex, customName = previous.customName, epgOverrideId = previous.epgOverrideId,
+                    matchedEpgId = previous.matchedEpgId, lastSeenMillis = syncStamp)
+            })
+        }
+        removedStreamIds.chunked(UPSERT_CHUNK).forEach { ids -> deleteIds(byStreamIds(sourceId, ids).map { it.id }) }
+    }
 
     /** Merge rather than wipe; preserve all user state across provider refreshes. */
     @Transaction
@@ -268,8 +296,13 @@ interface ChannelDao {
                 )
             }
         }
-        merged.chunked(UPSERT_CHUNK).forEach { upsertAll(it) }
-        deleteStale(sourceId, syncStamp)
+        // Only rows that changed (apart from the sync stamp) are written; channels no longer listed are removed by id.
+        // Stamping every row each refresh rewrote all ~57k channels and their indexes every time.
+        val previousById = existing.values.associateBy { it.id }
+        val changed = merged.filter { m -> previousById[m.id]?.let { it.copy(lastSeenMillis = 0) != m.copy(lastSeenMillis = 0) } ?: true }
+        changed.chunked(UPSERT_CHUNK).forEach { upsertAll(it) }
+        val kept = merged.mapNotNullTo(hashSetOf()) { it.id.takeIf { id -> id != 0L } }
+        existing.values.filter { it.id !in kept }.map { it.id }.chunked(UPSERT_CHUNK).forEach { deleteIds(it) }
     }
 
     @Query("SELECT * FROM channels WHERE sourceId = :sourceId")
@@ -289,6 +322,8 @@ data class LiveFindRow(
     val categoryId: String?,
     val logoUrl: String?,
     val categoryName: String?,
+    /** The provider's guide id for the stream ("CNN.us"): IPTV-org's own ids, so it names the real channel. */
+    val epgChannelId: String? = null,
 )
 
 /** Projection for [ChannelDao.namesInCategory]. */

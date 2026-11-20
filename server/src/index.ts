@@ -135,7 +135,37 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (method === "DELETE" && device) {
     return (await account.removeDevice(device[1])) ? json({ ok: true }) : json({ error: "not_found" }, 404);
   }
+  // Account files: sealed snapshots (the TMDB match table) written by a core, read by any device of the account.
+  // Names are plain and per account; the contents are encrypted with the account key before upload.
+  const blob = /^\/v1\/blobs\/([a-z0-9][a-z0-9._-]{0,127})$/.exec(path);
+  if (blob || (method === "GET" && path === "/v1/blobs")) {
+    if (!env.BLOBS) throw new HttpError(503, "no_storage", "File storage isn't set up on this server");
+    if (!blob) {
+      const listed = await env.BLOBS.list({ prefix: `${userId}/`, limit: 1000 });
+      return json({ blobs: listed.objects.map((o) => ({ name: o.key.slice(userId.length + 1), bytes: o.size, uploaded: o.uploaded.getTime() })) });
+    }
+    const key = `${userId}/${blob[1]}`;
+    if (method === "GET") {
+      const obj = await env.BLOBS.get(key);
+      if (!obj) throw new HttpError(404, "not_found", "No such file");
+      return new Response(obj.body, { headers: { "content-type": "application/octet-stream", "content-length": String(obj.size) } });
+    }
+    if (method === "PUT") {
+      const size = Number(request.headers.get("content-length") ?? NaN);
+      if (!Number.isFinite(size) || size <= 0 || size > BLOB_MAX) throw new HttpError(413, "too_large", `Files must be under ${BLOB_MAX / 1e6} MB`);
+      const listed = await env.BLOBS.list({ prefix: `${userId}/`, limit: 1000 });
+      if (!listed.objects.some((o) => o.key === key) && listed.objects.length >= BLOB_COUNT) throw new HttpError(400, "rejected", "Too many files in this account");
+      await env.BLOBS.put(key, request.body, { customMetadata: { device: deviceId } });
+      return json({ ok: true, now: Date.now() });
+    }
+    if (method === "DELETE") { await env.BLOBS.delete(key); return json({ ok: true }); }
+  }
   if (method === "DELETE" && path === "/v1/account") {
+    if (env.BLOBS) for (;;) {
+      const listed = await env.BLOBS.list({ prefix: `${userId}/`, limit: 1000 });
+      if (listed.objects.length === 0) break;
+      await env.BLOBS.delete(listed.objects.map((o) => o.key));
+    }
     await account.wipe();
     await env.DB.batch([
       env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId),
@@ -145,6 +175,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   throw new HttpError(404, "not_found", "No such endpoint");
 }
+
+const BLOB_MAX = 100 * 1024 * 1024;
+const BLOB_COUNT = 200;
 
 async function signIn(request: Request, env: Env): Promise<Response> {
   const body = await readJson<{ idToken?: unknown; device?: { name?: unknown; kind?: unknown } }>(request, 16 * 1024);
@@ -301,7 +334,11 @@ async function identify(idToken: string, env: Env): Promise<GoogleIdentity> {
 }
 
 async function authenticate(request: Request, env: Env) {
-  const header = request.headers.get("Authorization") ?? "";
+  // A browser can't set headers on a WebSocket: the control panel offers its token as a subprotocol instead
+  // ("jasktv", "jt1.…"), and the live connection answers with "jasktv".
+  const offered = request.headers.get("Upgrade") === "websocket"
+    ? (request.headers.get("Sec-WebSocket-Protocol") ?? "").split(",").map((p) => p.trim()).find((p) => p.startsWith("jt1.")) : undefined;
+  const header = request.headers.get("Authorization") ?? (offered ? `Bearer ${offered}` : "");
   const match = /^Bearer jt1\.([0-9a-f-]{36})\.([A-Za-z0-9_-]{20,100})$/.exec(header);
   if (!match) throw new HttpError(401, "signed_out", "Sign in required");
   const [, userId, secret] = match;

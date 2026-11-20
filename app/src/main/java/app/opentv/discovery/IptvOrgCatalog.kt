@@ -58,6 +58,7 @@ class IptvOrgCatalog(context: Context) {
     private var retryAfterMillis: Long = 0
     private var index: Map<String, List<ChannelIdentity>> = emptyMap()
     private var byId: Map<String, ChannelIdentity> = emptyMap()
+    private var byLowerId: Map<String, ChannelIdentity> = emptyMap()
     private val maxBytes = 15 * 1024 * 1024
     private val refreshMillis = TimeUnit.DAYS.toMillis(1)
 
@@ -104,6 +105,15 @@ class IptvOrgCatalog(context: Context) {
         if (key.length < 3) return null
         val matches = index[key].orEmpty().filter { it.country == country }.distinctBy { it.id }
         return matches.singleOrNull()
+    }
+
+    /**
+     * The real channel a provider guide id names. Providers use IPTV-org's ids for their guides ("CNN.us",
+     * "ZeeNews.in"), in any case; ids IPTV-org doesn't know ("TS", "uk.Utsav Bharat") give null.
+     */
+    suspend fun byGuideId(id: String): ChannelIdentity? {
+        ensureLoaded()
+        return byLowerId[id.trim().lowercase(Locale.ROOT)]
     }
 
     // ---- Logos (iptv-org logos.json, ~6 MB, cached a day) -------------------------------------
@@ -175,6 +185,7 @@ class IptvOrgCatalog(context: Context) {
     private fun install(value: List<ChannelIdentity>) {
         loaded = value
         byId = value.associateBy { it.id }
+        byLowerId = value.associateBy { it.id.lowercase(Locale.ROOT) }
         val map = mutableMapOf<String, MutableList<ChannelIdentity>>()
         value.forEach { identity ->
             (listOf(identity.name) + identity.aliases).forEach { name ->

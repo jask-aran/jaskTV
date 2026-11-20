@@ -20,6 +20,10 @@ import app.opentv.core.ServiceLocator
 import app.opentv.data.repo.CatalogRepository
 import app.opentv.data.local.canRefreshCatalogue
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.first
 
 /**
  * Background refresh of the catalogue and the guide.
@@ -34,6 +38,8 @@ class SyncWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        val pause = app.opentv.core.SyncPause
+        pause.isPaused(applicationContext)
         val graph = ServiceLocator.get(applicationContext)
         val now = System.currentTimeMillis()
         val sources = graph.sourceRepository.enabled()
@@ -41,9 +47,15 @@ class SyncWorker(
 
         var anyFailed = false
 
+        // Paused: the provider catalogues wait (a download under way stops), but the TV guide below still updates,
+        // so Live keeps its now and next.
         for (source in sources) {
-            if (!source.canRefreshCatalogue()) continue
-            when (val result = graph.catalogRepository.sync(source, now)) {
+            if (!source.canRefreshCatalogue() || pause.paused.value) continue
+            val result = unlessPaused {
+                app.opentv.core.StatusBus.during("channels-${source.id}", "Updating channels",
+                    app.opentv.core.StatusBus.Origin.PROVIDER, source.name) { graph.catalogRepository.sync(source, now) }
+            } ?: continue
+            when (result) {
                 is CatalogRepository.SyncResult.Success ->
                     Log.i(TAG, "Catalogue for ${source.name}: ${result.channelCount} channels")
                 is CatalogRepository.SyncResult.Failed -> {
@@ -56,7 +68,9 @@ class SyncWorker(
 
         // Guides sync as one pass across every enabled feed — provider guides, built-in
         // free sources and user URLs merge into a single guide, then the matcher runs.
-        val summary = graph.epgRepository.syncAll(now)
+        val summary = app.opentv.core.StatusBus.during("guide", "Updating the TV guide", app.opentv.core.StatusBus.Origin.GUIDE) {
+            graph.epgRepository.syncAll(now)
+        }
         if (summary.feedsFailed > 0) anyFailed = true
         Log.i(
             TAG,
@@ -69,6 +83,14 @@ class SyncWorker(
 
         // A partial failure is still a retry — but the user keeps everything already on disk.
         return if (anyFailed) Result.retry() else Result.success()
+    }
+
+    /** Runs [block], cancelling it if syncing is paused meanwhile (then null). */
+    private suspend fun <T> unlessPaused(block: suspend () -> T): T? = kotlinx.coroutines.coroutineScope {
+        val work = async { block() }
+        val watch = launch { app.opentv.core.SyncPause.paused.first { it }; work.cancel() }
+        try { work.await() } catch (e: kotlinx.coroutines.CancellationException) { if (isActive) null else throw e }
+        finally { watch.cancel() }
     }
 
     companion object {

@@ -1,0 +1,18 @@
+[package]
+name = "jasktv-tray"
+version = "0.2.0"
+description = "jasktv-core's tray icon on Windows: its status at a glance, and a menu for its page, log and actions"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "jasktv-tray"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+ureq.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = "0.19"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }

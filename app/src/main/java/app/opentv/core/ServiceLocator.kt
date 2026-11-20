@@ -92,10 +92,15 @@ object ServiceLocator {
 
         /** Neutral Stremio add-on protocol client. Talks only to user-added manifest URLs. */
         val stremioClient: StremioClient by lazy { StremioClient(httpClient) }
+        /** Torrent and add-on copies of a title (Stremio add-ons and Prowlarr find; TorrServer streams). */
+        val releases: app.opentv.torrent.Releases by lazy { app.opentv.torrent.Releases(httpClient) }
 
         val iptvOrgCatalog: app.opentv.discovery.IptvOrgCatalog by lazy {
             app.opentv.discovery.IptvOrgCatalog(appContext)
         }
+
+        /** Title details for the media page (cast, logos, ratings, collections), through core when there is one. */
+        val titleMeta: app.opentv.catalogue.TitleMeta by lazy { app.opentv.catalogue.TitleMeta(httpClient, settings) }
 
         val omdbClient: app.opentv.data.remote.OmdbClient by lazy {
             app.opentv.data.remote.OmdbClient(httpClient, settings)

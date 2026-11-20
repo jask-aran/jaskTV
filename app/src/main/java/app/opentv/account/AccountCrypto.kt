@@ -107,6 +107,12 @@ object AccountCrypto {
         return String(plain, Charsets.UTF_8)
     }
 
+    /** Opens an account file sealed by a core (engine `seal_bytes`): nonce ‖ ciphertext ‖ tag, raw, for `kind/id`. */
+    fun openBytes(accountKey: ByteArray, kind: String, id: String, sealed: ByteArray): ByteArray {
+        require(sealed.size > 28) { "Truncated file" }
+        return gcm(Cipher.DECRYPT_MODE, accountKey, sealed.copyOfRange(0, 12), "$kind/$id".toByteArray()).doFinal(sealed, 12, sealed.size - 12)
+    }
+
     private fun gcm(mode: Int, key: ByteArray, nonce: ByteArray, aad: ByteArray): Cipher =
         Cipher.getInstance("AES/GCM/NoPadding").apply {
             init(mode, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))

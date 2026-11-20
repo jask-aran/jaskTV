@@ -1,5 +1,9 @@
 package app.opentv.ui.vod
 
+import app.opentv.ui.jaskSlot
+import app.opentv.ui.jaskSlotKeys
+import androidx.compose.foundation.focusGroup
+import app.opentv.ui.jaskFocusRing
 import app.opentv.ui.jaskWheelScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,7 +59,7 @@ internal fun PagedMovieGrid(
 ) {
     // Reset selection when filters change; LaunchedEffect cancels an obsolete in-flight read.
     var selected by remember(filterKey) { mutableStateOf<MovieBrowseGroup?>(null) }
-    PagedVodGrid(items, filterKey, { it.key }) { group ->
+    PagedVodGrid(items, filterKey, { it.key }, poster = { it.primary.posterUrl }, frost = false) { group ->
         val movie = group.primary
         PosterCard(
             title = movie.displayTitle, posterUrl = movie.posterUrl,
@@ -90,7 +94,7 @@ private fun MovieVariantsDialog(
         onDismissRequest = onDismiss,
         title = { Text(group.primary.displayTitle) },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
+        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_cancel)) } },
         text = {
             when {
                 result == null -> PagingLoading()
@@ -116,10 +120,10 @@ private fun MovieVariantsDialog(
 internal fun PagedSeriesGrid(items: LazyPagingItems<app.opentv.ui.VodViewModel.ShowCard>, filterKey: String,
     onOpen: (Series) -> Unit, loadVariants: suspend (String) -> List<Series>, emptyText: String? = null,
     pickDefault: suspend (List<Series>) -> Series? = { it.firstOrNull() },
-    header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(columns: Int) -> Unit)? = null) {
+    header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(columns: Int) -> Unit)? = null, showEmpty: Boolean = true) {
     // A tap always opens the show's page; its Source control switches between provider versions.
     val scope = rememberCoroutineScope()
-    PagedVodGrid(items, filterKey, { it.group.groupKey }, emptyText, header) { card ->
+    PagedVodGrid(items, filterKey, { it.group.groupKey }, poster = { it.group.primary.posterUrl?.let(::cardPoster) }, emptyText = emptyText, header = header, showEmpty = showEmpty) { card ->
         val group = card.group
         val show = card.show
         JaskPosterCard(cleanShowTitle(group.primary.name), group.primary.posterUrl, PosterFacts(rating = show?.rating ?: group.primary.rating,
@@ -132,8 +136,12 @@ internal fun PagedSeriesGrid(items: LazyPagingItems<app.opentv.ui.VodViewModel.S
 
 @Composable
 internal fun <T : Any> PagedVodGrid(
-    items: LazyPagingItems<T>, filterKey: String, key: (T) -> Any, emptyText: String? = null,
-    header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(columns: Int) -> Unit)? = null, card: @Composable (T) -> Unit,
+    items: LazyPagingItems<T>, filterKey: String, key: (T) -> Any,
+    /** The card's poster URL, fetched a few rows ahead of the d-pad. [frost]: also prepare its frosted badge backdrop. */
+    poster: ((T) -> String?)? = null, frost: Boolean = true, emptyText: String? = null,
+    header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(columns: Int) -> Unit)? = null,
+    /** False: a home that is only its [header] (no "nothing here" message under it). */
+    showEmpty: Boolean = true, card: @Composable (T) -> Unit,
 ) {
     // A detail push saves the viewport, while an actual filter change starts at the top.
     // Declare before load-state branches so invalidations never discard the saved viewport.
@@ -162,6 +170,13 @@ internal fun <T : Any> PagedVodGrid(
         return
     }
     val phone = LocalLayoutClass.current == LayoutClass.PHONE
+    // TV: Up/Down move by slot (row and column), not by on-screen geometry. See JaskSlots.
+    val slotScope = rememberCoroutineScope()
+    val slots = if (LocalLayoutClass.current == LayoutClass.TV) remember(state) { app.opentv.ui.JaskSlots(state, slotScope) } else null
+    val keyOf = items.itemKey(key)
+    app.opentv.ui.JaskPageTopEffect(state) { state.animateScrollToItem(0) }
+    if (poster != null) PosterPrefetch(state, items, poster, frost)
+    androidx.compose.runtime.CompositionLocalProvider(app.opentv.ui.LocalJaskSlots provides slots) {
     Column(Modifier.fillMaxSize()) {
         // Room invalidates as background identification commits. Keep the existing viewport
         // visible; inserting a loading row on every refresh made the grid look like a reload loop.
@@ -169,7 +184,7 @@ internal fun <T : Any> PagedVodGrid(
         LazyVerticalGrid(
             // Three posters across a phone, ~120dp posters on tablets: browse density over hero size.
             columns = if (phone) GridCells.Fixed(3) else GridCells.Adaptive(if (LocalLayoutClass.current == LayoutClass.TV) 140.dp else 150.dp),
-            state = state, modifier = Modifier.weight(1f).fillMaxWidth().jaskWheelScroll(state),
+            state = state, modifier = Modifier.weight(1f).fillMaxWidth().jaskWheelScroll(state).then(Modifier.jaskSlotKeys(slots)),
             // A home header starts full-bleed under the floating header.
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp,
                 top = if (header != null) 0.dp else app.opentv.ui.LocalJaskContentPadding.current.calculateTopPadding() + 8.dp,
@@ -178,15 +193,15 @@ internal fun <T : Any> PagedVodGrid(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             header?.invoke(this, if (phone) 3 else 6)
-            if (header != null && items.itemCount == 0) item(key = "paging-empty", span = { GridItemSpan(maxLineSpan) }) {
+            if (header != null && items.itemCount == 0 && showEmpty) item(key = "paging-empty", span = { GridItemSpan(maxLineSpan) }) {
                 when (refresh) {
                     is LoadState.Loading -> PagingLoading()
                     is LoadState.Error -> PagingError(items::retry)
                     is LoadState.NotLoading -> Text(emptyText ?: stringResource(R.string.vod_paging_empty), modifier = Modifier.padding(24.dp))
                 }
             }
-            items(count = items.itemCount, key = items.itemKey(key)) { index ->
-                items[index]?.let { card(it) }
+            items(count = items.itemCount, key = keyOf) { index ->
+                Box(Modifier.jaskSlot(keyOf(index)).focusGroup()) { items[index]?.let { card(it) } }
             }
             item(key = "paging-footer", span = { GridItemSpan(maxLineSpan) }) {
                 when (items.loadState.append) {
@@ -197,13 +212,54 @@ internal fun <T : Any> PagedVodGrid(
             }
         }
     }
+    }
 }
+
+/**
+ * Fetches posters for the next few rows before they scroll in, so a fast d-pad scroll lands on drawn cards instead of
+ * blank ones. Requested at the card's size, so the image comes straight from memory when the card draws it.
+ */
+@Composable
+private fun <T : Any> PosterPrefetch(state: LazyGridState, items: LazyPagingItems<T>, poster: (T) -> String?, frost: Boolean) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(state, items) {
+        val loader = coil.Coil.imageLoader(context)
+        val asked = LinkedHashSet<String>()
+        androidx.compose.runtime.snapshotFlow {
+            val info = state.layoutInfo
+            // Grid index → page index: header items come first, the footer last.
+            val headers = info.totalItemsCount - items.itemCount - 1
+            // Before the grid's first row is on screen (the home's shelves above it), the first rows are fetched.
+            val last = ((info.visibleItemsInfo.lastOrNull()?.index ?: -1) - headers).coerceAtLeast(-1)
+            val width = info.visibleItemsInfo.lastOrNull { it.index - headers in 0 until items.itemCount }?.size?.width ?: 0
+            Triple(last, width, items.itemCount)
+        }.collect { (last, width, count) ->
+            if (count == 0) return@collect
+            val end = minOf(count, last + 1 + PREFETCH)
+            for (i in last + 1 until end) {
+                val url = items.peek(i)?.let(poster)?.takeIf { it.isNotBlank() } ?: continue
+                if (!asked.add(url)) continue
+                // At the card's size once a card has been measured; before that, the poster as served (TMDB's w342,
+                // a little larger than a card, so it still satisfies the card from memory).
+                loader.enqueue(coil.request.ImageRequest.Builder(context).data(url).apply {
+                    if (width > 0) size(width, width * 3 / 2).scale(coil.size.Scale.FILL)
+                }.build())
+                if (frost) launch { runCatching { app.opentv.ui.prefetchFrost(context, url, 24) } }
+            }
+            while (asked.size > 600) asked.remove(asked.first())
+        }
+    }
+}
+
+/** Cards fetched ahead: about four rows of six. */
+private const val PREFETCH = 24
 
 @Composable
 private fun PagingLoading() {
     Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        CircularProgressIndicator()
-        Text(stringResource(R.string.vod_paging_loading), style = MaterialTheme.typography.bodyMedium)
+        CircularProgressIndicator(color = androidx.compose.ui.graphics.Color.White, strokeWidth = 3.dp)
+        Text(stringResource(R.string.vod_paging_loading), color = androidx.compose.ui.graphics.Color(0xFFBDBDBD),
+            style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 12.dp))
     }
 }
 
@@ -211,6 +267,6 @@ private fun PagingLoading() {
 private fun PagingError(retry: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(stringResource(R.string.vod_paging_error))
-        TextButton(onClick = retry) { Text(stringResource(R.string.vod_paging_retry)) }
+        TextButton(onClick = retry, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.vod_paging_retry)) }
     }
 }

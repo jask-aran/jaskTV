@@ -1,9 +1,12 @@
 package app.opentv.ui.settings
 
+import app.opentv.ui.jaskFocusLift
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Tv
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Password
@@ -179,12 +182,12 @@ private fun SignedInCards(account: AccountManager, s: Status.Ready) {
             var confirmRemove by remember(d.id) { mutableStateOf(false) }
             val p = playing[d.id]?.takeIf { it.title != null && System.currentTimeMillis() - it.at < 5 * 60_000 }
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (d.kind == "tv") Icons.Outlined.Tv else Icons.Outlined.PhoneAndroid, null, Modifier.size(24.dp), tint = JaskInk)
+                Icon(when (d.kind) { "tv" -> Icons.Outlined.Tv; "core" -> Icons.Outlined.Dns; "web" -> Icons.Outlined.Language; else -> Icons.Outlined.PhoneAndroid }, null, Modifier.size(24.dp), tint = JaskInk)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(d.name + if (d.id == s.deviceId) "  ·  This device" else "", color = JaskInk, style = MaterialTheme.typography.bodyLarge,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(if (p != null) "Playing ${p.title}" + (p.detail?.let { " · $it" } ?: "")
+                    Text(if (p != null) (if (p.playing || p.kind == "live") "Playing · " else "Paused · ") + app.opentv.ui.vod.cleanShowTitle(p.title.orEmpty()) + (p.detail?.let { " · $it" } ?: "")
                         else "Last seen " + ago(d.lastSeen),
                         color = if (p != null) JaskInk else JaskDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -305,7 +308,7 @@ private fun ago(millis: Long): String =
     else android.text.format.DateUtils.getRelativeTimeSpanString(millis, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
 
 @Composable private fun SmallLink(text: String, danger: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) =
-    Text(text, modifier.clip(RoundedCornerShape(50)).clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 8.dp),
+    Text(text, modifier.jaskFocusLift(1.05f).clip(RoundedCornerShape(50)).clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 8.dp),
         color = if (danger) Color(0xFFFF8A80) else JaskInk, style = MaterialTheme.typography.labelLarge)
 
 @Composable private fun Field(value: String, onChange: (String) -> Unit, label: String, type: KeyboardType, secret: Boolean = false) =

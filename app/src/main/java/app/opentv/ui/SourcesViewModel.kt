@@ -113,7 +113,7 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
             // Background: the guide. Movies/series are pulled on demand from their own tabs, so
             // nothing the user hasn't asked for ever blocks the channels they can already watch.
             runCatching {
-                val summary = StatusBus.during(AppText.get(R.string.msg_building_guide)) {
+                val summary = StatusBus.during("guide", AppText.get(R.string.msg_building_guide), StatusBus.Origin.GUIDE) {
                     graph.epgRepository.syncAll(now)
                 }
                 _ui.value = _ui.value.copy(

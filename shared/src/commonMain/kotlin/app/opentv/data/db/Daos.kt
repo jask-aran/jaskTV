@@ -372,6 +372,10 @@ interface DownloadDao {
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun delete(id: Long)
 
+    /** Every download, oldest first: the queue's order. */
+    @Query("SELECT * FROM downloads ORDER BY createdMillis")
+    suspend fun allNow(): List<Download>
+
     /** The oldest download still waiting in the queue (systemId = PENDING). */
     @Query("SELECT * FROM downloads WHERE systemId = -1 ORDER BY createdMillis LIMIT 1")
     suspend fun nextPending(): Download?

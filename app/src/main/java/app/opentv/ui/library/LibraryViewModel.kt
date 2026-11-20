@@ -44,7 +44,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         val episodeCode: String?,
         /** The episode's own name, null for movies. */
         val episodeName: String?,
-        /** Facts like the grids: movies ★ rating and year · language; shows network and Running/Ended. */
+        /** Facts like the grids: movies year · language; shows network and Running/Ended. The score is in [facts]. */
         val chips: List<String>,
         /** "Ep 2 of 10" for shows. */
         val seasonProgress: String?,
@@ -88,14 +88,14 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             val title = canonicalMovie(raw)
             val m = title?.let(raw::withCanonical) ?: raw
             WatchItem(title?.let { "tmdb:${it.tmdbId}" } ?: "m:${raw.sourceId}:${raw.streamId}", raw, null, title?.title ?: cleanShowTitle(raw.name),
-                m.posterUrl, m.year, m.rating, title?.originalLanguage, m.plot, movieChips(m.rating, m.year, title?.originalLanguage, m.durationSeconds),
-                movieFacts(raw, m.rating, enabled))
+                m.posterUrl, m.year, m.rating, title?.originalLanguage, m.plot, movieChips(m.year, title?.originalLanguage, m.durationSeconds),
+                movieFacts(raw, m.rating, enabled, tmdb = title != null))
         }
         val showItems = shows.map { raw ->
             val show = canonicalShow(raw)
             val s = show?.let(raw::withCanonical) ?: raw
             WatchItem(raw.tmdbHint()?.let { "tv:$it" } ?: "s:${raw.sourceId}:${raw.seriesId}", null, raw, cleanShowTitle(s.name),
-                s.posterUrl, s.year, s.rating, show?.originalLanguage, s.plot, showChips(show, s), showFacts(raw, show, s.rating, enabled))
+                s.posterUrl, s.year, s.rating, show?.originalLanguage, s.plot, showChips(show, s), showFacts(raw, show, s.rating, enabled, tmdb = show?.rating != null))
         }
         (movieItems + showItems).distinctBy { it.key }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -129,15 +129,19 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun quality(name: String) = app.opentv.data.parser.MovieBrowseKey.from(name, null).qualityRank
 
-    private fun movieFacts(raw: Movie, rating: Double?, enabled: Set<Long>) =
-        app.opentv.ui.vod.PosterFacts(rating = rating, quality = quality(raw.name), noSource = raw.sourceId !in enabled)
+    /** [tmdb]: the score is TMDB's (the title is matched and TMDB has one); otherwise it is the provider's own. */
+    private fun ratingSource(tmdb: Boolean) = if (tmdb) app.opentv.ui.vod.TmdbRating else app.opentv.ui.vod.ProviderRating
 
-    private fun showFacts(raw: Series?, show: CanonicalShow?, rating: Double?, enabled: Set<Long>) =
+    private fun movieFacts(raw: Movie, rating: Double?, enabled: Set<Long>, tmdb: Boolean) =
+        app.opentv.ui.vod.PosterFacts(rating = rating, quality = quality(raw.name), noSource = raw.sourceId !in enabled,
+            ratingSource = ratingSource(tmdb))
+
+    private fun showFacts(raw: Series?, show: CanonicalShow?, rating: Double?, enabled: Set<Long>, tmdb: Boolean) =
         app.opentv.ui.vod.PosterFacts(rating = rating, status = show?.statusLabel, quality = raw?.let { quality(it.name) } ?: 0,
-            networkLogo = show?.networkLogo, network = show?.network, noSource = raw == null || raw.sourceId !in enabled)
+            networkLogo = show?.networkLogo, network = show?.network, noSource = raw == null || raw.sourceId !in enabled,
+            ratingSource = ratingSource(tmdb))
 
-    private fun movieChips(rating: Double?, year: Int?, language: String?, seconds: Int?) = listOfNotNull(
-        rating?.takeIf { it > 0 }?.let { "★ " + String.format(Locale.getDefault(), "%.1f", it) },
+    private fun movieChips(year: Int?, language: String?, seconds: Int?) = listOfNotNull(
         listOfNotNull(year?.toString(), language?.uppercase(Locale.ROOT)).joinToString(" · ").ifBlank { null },
         seconds?.takeIf { it > 0 }?.let { (it / 60).let { m -> if (m >= 60) "${m / 60}h ${m % 60}m" else "${m}m" } },
     )
@@ -166,9 +170,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     val title = canonicalMovie(raw)
                     val m = title?.let(raw::withCanonical) ?: raw
                     val entry = Activity(pos.mediaKey, title?.title ?: cleanShowTitle(raw.name), null, null,
-                        movieChips(m.rating, m.year, title?.originalLanguage, null), null,
+                        movieChips(m.year, title?.originalLanguage, null), null,
                         m.backdropUrl ?: m.posterUrl, m.posterUrl, progress(pos), remaining(pos), false, false,
-                        pos.durationMillis, raw.id, null, pos.updatedAtMillis, movieFacts(raw, m.rating, enabled))
+                        pos.durationMillis, raw.id, null, pos.updatedAtMillis, movieFacts(raw, m.rating, enabled, tmdb = title != null))
                     if (pos.isFinished) watched += entry else resume += entry
                 }
                 "ep" -> {
@@ -182,12 +186,14 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     fun activity(e: Episode, p: PlaybackPosition?, upNext: Boolean, isNew: Boolean): Activity {
                         val inSeason = all.filter { it.season == e.season }
                         return Activity("ep:${e.id}", s?.name?.let(::cleanShowTitle) ?: "", "S${e.season} · E${e.episodeNumber}",
-                            cleanEpisodeTitle(episodeDisplayTitle(e.title, raw?.name), e.episodeNumber),
+                            // A placeholder name ("Episode 1") only repeats the code beside it: leave it out.
+                            cleanEpisodeTitle(episodeDisplayTitle(e.title, raw?.name), e.episodeNumber)
+                                .takeUnless { PlaceholderEpisode.matches(it.trim()) },
                             if (s != null) showChips(show, s) else emptyList(),
                             inSeason.size.takeIf { it > 1 }?.let { "Ep ${inSeason.indexOfFirst { it.id == e.id } + 1} of $it" },
                             e.stillUrl ?: s?.backdropUrl ?: s?.posterUrl, s?.posterUrl,
                             p?.let(::progress) ?: 0f, p?.let(::remaining), upNext, isNew, p?.durationMillis ?: 0L, null, raw?.id, pos.updatedAtMillis,
-                            showFacts(raw, show, s?.rating, enabled))
+                            showFacts(raw, show, s?.rating, enabled, tmdb = show?.rating != null))
                     }
                     if (!pos.isFinished) { resume += activity(ep, pos, false, false); continue }
                     watched += activity(ep, pos, false, false)
@@ -236,6 +242,8 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         ((p.durationMillis - p.positionMillis) / 60_000L).toInt().coerceAtLeast(1) else null
 
     private companion object {
+        /** "Episode 4", "Ep. 4", "E04": a provider's stand-in for an episode with no name. */
+        val PlaceholderEpisode = Regex("""(?i)^(episode|ep\.?|e)\s*\d+$""")
         const val HOUR = 60L * 60 * 1000
         const val DAY = 24 * HOUR
     }

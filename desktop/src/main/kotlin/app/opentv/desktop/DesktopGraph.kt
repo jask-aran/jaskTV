@@ -5,6 +5,7 @@
  */
 package app.opentv.desktop
 
+import androidx.sqlite.execSQL
 import androidx.room.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import app.opentv.catalogue.TmdbRankings
@@ -38,6 +39,13 @@ object DesktopGraph {
     val database: OpenTvDatabase by lazy {
         Room.databaseBuilder<OpenTvDatabase>(name = File(home, "opentv.db").absolutePath)
             .setDriver(BundledSQLiteDriver())
+            .addMigrations(object : androidx.room.migration.Migration(23, 25) {
+                override fun migrate(connection: androidx.sqlite.SQLiteConnection) = Unit
+            }, object : androidx.room.migration.Migration(24, 25) {
+                override fun migrate(connection: androidx.sqlite.SQLiteConnection) {
+                    app.opentv.catalogue.BrowseTablesMigration.drop24to25.forEach { connection.execSQL(it) }
+                }
+            })
             .setQueryCoroutineContext(Dispatchers.IO)
             .build()
     }

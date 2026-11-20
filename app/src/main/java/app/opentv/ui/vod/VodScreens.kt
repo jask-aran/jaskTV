@@ -5,6 +5,7 @@
  */
 package app.opentv.ui.vod
 
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.runtime.saveable.rememberSaveable
 import app.opentv.data.parser.ChannelNameNormalizer
 import androidx.compose.material.icons.filled.Tune
@@ -120,7 +121,7 @@ fun MoviesScreen(
     LaunchedEffect(hasSources) { if (hasSources) viewModel.ensureVodLoaded() }
     BackHandler(category != null) { viewModel.selectMovieCategory(null) }
     Column(Modifier.fillMaxSize()) {
-        TextButton(onClick = { inventory = false }) { Text(stringResource(R.string.catalogue_back)) }
+        TextButton(onClick = { inventory = false }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.catalogue_back)) }
         CatalogueControls(query, viewModel::setBrowseQuery, sources, source,
             viewModel::selectVodSource, categories, category,
             { viewModel.selectMovieCategory(null) }, viewModel::selectMovieCategory,
@@ -145,6 +146,8 @@ fun SeriesScreen(
     kindControl: @Composable () -> Unit = {},
     searchVisible: Boolean = true,
     onCloseSearch: () -> Unit = {},
+    inventory: Boolean = false,
+    onCloseInventory: () -> Unit = {},
 ) {
     val categories by viewModel.seriesCategories.collectAsState()
     val sources by viewModel.sources.collectAsState()
@@ -152,7 +155,8 @@ fun SeriesScreen(
     val category by viewModel.selectedSeriesCategory.collectAsState()
     val query by viewModel.browseQuery.collectAsState()
     LaunchedEffect(hasSources) { if (hasSources) viewModel.ensureVodLoaded() }
-    if (app.opentv.ui.LocalJaskTouchShell.current) {
+    // The account menu's "Shows provider inventory" opens the provider's own categories below; Back returns home.
+    if (app.opentv.ui.LocalJaskTouchShell.current && !inventory) {
         // Source and availability scope live in the account popover; there is no filter sheet here.
         val home by viewModel.showHome.collectAsState()
         val hits by viewModel.showSearch.collectAsState()
@@ -166,12 +170,17 @@ fun SeriesScreen(
         val header: (androidx.compose.foundation.lazy.grid.LazyGridScope.(Int) -> Unit)? = if (h != null) { columns ->
             jaskHome(h, columns, watchlist, openTitle)
         } else null
-        PagedSeriesGrid(viewModel.seriesPages.collectAsLazyPagingItems(), "$source/$category/$query", onOpenSeries, viewModel::seriesBrowseVariants, pickDefault = viewModel::defaultSeriesVersion,
-            emptyText = null, header = header)
+        // The home is its shelves only (no "All shows" grid under them): the full catalogue query isn't run at all.
+        val pages = if (header != null) androidx.compose.runtime.remember { kotlinx.coroutines.flow.flowOf(androidx.paging.PagingData.empty<app.opentv.ui.VodViewModel.ShowCard>()) }
+            .collectAsLazyPagingItems() else viewModel.seriesPages.collectAsLazyPagingItems()
+        PagedSeriesGrid(pages, "$source/$category/$query", onOpenSeries, viewModel::seriesBrowseVariants, pickDefault = viewModel::defaultSeriesVersion,
+            emptyText = null, header = header, showEmpty = header == null)
         return
     }
+    BackHandler(inventory && category == null) { onCloseInventory() }
     BackHandler(category != null) { viewModel.selectSeriesCategory(null) }
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().then(if (inventory) Modifier.padding(app.opentv.ui.LocalJaskContentPadding.current) else Modifier)) {
+        if (inventory) TextButton(onClick = onCloseInventory, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_back)) }
         CatalogueControls(query, viewModel::setBrowseQuery, sources, source,
             viewModel::selectVodSource, categories, category,
             { viewModel.selectSeriesCategory(null) }, viewModel::selectSeriesCategory,
@@ -235,7 +244,7 @@ private fun CatalogueSyncState(viewModel: VodViewModel) {
         verticalAlignment = Alignment.CenterVertically) {
         Text(stringResource(R.string.vod_paging_error), modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall)
-        TextButton(onClick = viewModel::refreshVod) { Text(stringResource(R.string.vod_paging_retry)) }
+        TextButton(onClick = viewModel::refreshVod, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.vod_paging_retry)) }
     }
 }
 
@@ -281,6 +290,8 @@ internal fun PosterCard(
     progress: Float? = null,
     /** Origin tag from the raw title (`EN`, `DE 4K`, `NF`) — which country/service copy this is. */
     tagBadge: String? = null,
+    /** Who [rating] comes from. These cards show the provider's own rows, so by default it is the provider's score. */
+    ratingSource: String = ProviderRating,
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "posterScale")
@@ -312,10 +323,15 @@ internal fun PosterCard(
                 modifier = Modifier.fillMaxSize(),
             )
             rating?.takeIf { it > 0.0 && !isPhone() }?.let {
-                Badge(
-                    text = "★ ${formatRating(it)}",
-                    modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
-                )
+                // The score named by its source's tag, on the same dark chip as the other badges.
+                Row(Modifier.align(Alignment.BottomStart).padding(6.dp).clip(RoundedCornerShape(6.dp))
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.66f)).padding(horizontal = 5.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    JaskRatingTag(ratingSource, small = true)
+                    Spacer(Modifier.width(4.dp))
+                    Text(formatRating(it), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold,
+                        color = androidx.compose.ui.graphics.Color.White, maxLines = 1)
+                }
             }
             qualityBadge?.takeIf { !isPhone() }?.let {
                 Badge(
@@ -438,7 +454,7 @@ private fun PhoneCategoryPicker(
     LaunchedEffect(open, selectedSource) { if (open && loadCounts != null) counts = runCatching { loadCounts() }.getOrDefault(emptyMap()) }
     val selectedName = entries.firstOrNull { it.first == selected }?.second
     val compact = isPhoneLandscape()
-    IconButton(onClick = { open = true }, modifier = Modifier.size(34.dp)) {
+    IconButton(onClick = { open = true }, modifier = Modifier.jaskFocusRing().then(Modifier.size(34.dp))) {
         Icon(Icons.Filled.Tune, stringResource(R.string.provider_filters), Modifier.size(20.dp),
             tint = if (selected != null || selectedSource != null) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -587,7 +603,7 @@ private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun SearchAffordance(onOpenSearch: () -> Unit) {
     if (isPhoneLandscape()) {
-        IconButton(onClick = onOpenSearch) {
+        IconButton(onClick = onOpenSearch, modifier = Modifier.jaskFocusRing()) {
             Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.vod_search_hint))
         }
         return
@@ -627,5 +643,5 @@ private val PHONE_POSTER_WIDTH = 112.dp
 @Composable
 private fun isPhone(): Boolean = LocalLayoutClass.current == LayoutClass.PHONE
 
-/** Rating to one decimal place, locale-independent (the "★" is drawn beside it). */
+/** Rating to one decimal place, locale-independent (its source's tag is drawn beside it). */
 internal fun formatRating(rating: Double): String = String.format(java.util.Locale.US, "%.1f", rating)

@@ -413,6 +413,22 @@ class AppCollections(
     }
 
     /** Playlists first: everything else names them. */
-    fun all(): List<SyncCollection> = listOf(playlists, profiles, settingsColl, collections, positions, channelMarks, favourites,
-        collectionEntries, myTv, recentChannels, guide)
+    /** jasktv-core's records (its addresses and access secret), written only by core: read here, never written. */
+    val coreRecords = object : SyncCollection {
+        override val name = "core"
+        override suspend fun snapshot(): Map<String, JsonElement> = emptyMap()
+        override suspend fun apply(key: String, value: JsonElement?): Boolean { app.opentv.account.CoreDirectory.put(key, value); return true }
+        override suspend fun removedHere(key: String) = false
+    }
+
+    /** Records cores write about the account-wide TMDB table ("lease": who builds it; "snap": its snapshots): read only. */
+    private fun sharedRecords(coll: String) = object : SyncCollection {
+        override val name = coll
+        override suspend fun snapshot(): Map<String, JsonElement> = emptyMap()
+        override suspend fun apply(key: String, value: JsonElement?): Boolean { app.opentv.account.AccountShared.put(coll, key, value); return true }
+        override suspend fun removedHere(key: String) = false
+    }
+
+    fun all(): List<SyncCollection> = listOf(sharedRecords("lease"), sharedRecords("snap"), playlists, profiles, settingsColl, collections, positions, channelMarks, favourites,
+        collectionEntries, myTv, recentChannels, guide, coreRecords)
 }

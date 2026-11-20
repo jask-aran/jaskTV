@@ -1,5 +1,6 @@
 package app.opentv.ui.settings
 
+import app.opentv.ui.jaskFocusRing
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -216,14 +217,14 @@ private fun NasSheet(settings: AppSettings, onDismiss: () -> Unit) {
                         status = result.fold({ context.getString(R.string.recset_status_connected) },
                             { context.getString(R.string.recset_status_failed, it.message ?: it.javaClass.simpleName) })
                     }
-                }) { Text(stringResource(R.string.recset_test_connection)) }
+                }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.recset_test_connection)) }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(onClick = onDismiss, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_cancel)) }
                 TextButton(enabled = host.isNotBlank() && share.isNotBlank(), onClick = {
                     settings.setSmbConfig(host, share, folder, user, password)
                     settings.setRecordingTarget(AppSettings.RecordingTarget.SMB)
                     onDismiss()
-                }) { Text(stringResource(R.string.common_save)) }
+                }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_save)) }
             }
             Spacer(Modifier.height(4.dp))
         }

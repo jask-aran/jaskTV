@@ -63,7 +63,9 @@ class LiveFinder(context: Context) {
         mutex.withLock {
             val rows = withContext(Dispatchers.IO) { graph.database.channels().liveFindRows() }
             // Names are in the signature: a sync that renames event slots must rebuild.
-            val signature = rows.fold(rows.size.toLong()) { acc, row -> acc * 31 + row.id * 17 + row.name.hashCode() } + protectedKeys.hashCode()
+            // Names are in the signature, and so is how cards are made (bump INDEX_RULES when that changes).
+            val signature = rows.fold(rows.size.toLong() + INDEX_RULES) { acc, row -> acc * 31 + row.id * 17 + row.name.hashCode() + (row.epgChannelId?.hashCode() ?: 0) } +
+                protectedKeys.hashCode()
             // The index saved by an earlier launch counts too: if the channels haven't changed, nothing is rebuilt.
             if (cached == null) storedIndex()
             cached?.takeIf { it.first == signature }?.let { identitiesReady = true; return@withLock it.second }
@@ -71,7 +73,9 @@ class LiveFinder(context: Context) {
             catalog.warmLogos(network = false)
             val lookup: (suspend (String, String) -> app.opentv.discovery.ChannelIdentity?)? =
                 if (identitiesReady) { name, country -> catalog.strictIn(name, country) } else null
-            buildIndex(rows.filterNot { isProtected(it, protectedKeys) }, lookup, catalog::logoFor)
+            val byGuide: (suspend (String) -> app.opentv.discovery.ChannelIdentity?)? =
+                if (identitiesReady) { id -> catalog.byGuideId(id) } else null
+            buildIndex(rows.filterNot { isProtected(it, protectedKeys) }, lookup, catalog::logoFor, byGuide)
                 .also { built ->
                     if (identitiesReady) {
                         cached = signature to built
@@ -96,9 +100,9 @@ class LiveFinder(context: Context) {
      * Re-reads the names of a few event-slot categories from the provider (one small request each)
      * and renames the stored slots. At most every 15 minutes per category. Returns whether any name changed.
      */
-    suspend fun refreshSlotNames(categories: Set<Pair<Long, String>>): Boolean = withContext(Dispatchers.IO) {
+    suspend fun refreshSlotNames(categories: Set<Pair<Long, String>>, every: Long = 15 * 60_000L): Boolean = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        val due = categories.filter { now - (slotRefreshedAt[it] ?: 0) > 15 * 60_000 }.take(12)
+        val due = categories.filter { now - (slotRefreshedAt[it] ?: 0) > every }.take(12)
         var changed = false
         val dao = graph.database.channels()
         for ((sourceId, categoryId) in due) {
@@ -119,6 +123,40 @@ class LiveFinder(context: Context) {
         changed
     }
 
+    /**
+     * Keeps event-slot names current while Live TV or Sports is open (call it every few minutes). From jasktv-core when
+     * one answers: its changes since this device's last copy, one small request (core re-reads the slots itself).
+     * Otherwise straight from the provider: the slot categories of [categories], at most every 5 minutes each.
+     * Returns whether any name changed (rebuild then). Never retries or re-runs itself.
+     */
+    suspend fun keepSlotsFresh(categories: Set<Pair<Long, String>>): Boolean = withContext(Dispatchers.IO) {
+        var fromCore = false
+        var changed = false
+        for (source in graph.database.sources().enabled()) {
+            val n = runCatching { graph.catalogRepository.liveChangesFromCore(source) }.getOrNull() ?: continue
+            fromCore = true
+            if (n > 0) { changed = true; android.util.Log.i("jaskLive", "Slot names from core: $n changed") }
+        }
+        if (fromCore) return@withContext changed
+        refreshSlotNames(categories, every = 5 * 60_000L) || changed
+    }
+
+    /**
+     * Of [ids], the ones that still show [event] right now. Event slots ("US| SOCCER PPV 3") are renamed as one event
+     * ends and the next is scheduled, so a slot matched earlier can carry another game by now: their names are
+     * re-read from the provider first (no 15-minute wait). Ordinary channels (not in a slot category) are kept.
+     */
+    suspend fun stillShowing(ids: List<Long>, event: SportEvent): List<Long> = withContext(Dispatchers.IO) {
+        val dao = graph.database.channels()
+        val rows = dao.byIds(ids.take(20))
+        val categories = rows.mapNotNull { r -> r.categoryId?.let { r.sourceId to it } }.toSet()
+        categories.forEach { slotRefreshedAt.remove(it) }
+        runCatching { refreshSlotNames(categories) }
+        val fresh = dao.byIds(ids.take(20)).associateBy { it.id }
+        val now = System.currentTimeMillis()
+        ids.filter { id -> fresh[id]?.let { EventMatcher.matchesFolded(it.name, EventMatcher.fold(it.name), event, now) } == true }
+    }
+
     /** Downloads the IPTV-org catalogue if it is missing or stale (about 8 MB, daily at most). */
     suspend fun prepareIdentities(): Boolean = catalog.warm().also { catalog.warmLogos(network = true) }
 
@@ -130,8 +168,28 @@ class LiveFinder(context: Context) {
         private val slotRefreshedAt = java.util.concurrent.ConcurrentHashMap<Pair<Long, String>, Long>()
 
         /** Pure index build, shared with tests. [identity] resolves a cleaned name in a country strictly, or is null. */
+        /** Version of the rules below: part of the index signature, so a saved index made by older rules is rebuilt. */
+        private const val INDEX_RULES = 3L
+
+        /** A US or Canadian local station: a network's name and the station's call sign ("NBC WSTM Syracuse"). */
+        private val NETWORK = Regex("""\b(NBC|CBS|FOX|ABC|CW|PBS|TELEMUNDO|UNIVISION|UNIMAS|MYNETWORK|MY ?TV|ION|CTV|GLOBAL|CITY|CBC)\b""")
+        private val CALL_SIGN = Regex("""\b([KW][A-Z]{2,3}|C[A-Z]{3})\b""")
+        private val NOT_CALL = setOf("WEST", "WILD", "KIDS", "WWE", "WNBA", "WIDE", "WEEK", "WAVE", "WIRE", "WINE", "WISE", "WEB", "KING",
+            "CITY", "CBS", "CBC", "CTV", "CITV", "CNN", "CNBC", "CMT", "CW")
+        /** "WSTM" from "NBC WSTM Syracuse NY D": only with a network named too, so "KIDS" or "WEST" isn't taken. */
+        fun callSign(name: String): String? {
+            val upper = ChannelNameNormalizer.foldSuperscripts(name).uppercase()
+            if (!NETWORK.containsMatchIn(upper)) return null
+            return CALL_SIGN.findAll(upper).map { it.groupValues[1] }.firstOrNull { it !in NOT_CALL }
+        }
+
+        /** Timeshifted copies ("+1", "West", "Pacific") carry the main channel's guide id but aren't it. */
+        private val TIMESHIFT = Regex("""\+\s?\d\b|\bWEST\b|\bPACIFIC\b""", RegexOption.IGNORE_CASE)
+
         suspend fun buildIndex(rows: List<LiveFindRow>, identity: (suspend (String, String) -> app.opentv.discovery.ChannelIdentity?)?,
-            logoOf: (String) -> String? = { null }): LiveFindIndex {
+            logoOf: (String) -> String? = { null },
+            /** The real channel a provider guide id names (see IptvOrgCatalog.byGuideId); null: names only. */
+            byGuide: (suspend (String) -> app.opentv.discovery.ChannelIdentity?)? = null): LiveFindIndex {
             val channels = HashMap<String, MutableList<Pair<LiveFindRow, LiveClass>>>()
             val loops = HashMap<String, MutableList<Pair<LiveFindRow, LiveClass>>>()
             val slots = ArrayList<SlotStream>()
@@ -142,8 +200,12 @@ class LiveFinder(context: Context) {
                     LiveKind.EVENT_SLOT -> slots += SlotStream(row.id, row.name, cls.region, row.categoryName, row.logoUrl, row.sourceId, row.categoryId)
                     LiveKind.CHANNEL, LiveKind.LOOP -> {
                         val name = ChannelNameNormalizer.groupKeyOf(cleanName(row.name))
+                        // A local station is one card whatever each package calls it ("NBC WSTM Syracuse NY D",
+                        // "RK: NBC 3 Syracuse (WSTM)"): by its call sign.
+                        val call = if (cls.region == "US" || cls.region == "CA") callSign(row.name) else null
                         // Language feeds of one brand stay apart; names with no Latin letters never merge.
                         val key = when {
+                            call != null && cls.kind == LiveKind.CHANNEL -> "${cls.region}:call:$call"
                             name.isEmpty() -> "${cls.region}:id${row.id}"
                             else -> cls.region + ":" + (languageTag(row.name)?.let { "$it:" } ?: "") + name
                         }
@@ -152,7 +214,7 @@ class LiveFinder(context: Context) {
                 }
             }
             // Two provider spellings of one identified channel ("C-SPAN", "C-SPAN 1") become one card.
-            val found = channels.map { (key, members) -> collapse(key, members, identity, logoOf) }
+            val found = channels.map { (key, members) -> collapse(key, members, identity, logoOf, byGuide) }
                 .groupBy { channel -> channel.identity?.let { "${channel.region}:$it:${languageTagOf(channel.name)}" } ?: channel.key }
                 .map { (_, same) -> if (same.size == 1) same.single() else same.first().copy(streamIds = same.flatMap { it.streamIds }) }
             // A logo shared by many different channels is the bundle's ("AT&T", "Prime Video"), not the channel's.
@@ -169,11 +231,22 @@ class LiveFinder(context: Context) {
         }
 
         private suspend fun collapse(key: String, members: List<Pair<LiveFindRow, LiveClass>>,
-            identityOf: (suspend (String, String) -> app.opentv.discovery.ChannelIdentity?)?, logoOf: (String) -> String? = { null }): FindChannel {
+            identityOf: (suspend (String, String) -> app.opentv.discovery.ChannelIdentity?)?, logoOf: (String) -> String? = { null },
+            byGuide: (suspend (String) -> app.opentv.discovery.ChannelIdentity?)? = null): FindChannel {
             val sorted = members.sortedByDescending { it.first.qualityRank }
             val (best, cls) = sorted.first()
-            val name = cleanName(best.name)
-            val identity = identityOf?.invoke(name, cls.region)
+            // A local station's copies are named every which way ("DALLAS TX KXAS NBC 5 A3 MIAMI city"): its card
+            // takes the plainest, the shortest name outside the provider's "city" listings.
+            val name = if (":call:" in key) members.map { cleanName(it.first.name) }
+                .sortedWith(compareBy<String> { Regex("""\bCITY$""", RegexOption.IGNORE_CASE).containsMatchIn(it) }.thenBy { it.length }).first()
+                else cleanName(best.name)
+            // The provider's guide id names the real channel outright: used when the copies agree on one channel of
+            // this region (or the region is a mixed one). Timeshifted feeds keep to their own name. Else the name.
+            val guided = if (byGuide == null || TIMESHIFT.containsMatchIn(best.name)) null else
+                members.mapNotNull { it.first.epgChannelId?.takeIf(String::isNotBlank) }.distinct()
+                    .mapNotNull { byGuide(it) }.distinctBy { it.id }
+                    .filter { it.country == cls.region || cls.region.length != 2 }.singleOrNull()
+            val identity = guided ?: identityOf?.invoke(name, cls.region)
             val language = languageTag(best.name)
             return FindChannel(
                 key = key,

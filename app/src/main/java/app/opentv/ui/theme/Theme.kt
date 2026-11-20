@@ -24,15 +24,17 @@ import androidx.compose.ui.unit.sp
  * actively unpleasant on a 55" panel at night, so everything here is anchored near-black with
  * a single restrained accent used only for focus and selection.
  */
-private val Accent = Color(0xFF7C93FF)
-private val AccentDim = Color(0xFF4B5DB8)
+// Neutral: jaskTV highlights are white and grey glass, never a coloured accent (Material controls that fall back on
+// the scheme — spinners, switches, text buttons — then match the rest of the app).
+private val Accent = Color(0xFFEDEDED)
+private val AccentDim = Color(0xFF3A3A3C)
 
 private val DarkScheme = darkColorScheme(
     primary = Accent,
-    onPrimary = Color(0xFF0A0C14),
+    onPrimary = Color(0xFF0A0A0A),
     primaryContainer = AccentDim,
-    onPrimaryContainer = Color(0xFFE6EAFF),
-    secondary = Color(0xFF9AA3C0),
+    onPrimaryContainer = Color.White,
+    secondary = Color(0xFFA8A8A8),
     background = Color(0xFF07080C),
     onBackground = Color(0xFFE8EAF0),
     surface = Color(0xFF0D0F16),
@@ -75,8 +77,8 @@ private val OpenTvTypography = Typography(
 
 // Phone surfaces are neutral so artwork, rather than tinted controls, carries the colour.
 private val PhoneDarkScheme = DarkScheme.copy(
-    primary = Color(0xFF0A84FF), onPrimary = Color.White,
-    primaryContainer = Color(0xFF123354), onPrimaryContainer = Color(0xFFD6E9FF),
+    primary = Accent, onPrimary = Color(0xFF0A0A0A),
+    primaryContainer = AccentDim, onPrimaryContainer = Color.White,
     secondary = Color(0xFF98989D), onSecondary = Color.White,
     secondaryContainer = Color(0xFF2C2C2E), onSecondaryContainer = Color.White,
     background = Color(0xFF000000), onBackground = Color(0xFFF5F5F7),

@@ -90,6 +90,10 @@ class AccountPrefs(context: Context, private val s: AppSettings, private val dev
         // Services: API keys and add-ons
         text("tmdbKey", { s.tmdbApiKey.value }, s::setTmdbApiKey),
         text("omdbKey", { s.omdbApiKey.value }, s::setOmdbApiKey),
+        // Your own torrent services, when you run them yourself rather than through jasktv-core.
+        text("prowlarrUrl", { s.prowlarrUrl.value }, s::setProwlarrUrl),
+        text("prowlarrKey", { s.prowlarrKey.value }, s::setProwlarrKey),
+        text("torrServerUrl", { s.torrServerUrl.value }, s::setTorrServerUrl),
         Pref("stremioAddons", { json.encodeToJsonElement(ListSerializer(StremioAddon.serializer()), s.stremioAddons.value) }, { e ->
             runCatching { s.setStremioAddons(json.decodeFromJsonElement(ListSerializer(StremioAddon.serializer()), e)) }
         }),
@@ -112,7 +116,7 @@ class AccountPrefs(context: Context, private val s: AppSettings, private val dev
             s.phoneLiveLayout, s.channelSort, s.shownCategories, s.hiddenCategories, s.pinIsSet, s.languageTag, s.themeMode, s.liveEnabled,
             s.moviesEnabled, s.seriesEnabled, s.livePauseEnabled, s.resumeLastChannel, s.playerResizeMode, s.recordPadStartMinutes,
             s.recordPadEndMinutes, s.recordAutoSwitch, s.smbHost, s.smbShare, s.smbFolder, s.smbUser, s.smbPassword,
-            s.tmdbApiKey, s.omdbApiKey, s.stremioAddons, s.recentSearches, s.uiScale, s.glassMode, s.phoneAutoRotate)) { it.toList() },
+            s.tmdbApiKey, s.omdbApiKey, s.stremioAddons, s.prowlarrUrl, s.prowlarrKey, s.torrServerUrl, s.recentSearches, s.uiScale, s.glassMode, s.phoneAutoRotate)) { it.toList() },
         callbackFlow<Any> {
             val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> trySend(Unit) }
             catalogue.registerOnSharedPreferenceChangeListener(listener)

@@ -38,6 +38,8 @@ sealed interface PlaybackState {
         val title: String,
         val message: String,
         val canRetry: Boolean,
+        /** The server's HTTP status, when it answered with one (404: the file is gone). */
+        val httpCode: Int? = null,
     ) : PlaybackState
 }
 

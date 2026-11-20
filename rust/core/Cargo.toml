@@ -1,0 +1,23 @@
+[package]
+name = "jasktv-core"
+version = "0.2.0"
+description = "jaskTV's home server: signs in to your account, finds and streams copies, and (later) matches and caches for every device"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+jasktv-engine = { path = "../engine" }
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+ureq.workspace = true
+tiny_http = "0.12"
+sha2 = "0.10"
+# Matches and TMDB titles, in the app's column layout. Bundled: no system SQLite needed on Linux or Windows.
+# Finding jaskTV devices on the home network (they announce _jasktv._tcp, as the app's LanDiscovery does).
+mdns-sd = { version = "0.13", default-features = false }
+tungstenite = { version = "0.24", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+flate2 = "1"
+quick-xml = "0.37"
+rusqlite = { version = "0.32", features = ["bundled"] }
+# The sign-in QR code, drawn in the console and as SVG on the setup page.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }

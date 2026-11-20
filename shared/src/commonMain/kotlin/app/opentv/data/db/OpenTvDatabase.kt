@@ -86,7 +86,7 @@ class Converters {
         CollectionEntry::class,
         ChannelAliasOverride::class,
     ],
-    version = 23,
+    version = 25,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

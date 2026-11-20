@@ -1,5 +1,7 @@
 package app.opentv.ui.library
 
+import app.opentv.ui.jaskFocusRing
+import app.opentv.ui.jaskFocusLift
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -41,7 +43,6 @@ import app.opentv.ui.JaskMenuItem
 import app.opentv.ui.LocalJaskFilterRequest
 import app.opentv.ui.VodViewModel
 import app.opentv.ui.vod.JaskPosterCard
-import app.opentv.ui.vod.JaskPosterChip
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 
@@ -87,11 +88,12 @@ internal fun JaskLibrary(
     if (downloads || classic) {
         BackHandler { downloads = false; classic = false }
         Column(Modifier.fillMaxSize().padding(padding)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { downloads = false; classic = false }) { Text("‹ " + stringResource(R.string.nav_saved_simple)) }
-                Spacer(Modifier.weight(1f))
+            // The same header as Live TV's sub-pages (Local stations): a glass back pill, then a large heading.
+            Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)) {
+                app.opentv.ui.settings.JaskPill("‹ " + stringResource(R.string.nav_saved_simple)) { downloads = false; classic = false }
+                Spacer(Modifier.height(18.dp))
                 Text(if (classic) stringResource(R.string.jask_library_classic) else stringResource(R.string.jask_library_downloads),
-                    style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 12.dp))
+                    color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             }
             CompositionLocalProvider(LocalJaskFilterRequest provides 0) {
                 if (classic) LibraryScreen(onPlayChannel, onOpenMovie, onOpenSeries, onResume)
@@ -163,7 +165,7 @@ internal fun JaskLibrary(
 
         if (watched.isNotEmpty()) {
             item(key = "h-watched", span = { GridItemSpan(maxLineSpan) }) {
-                Row(Modifier.fillMaxWidth().padding(top = 14.dp).clip(RoundedCornerShape(8.dp)).clickable { history = !history }
+                Row(Modifier.jaskFocusLift(1.02f).fillMaxWidth().padding(top = 14.dp).clip(RoundedCornerShape(8.dp)).clickable { history = !history }
                     .padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Watched history", style = MaterialTheme.typography.titleSmall, color = Color(0xFFBDBDBD), modifier = Modifier.weight(1f))
                     Text(if (history) "Hide" else "${watched.size} ›", style = MaterialTheme.typography.labelLarge, color = Color(0xFF9E9E9E))
@@ -182,7 +184,7 @@ internal fun JaskLibrary(
             }
         }
         item(key = "classic", span = { GridItemSpan(maxLineSpan) }) {
-            TextButton(onClick = { classic = true }) { Text(stringResource(R.string.jask_library_classic), color = Color(0xFF8A8A8A)) }
+            TextButton(onClick = { classic = true }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.jask_library_classic), color = Color(0xFF8A8A8A)) }
         }
     }
 }
@@ -212,7 +214,7 @@ internal fun TypeSwitch(type: LibraryType, onType: (LibraryType) -> Unit) {
         Row(Modifier.fillMaxHeight().padding(3.dp), verticalAlignment = Alignment.CenterVertically) {
             LibraryType.entries.forEach { t ->
                 val selected = t == type
-                Box(Modifier.fillMaxHeight().clip(RoundedCornerShape(50)).background(if (selected) Color(0x38FFFFFF) else Color.Transparent)
+                Box(Modifier.fillMaxHeight().jaskFocusLift(1.06f).clip(RoundedCornerShape(50)).background(if (selected) Color(0x38FFFFFF) else Color.Transparent)
                     .clickable { onType(t) }.padding(horizontal = 11.dp), contentAlignment = Alignment.Center) {
                     Text(t.label, color = if (selected) Color.White else Color(0xFFB8B8B8), style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
@@ -232,7 +234,7 @@ private fun LazyGridScope.expander(key: String, total: Int, limit: Int, expanded
     if (total <= limit) return
     item(key = key, span = { GridItemSpan(maxLineSpan) }) {
         Text(if (expanded) "Show less" else "Show all $total", color = Color(0xFFD8D8D8), style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onChange(!expanded) }.padding(vertical = 6.dp, horizontal = 2.dp))
+            modifier = Modifier.jaskFocusLift(1.04f).clip(RoundedCornerShape(8.dp)).clickable { onChange(!expanded) }.padding(vertical = 6.dp, horizontal = 2.dp))
     }
 }
 
@@ -268,11 +270,10 @@ internal fun ContinueCard(item: LibraryViewModel.Activity, onOpen: () -> Unit, o
                     color = Color(0xFFD6D6D6), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(4.dp))
+            // One plain line, as on the Watchlist: shows "Network · Running", movies "year · language" and the score
+            // (shows leave the score out: the card is narrow and the network and status matter more there).
             if (item.facts.noSource) app.opentv.ui.vod.UnavailableMark()
-            else if (item.chips.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                // Shows: one "Network · Running" chip; movies: rating and year · language.
-                (if (item.episodeCode != null) listOf(item.chips.joinToString(" · ")) else item.chips.take(2)).forEach { JaskPosterChip(it) }
-            }
+            else app.opentv.ui.vod.JaskFactsLine(item.chips, item.facts.rating.takeIf { item.isMovie }, item.facts.ratingSource, small = true)
             Spacer(Modifier.weight(1f))
             val status = when {
                 item.remainingMinutes != null -> item.remainingMinutes.let { if (it >= 60) "${it / 60}h ${it % 60}m left" else "${it}m left" }
@@ -305,16 +306,14 @@ private fun BoxScope.Badge(text: String, background: Color, color: Color) {
 /** Watchlist entry: poster, title, the grid facts and the description, so you can choose from it directly. */
 @Composable
 private fun WatchRow(entry: LibraryViewModel.WatchItem, onOpen: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(126.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E1C1B)).clickable(onClick = onOpen)) {
+    Row(Modifier.fillMaxWidth().jaskFocusLift(1.03f).height(126.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E1C1B)).clickable(onClick = onOpen)) {
         app.opentv.ui.vod.PosterArt(entry.poster, entry.facts.copy(rating = null, status = null, network = null),
             Modifier.fillMaxHeight().aspectRatio(2f / 3f), androidx.compose.ui.graphics.RectangleShape, compact = true, inset = true)
         Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 9.dp)) {
             Text(entry.title, color = Color(0xFFF6F3EF), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                (listOf(if (entry.movie != null) "Movie" else "TV") + entry.chips.take(2)).forEach { JaskPosterChip(it) }
-            }
+            app.opentv.ui.vod.JaskFactsLine(entry.chips, entry.facts.rating, entry.facts.ratingSource)
             if (entry.facts.noSource) { Spacer(Modifier.height(5.dp)); app.opentv.ui.vod.UnavailableMark() }
             entry.overview?.takeIf(String::isNotBlank)?.let {
                 Spacer(Modifier.height(6.dp))

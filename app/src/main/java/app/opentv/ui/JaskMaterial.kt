@@ -92,7 +92,8 @@ internal val LocalJaskMaterial = staticCompositionLocalOf { JaskMaterial.FROSTED
  * Debug-build A/B switches, read at start: `adb shell setprop debug.jasktv.material live|frosted|solid`
  * overrides the setting; `debug.jasktv.noblur 1` disables live blur.
  */
-internal fun debugProp(name: String): String? = if (!app.opentv.BuildConfig.DEBUG) null else runCatching {
+// Debug-variant builds only (including -PjaskPerf ones, which turn DEBUG off to measure speed); never release.
+internal fun debugProp(name: String): String? = if (!app.opentv.BuildConfig.DEBUG && app.opentv.BuildConfig.BUILD_TYPE != "debug") null else runCatching {
     Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, name) as String
 }.getOrNull()?.takeIf { it.isNotEmpty() }
 
@@ -190,6 +191,11 @@ internal fun rememberArtBackdrop(url: String?, cells: Int, bleed: Dp = 0.dp, scr
     return backdrop
 }
 
+/** Prepares [url]'s frosted copy ahead of its card being drawn (see the browse grids' prefetch). */
+internal suspend fun prefetchFrost(context: Context, url: String, cells: Int) {
+    if (frostCache.get(frostKey(url, cells)) == null) loadFrost(context, url, cells)
+}
+
 private fun frostKey(url: String, cells: Int) = "$url#$cells"
 private val frostCache = android.util.LruCache<String, ImageBitmap>(400)
 
@@ -240,16 +246,18 @@ internal fun JaskGlassSurface(modifier: Modifier = Modifier, shape: Shape = Roun
     val backdrop = LocalJaskBackdrop.current
     val material = LocalJaskMaterial.current
     val inRecording = LocalJaskInRecording.current
-    val wash = LocalJaskAmbient.current?.wash ?: Color.Black
+    // The page colour is read only while drawing: it animates for a moment whenever the featured art changes, and
+    // reading it here recomposed every glass surface on screen (header, badges on each card) on every frame of that.
+    val ambient = LocalJaskAmbient.current
     val badge = tone == JaskGlassTone.BADGE
     // Badges: shadow and clip share one layer.
     val base = if (showFocus) modifier.jaskFocusLift().onFocusChanged { focused = it.hasFocus } else modifier
     val clipped = if (badge) base.shadow(3.dp, shape, clip = true) else base.clip(shape)
-    val fill = fallback(badge, inRecording, wash)
+    val fill = { fallback(badge, inRecording, ambient?.wash ?: Color.Black) }
     val behind = when {
         backdrop is JaskLiveBackdrop && material == JaskMaterial.LIVE -> Modifier.liveFrost(backdrop)
         backdrop is JaskArtBackdrop -> Modifier.artFrost(backdrop, fill)
-        else -> Modifier.background(fill)
+        else -> Modifier.drawBehind { drawRect(fill()) }
     }
     Box(clipped.then(behind).background(if (badge) BadgeSheen else ChromeSheen).then(if (focused) Modifier.background(FocusWash) else Modifier).border(1.dp, if (badge) BadgeRim else ChromeRim, shape),
         content = content)
@@ -270,13 +278,13 @@ private fun fallback(badge: Boolean, inRecording: Boolean, wash: Color): Color =
 }
 
 /** This element's slice of the art's pre-blurred copy (and its scrims), aligned to the art. */
-private fun Modifier.artFrost(backdrop: JaskArtBackdrop, fallback: Color): Modifier {
+private fun Modifier.artFrost(backdrop: JaskArtBackdrop, fallback: () -> Color): Modifier {
     var self: LayoutCoordinates? = null
     return onPlaced { self = it }.drawBehind {
         val frost = backdrop.frost
         val art = backdrop.coordinates
         val me = self
-        if (frost == null || art == null || me == null || !art.isAttached || !me.isAttached) { drawRect(fallback); return@drawBehind }
+        if (frost == null || art == null || me == null || !art.isAttached || !me.isAttached) { drawRect(fallback()); return@drawBehind }
         val at = art.localPositionOf(me, Offset.Zero)
         val b = backdrop.bleedPx
         translate(-at.x, -at.y) {

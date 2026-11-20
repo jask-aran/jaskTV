@@ -27,3 +27,7 @@ HANDOFF.md
 
 # Desktop player binaries (libmpv DLLs are ~100MB and are supplied per machine)
 desktop/libs/mpv/
+
+# Rust workspace builds (build output itself lives outside the repo)
+rust/dist/
+rust/target/

@@ -5,6 +5,11 @@
  */
 package app.opentv.ui.player
 
+import kotlinx.coroutines.flow.first
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.ui.unit.sp
+import app.opentv.ui.jaskRowEnds
+import app.opentv.ui.jaskWhiteFill
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.text.font.FontWeight
 import app.opentv.ui.jaskFocusLift
@@ -52,6 +57,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.HighQuality
@@ -189,6 +195,7 @@ fun PlayerScreen(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var displayMenuOpen by remember { mutableStateOf(false) }
+    var playOnOpen by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf(Panel.NONE) }
     var channelListVisible by remember { mutableStateOf(false) }
     var interaction by remember { mutableIntStateOf(0) }
@@ -253,6 +260,55 @@ fun PlayerScreen(
         }
     }
 
+    // A black picture: some channels are "on" and send pure black (ESPN 2 on 2026-11-20). A few seconds after it
+    // starts, look at the frame; flat every time means no picture. The channel is marked (so Live TV and Sports skip
+    // it) and, when it came from a Live TV or Sports pick, the next channel weighed for that pick plays instead.
+    // What it found goes to the channel's record (StreamHealth), and to its way to watch a game when it came from a
+    // Sports pick: a picture, a black screen, no start at all, and later, minutes watched.
+    LaunchedEffect(currentId) {
+        val id = currentId ?: return@LaunchedEffect
+        val pc = controller as? app.opentv.player.PlayerController ?: return@LaunchedEffect
+        val health = app.opentv.livetv.StreamHealth
+        val channel = graph.catalogRepository.channel(id) ?: return@LaunchedEffect
+        val way = app.opentv.ui.channels.LiveFallback.wayOf(id)
+        val name = channel.shownName
+        fun moveOn(why: String) {
+            app.opentv.ui.channels.NoPicture.mark(id)
+            val next = app.opentv.ui.channels.LiveFallback.next(id)
+            android.util.Log.i("jaskPlayer", "$why on $id; next=$next")
+            if (next != null) {
+                android.widget.Toast.makeText(context, "No picture on $name: trying another", android.widget.Toast.LENGTH_SHORT).show()
+                playChannelId(next)
+            } else android.widget.Toast.makeText(context, if (why == "flat picture") "$name is showing a black screen" else "$name isn't starting", android.widget.Toast.LENGTH_LONG).show()
+        }
+        val started = kotlinx.coroutines.withTimeoutOrNull(20_000) { controller.state.first { it is PlaybackState.Playing } }
+        if (started == null) {
+            health.bad(channel, health.NO_FRAME); way?.let { health.wayBad(it.sport, it.title, health.NO_FRAME) }
+            moveOn("no start"); return@LaunchedEffect
+        }
+        kotlinx.coroutines.delay(1_500)
+        var looked = 0
+        var picture = false
+        for (attempt in 0 until 5) {
+            when (FrameCheck.flat(pc.videoView)) { true -> looked++; false -> { picture = true; break }; null -> Unit }
+            kotlinx.coroutines.delay(800)
+        }
+        if (picture) {
+            android.util.Log.i("jaskPlayer", "picture on $id")
+            app.opentv.ui.channels.NoPicture.confirm(id)
+            health.good(channel); way?.let { health.wayGood(it.sport, it.title) }
+            // Still on it three minutes later: the strongest sign it's the right channel and it holds up.
+            val picked = app.opentv.ui.channels.LiveFallback.picked.also { app.opentv.ui.channels.LiveFallback.picked = false }
+            kotlinx.coroutines.delay(3 * 60_000)
+            health.good(channel, health.WATCHED)
+            way?.let { health.wayGood(it.sport, it.title, health.WATCHED + if (picked) health.PICKED else 0f) }
+            return@LaunchedEffect
+        }
+        if (looked < 3) { android.util.Log.i("jaskPlayer", "couldn't look at $id"); return@LaunchedEffect }
+        health.bad(channel, health.FLAT); way?.let { health.wayBad(it.sport, it.title, health.FLAT) }
+        moveOn("flat picture")
+    }
+
     fun zapBy(delta: Int) {
         if (queue.isEmpty()) return
         val cur = queue.indexOfFirst { it.id == currentId }.let { if (it < 0) 0 else it }
@@ -304,8 +360,11 @@ fun PlayerScreen(
     }
 
     // Auto-hide the bar after a few seconds — but never while paused or with a picker open.
-    LaunchedEffect(controlsVisible, interaction, state, paused, panel, displayMenuOpen) {
-        if (controlsVisible && !displayMenuOpen && !paused && panel == Panel.NONE &&
+    // The TV switches to a refresh rate that suits the video while this player is open.
+    app.opentv.ui.player.JaskFrameRateMatch(controller, key = currentId, rewind = false)
+
+    LaunchedEffect(controlsVisible, interaction, state, paused, panel, displayMenuOpen, playOnOpen) {
+        if (controlsVisible && !displayMenuOpen && !playOnOpen && !paused && panel == Panel.NONE &&
             state is PlaybackState.Playing
         ) {
             delay(CONTROLS_TIMEOUT_MILLIS)
@@ -318,7 +377,8 @@ fun PlayerScreen(
     LaunchedEffect(controlsVisible, panel) {
         if (controlsVisible) {
             delay(40)
-            runCatching { if (panel != Panel.NONE) panelFocus.requestFocus() else barFocus.requestFocus() }
+            // Stream info is a card, not a menu: focus stays on the button that opened it.
+            runCatching { when (panel) { Panel.NONE -> barFocus.requestFocus(); Panel.INFO -> Unit; else -> panelFocus.requestFocus() } }
         } else {
             runCatching { rootFocus.requestFocus() }
         }
@@ -328,7 +388,7 @@ fun PlayerScreen(
     // and only leaves the player once nothing is on screen. From immersive it's a single press out,
     // so it never traps you, but it also no longer throws you all the way to the guide just because
     // you wanted to dismiss the bar.
-    BackHandler {
+    fun handleBack() {
         when {
             channelListVisible -> channelListVisible = false
             panel != Panel.NONE -> panel = Panel.NONE
@@ -339,6 +399,10 @@ fun PlayerScreen(
             }
         }
     }
+    BackHandler { handleBack() }
+    // A remote's Back is taken in the key preview below (down consumed, action on up): with a control focused,
+    // Compose otherwise turns Back into "move focus out" to the focusable root, which ate the press and hid the ring.
+    var backArmed by remember { mutableStateOf(false) }
 
     // Number entry: once digits stop coming, jump to that channel number in the browsing list.
     LaunchedEffect(numberEntry) {
@@ -365,11 +429,16 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
             .onPreviewKeyEvent { event ->
+                // Back/Escape run the same steps as the back handler; an open menu (display size, Play on) keeps its own.
+                if (event.key == Key.Back || event.key == Key.Escape) return@onPreviewKeyEvent when {
+                    displayMenuOpen || playOnOpen -> { backArmed = false; false }
+                    event.type == KeyEventType.KeyDown -> { backArmed = true; true }
+                    event.type == KeyEventType.KeyUp && backArmed -> { backArmed = false; handleBack(); true }
+                    else -> false
+                }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 val digit = keyToDigit(event.key)
                 when {
-                    // Never swallow Back/Escape — they must reach the back handler.
-                    event.key == Key.Back || event.key == Key.Escape -> false
                     // The remote's play/pause (live pause holds when "Pause live TV" is on).
                     event.key == Key.MediaPlayPause || event.key == Key.MediaPlay || event.key == Key.MediaPause -> {
                         controller.setPlaying(when (event.key) { Key.MediaPlay -> true; Key.MediaPause -> false; else -> !controller.status.value.isPlaying })
@@ -380,8 +449,9 @@ fun PlayerScreen(
                         numberEntry = (numberEntry + digit).take(4)
                         reveal(); interaction++; true
                     }
-                    // A picker or the channel list owns the whole d-pad while it's up.
-                    channelListVisible || panel != Panel.NONE -> {
+                    // A picker, the channel list or an open menu (display size, Play on: drawn in this window, so
+                    // their keys pass through here first) owns the whole d-pad while it's up.
+                    channelListVisible || panel != Panel.NONE || displayMenuOpen || playOnOpen -> {
                         interaction++
                         false
                     }
@@ -481,9 +551,11 @@ fun PlayerScreen(
                             textAlign = TextAlign.Center,
                         )
                         Spacer(Modifier.height(24.dp))
-                        Button(onClick = { controller.retry() }) { Text(stringResource(R.string.common_try_again)) }
+                        app.opentv.ui.settings.JaskPill(stringResource(R.string.common_try_again), primary = true) { controller.retry() }
                         variants.firstOrNull { it.id != currentId }?.let { alternative ->
-                            TextButton(onClick = { tuneTo(alternative) }) { Text("Try alternative source") }
+                            // A neutral pill, not a Material TextButton (that drew in the theme's accent colour).
+                            Spacer(Modifier.height(10.dp))
+                            app.opentv.ui.settings.JaskPill("Try alternative source") { tuneTo(alternative) }
                         }
                     }
                 }
@@ -499,63 +571,75 @@ fun PlayerScreen(
             else -> ""
         }
 
-        if (!inPip) app.opentv.ui.vod.JaskTheme {
+        if (!inPip) app.opentv.ui.vod.JaskTheme { JaskPlayerOverlayHost {
+            val reading by rememberStreamReading(controller)
+            val buffering = state is PlaybackState.Buffering
             AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxSize()) {
                     JaskPlayerScrims()
-                    JaskPlayerTopBar(channelTitle, { controller.stop(); onBack() },
-                        Modifier.align(Alignment.TopCenter).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)),
+                    val top = Modifier.windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top))
+                    val bottom = Modifier.windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                    fun toggle(p: Panel) { panel = if (panel == p) Panel.NONE else p; interaction++ }
+                    // Title top-left with LIVE; clock and the quality badge top-right (design: player chrome canvas).
+                    JaskPlayerHeader(channelTitle, Modifier.align(Alignment.TopCenter).then(top)
+                            .padding(if (touch) androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 14.dp)
+                                else androidx.compose.foundation.layout.PaddingValues(start = 48.dp, end = 48.dp, top = 36.dp)),
+                        quality = reading, infoOpen = panel == Panel.INFO, onQuality = { toggle(Panel.INFO) },
+                        leading = if (touch) ({ app.opentv.ui.JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, "Back", size = 40.dp) { controller.stop(); onBack() } }) else null,
                         overline = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFE53935)))
-                                Spacer(Modifier.width(6.dp))
-                                Text("LIVE", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                            }
-                        })
-                    if (panel != Panel.NONE) OptionPanel(panel, controller, settings, tracks, variants, currentId, { tuneTo(it) }, panelFocus,
-                        Modifier.align(Alignment.BottomEnd).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
-                            .padding(end = 24.dp, bottom = 104.dp)) { panel = Panel.NONE; interaction++ }
-                    // One row of round buttons: Left/Right move along it on a remote (Up/Down change channel).
-                    Row(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
-                        .padding(horizontal = 24.dp, vertical = 22.dp).horizontalScroll(rememberScrollState()),
+                            Text("LIVE", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp,
+                                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(PlayerLiveRed).padding(horizontal = 9.dp, vertical = 3.dp))
+                        }, compact = touch) {
+                        if (touch && pipSupported) JaskPlayerTool(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pop_out)) {
+                            (context.findActivity() as? app.opentv.MainActivity)?.enterPipNow(); interaction++
+                        }
+                    }
+                    if (panel == Panel.INFO) JaskStreamInfoCard(reading, buffering,
+                        Modifier.align(Alignment.TopEnd).then(top).padding(top = if (touch) 64.dp else 150.dp, end = if (touch) 20.dp else 36.dp),
+                        source = variants.firstOrNull { it.id == currentId }?.qualityLabel?.takeIf(String::isNotBlank))
+                    if (panel == Panel.QUALITY) OptionPanel(panel, controller, settings, tracks, variants, currentId, { tuneTo(it) }, panelFocus,
+                        Modifier.align(Alignment.BottomEnd).then(bottom).padding(end = if (touch) 24.dp else 48.dp, bottom = 104.dp)) { panel = Panel.NONE; interaction++ }
+                    if (panel == Panel.TRACKS) JaskTracksMenu(controller, tracks, panelFocus,
+                        Modifier.align(Alignment.BottomEnd).then(bottom).padding(end = if (touch) 24.dp else 48.dp, bottom = 104.dp),
+                        onSubtitlesChosen = settings::setSubtitlesEnabled) { panel = Panel.NONE; interaction++ }
+                    // One row along the bottom: Left/Right move along it on a remote (Up/Down change channel).
+                    Row(Modifier.align(Alignment.BottomCenter).then(bottom).fillMaxWidth()
+                        .padding(horizontal = if (touch) 24.dp else 48.dp, vertical = if (touch) 14.dp else 36.dp)
+                        .then(if (touch) Modifier.horizontalScroll(rememberScrollState()) else Modifier.jaskRowEnds()),
                         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (queue.isNotEmpty()) JaskPlayerTool(Icons.AutoMirrored.Filled.List, stringResource(R.string.common_channels)) {
+                        JaskPlayPausePill(paused, buffering, barFocus) { controller.setPlaying(paused); interaction++ }
+                        if (controller.isSeekable) {
+                            JaskPlayerCircle(Icons.Filled.FastRewind, stringResource(R.string.player_rewind)) { controller.seekBackward(); interaction++ }
+                            JaskPlayerCircle(Icons.Filled.FastForward, stringResource(R.string.player_forward)) { controller.seekForward(); interaction++ }
+                        }
+                        if (!touch) Spacer(Modifier.weight(1f))
+                        if (queue.isNotEmpty()) JaskPlayerPill(Icons.AutoMirrored.Filled.List, stringResource(R.string.common_channels), {
                             channelListVisible = true; interaction++
-                        }
-                        if (controller.isSeekable) JaskPlayerTool(Icons.Filled.FastRewind, stringResource(R.string.player_rewind)) { controller.seekBackward(); interaction++ }
-                        Box(Modifier.jaskFocusLift(1.08f).size(60.dp).clip(CircleShape).background(Color.White).focusRequester(barFocus)
-                            .clickable { controller.setPlaying(paused); interaction++ }, contentAlignment = Alignment.Center) {
-                            Icon(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                                if (paused) stringResource(R.string.common_play) else stringResource(R.string.player_pause),
-                                tint = Color(0xFF141312), modifier = Modifier.size(32.dp))
-                            if (state is PlaybackState.Buffering) CircularProgressIndicator(Modifier.size(60.dp), color = Color(0xFF8A8A8A), strokeWidth = 3.dp)
-                        }
-                        if (controller.isSeekable) JaskPlayerTool(Icons.Filled.FastForward, stringResource(R.string.player_forward)) { controller.seekForward(); interaction++ }
-                        JaskPlayerTool(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), active = panel == Panel.SUBTITLES) {
-                            panel = if (panel == Panel.SUBTITLES) Panel.NONE else Panel.SUBTITLES; interaction++
-                        }
-                        JaskPlayerTool(Icons.Filled.Audiotrack, stringResource(R.string.player_audio), active = panel == Panel.AUDIO) {
-                            panel = if (panel == Panel.AUDIO) Panel.NONE else Panel.AUDIO; interaction++
-                        }
-                        if (variants.size > 1) JaskPlayerTool(Icons.Filled.HighQuality, stringResource(R.string.player_quality), active = panel == Panel.QUALITY) {
-                            panel = if (panel == Panel.QUALITY) Panel.NONE else Panel.QUALITY; interaction++
+                        })
+                        JaskPlayerPill(Icons.Filled.Subtitles, "Audio & subtitles", { toggle(Panel.TRACKS) }, active = panel == Panel.TRACKS)
+                        if (variants.size > 1) JaskPlayerCircle(Icons.Filled.HighQuality, stringResource(R.string.player_quality)) { toggle(Panel.QUALITY) }
+                        // Up changes channel here, so stream info gets its own button on a remote.
+                        if (!touch) JaskPlayerCircle(Icons.Filled.Info, "Stream info") { toggle(Panel.INFO) }
+                        // Play this channel on another device; this one stops (one-stream providers).
+                        app.opentv.ui.JaskPlayOn(null, onSent = { controller.stop(); onBack() }, onOpenChange = { playOnOpen = it }) { open ->
+                            JaskPlayerCircle(Icons.Filled.Cast, "Play on another device") { open(); interaction++ }
                         }
                         PlayerDisplayControls(settings, onMenuVisibilityChanged = { displayMenuOpen = it }) { interaction++ }
                         val recordingThis = activeRecordings.any { it.channelId == currentId }
                         Box {
-                            JaskPlayerTool(Icons.Filled.FiberManualRecord,
-                                if (recordingThis) stringResource(R.string.common_stop) else stringResource(R.string.player_record), active = recordingThis) { toggleRecord() }
+                            JaskPlayerCircle(Icons.Filled.FiberManualRecord,
+                                if (recordingThis) stringResource(R.string.common_stop) else stringResource(R.string.player_record)) { toggleRecord() }
                             // A red dot marks the record button, solid while this channel records.
-                            Box(Modifier.align(Alignment.TopEnd).size(12.dp).clip(CircleShape)
-                                .background(if (recordingThis) Color(0xFFE53935) else Color(0xFFE53935).copy(alpha = 0.45f)))
+                            Box(Modifier.align(Alignment.TopEnd).padding(5.dp).size(10.dp).clip(CircleShape)
+                                .background(if (recordingThis) PlayerLiveRed else PlayerLiveRed.copy(alpha = 0.45f)))
                         }
-                        if (pipSupported) JaskPlayerTool(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pop_out)) {
+                        if (!touch && pipSupported) JaskPlayerCircle(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pop_out)) {
                             (context.findActivity() as? app.opentv.MainActivity)?.enterPipNow(); interaction++
                         }
                     }
                 }
             }
-        }
+        } }
 
         // Left-side transparent channel list — d-pad Left opens it, pick a channel to switch.
         if (!inPip) AnimatedVisibility(
@@ -671,7 +755,7 @@ private fun ChannelListRow(
     }
 }
 
-private enum class Panel { NONE, SUBTITLES, AUDIO, QUALITY }
+private enum class Panel { NONE, SUBTITLES, AUDIO, QUALITY, TRACKS, INFO }
 
 @Composable
 private fun OptionPanel(
@@ -694,14 +778,14 @@ private fun OptionPanel(
         Panel.QUALITY -> variants.map { v ->
             Option(v.qualityLabel.ifEmpty { standardLabel }, v.id == currentId) { onTune(v); onDone() }
         }
-        Panel.NONE -> emptyList()
+        Panel.NONE, Panel.TRACKS, Panel.INFO -> emptyList()
     }
 
     val title = when (panel) {
         Panel.SUBTITLES -> stringResource(R.string.player_subtitles)
         Panel.AUDIO -> stringResource(R.string.player_audio)
         Panel.QUALITY -> stringResource(R.string.player_quality)
-        Panel.NONE -> ""
+        Panel.NONE, Panel.TRACKS, Panel.INFO -> ""
     }
 
     JaskPlayerPanel(title, options.map { Triple(it.label, it.selected, it.onClick) }, stringResource(R.string.player_none_available), firstFocus, modifier)

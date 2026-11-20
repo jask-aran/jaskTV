@@ -5,6 +5,8 @@
  */
 package app.opentv.ui.settings
 
+import app.opentv.ui.jaskFocusLift
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.material.icons.outlined.SystemUpdate
 
 import app.opentv.core.get
@@ -31,12 +33,22 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import app.opentv.ui.jaskWavesBackground
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.CalendarViewDay
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Edit
@@ -75,7 +87,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.opentv.R
 import app.opentv.core.AppSettings
-import app.opentv.catalogue.CatalogueSort
 import app.opentv.ui.JaskGlassSwitch
 import app.opentv.ui.JaskSheet
 import app.opentv.ui.JaskSurfaceHost
@@ -84,7 +95,8 @@ import app.opentv.ui.VodViewModel
 import app.opentv.ui.vod.JaskTheme
 import java.util.Locale
 
-private val Card = Color(0xFF1B1A19)
+// Glass over the coloured page.
+private val Card = Color(0xC7141312)
 private val Rule = Color.White.copy(alpha = .07f)
 internal val JaskDim = Color(0xFFA6A29E)
 internal val JaskInk = Color(0xFFF4F1ED)
@@ -105,6 +117,8 @@ fun JaskSettingsScreen(
     onOpenParental: () -> Unit,
     onBack: () -> Unit,
     onOpenChannels: () -> Unit = {},
+    onAddSource: () -> Unit = onOpenProviders,
+    onEditSource: (app.opentv.data.model.Source) -> Unit = { onOpenProviders() },
 ) = JaskTheme {
     val context = LocalContext.current
     val settings = remember { AppSettings.get(context) }
@@ -116,6 +130,7 @@ fun JaskSettingsScreen(
     val options by vod.movieOptions.collectAsState()
     val languages by vod.catalogueLanguages.collectAsState()
     val glass by settings.glassMode.collectAsState()
+    val matchFps by settings.matchFrameRate.collectAsState()
     val uiScale by settings.uiScale.collectAsState()
     val wide = app.opentv.ui.LocalLayoutClass.current.isWide
     val live by settings.liveEnabled.collectAsState()
@@ -128,24 +143,25 @@ fun JaskSettingsScreen(
     val omdb by settings.omdbApiKey.collectAsState()
     val addons by settings.stremioAddons.collectAsState()
     val language by settings.languageTag.collectAsState()
+    val torrServer by settings.torrServerUrl.collectAsState()
+    val prowlarrUrl by settings.prowlarrUrl.collectAsState()
+    val prowlarrKey by settings.prowlarrKey.collectAsState()
     // Which sheet is open: "tmdb", "omdb", "language", or null.
     var sheet by remember { mutableStateOf<String?>(null) }
     val active = people.firstOrNull { it.id == activeId }
     var renaming by remember { mutableStateOf(false) }
 
-    JaskSurfaceHost(Modifier.fillMaxSize().background(Color(0xFF0E0D0D)), background = {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            item {
+    @Composable fun header() {
                 Row(Modifier.widthIn(max = 720.dp).fillMaxWidth().statusBarsPadding().padding(top = 8.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     app.opentv.ui.JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.common_back), size = 44.dp, onClick = onBack)
                     Spacer(Modifier.width(14.dp))
                     Text(stringResource(R.string.nav_settings), color = JaskInk, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 }
-            }
-            item { AccountGroup() }
-            item {
+            
+    }
+    @Composable fun account() {
+ AccountGroup() 
                 Group(null) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Avatar(active?.name ?: "?", 60.dp)
@@ -164,14 +180,14 @@ fun JaskSettingsScreen(
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         people.forEach { p ->
-                            Column(Modifier.clip(RoundedCornerShape(10.dp)).clickable { profiles.select(p.id) }.padding(4.dp),
+                            Column(Modifier.jaskFocusLift(1.08f).clip(RoundedCornerShape(10.dp)).clickable { profiles.select(p.id) }.padding(4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally) {
                                 Avatar(p.name, 44.dp, selected = p.id == activeId)
                                 Text(p.name, color = if (p.id == activeId) JaskInk else JaskDim, style = MaterialTheme.typography.labelMedium,
                                     maxLines = 1, modifier = Modifier.widthIn(max = 64.dp).padding(top = 4.dp))
                             }
                         }
-                        Column(Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onOpenProfiles).padding(4.dp),
+                        Column(Modifier.jaskFocusLift(1.08f).clip(RoundedCornerShape(10.dp)).clickable(onClick = onOpenProfiles).padding(4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             Box(Modifier.size(44.dp).clip(CircleShape).border(1.dp, Color.White.copy(alpha = .3f), CircleShape), contentAlignment = Alignment.Center) {
                                 Icon(Icons.Outlined.Add, null, tint = JaskInk)
@@ -181,8 +197,17 @@ fun JaskSettingsScreen(
                         }
                     }
                 }
-            }
-            item {
+            
+    }
+    @Composable fun browsing() {
+                Group(stringResource(R.string.settings_section_content)) {
+                    Toggle(stringResource(R.string.nav_live_tv), stringResource(R.string.settings_content_live_subtitle), live, settings::setLiveEnabled)
+                    JaskDivider()
+                    Toggle(stringResource(R.string.nav_movies), stringResource(R.string.settings_content_movies_subtitle), movies, settings::setMoviesEnabled)
+                    JaskDivider()
+                    Toggle(stringResource(R.string.nav_shows), stringResource(R.string.settings_content_series_subtitle), shows, settings::setSeriesEnabled)
+                }
+            
                 Group(stringResource(R.string.jask_browse)) {
                     Toggle(stringResource(R.string.jask_show_unavailable), stringResource(R.string.jask_show_unavailable_hint), everything) { vod.setShowUnavailable(it) }
                     if (sources.size > 1) {
@@ -201,18 +226,32 @@ fun JaskSettingsScreen(
                         }))
                     }
                     Toggle(stringResource(R.string.catalogue_unknown), null, options.includeUnknown) { vod.applyMovieOptions(options.copy(includeUnknown = it)) }
-                    JaskDivider()
-                    Label(stringResource(R.string.jask_settings_all_movies_order))
-                    Chips(CatalogueSort.entries.map { it to stringResource(when (it) {
-                        CatalogueSort.TITLE -> R.string.catalogue_sort_title
-                        CatalogueSort.YEAR -> R.string.catalogue_sort_year
-                        CatalogueSort.RATING -> R.string.catalogue_sort_rating
-                        CatalogueSort.ADDED -> R.string.catalogue_sort_added
-                    }) }, { it == options.sort }) { vod.applyMovieOptions(options.copy(sort = it)) }
+
                     Spacer(Modifier.height(6.dp))
                 }
-            }
-            item {
+            
+    }
+    @Composable fun playback() {
+                Group(stringResource(R.string.settings_section_playback)) {
+                    Toggle(stringResource(R.string.settings_subtitles_title), stringResource(R.string.settings_subtitles_subtitle), subtitles, settings::setSubtitlesEnabled)
+                    JaskDivider()
+                    Toggle(stringResource(R.string.settings_resume_title), stringResource(R.string.settings_resume_subtitle), resume, settings::setResumeLastChannel)
+                    JaskDivider()
+                    Toggle(stringResource(R.string.jask_settings_live_pause), stringResource(R.string.jask_settings_live_pause_hint), livePause, settings::setLivePauseEnabled)
+                    JaskDivider()
+                    if (wide) {
+                        JaskDivider()
+                        Toggle("Match frame rate", "Switch the TV to the video's frame rate while it plays. Smoother sport and films; the screen may go black for a moment as it switches.",
+                            matchFps, settings::setMatchFrameRate)
+                    }
+                    JaskDivider()
+                    SleepTimerRows()
+                }
+            
+                Group(stringResource(R.string.settings_recording_title)) { RecordingRows(settings) }
+            
+    }
+    @Composable fun appearance() {
                 Group(stringResource(R.string.jask_settings_appearance)) {
                     Label(stringResource(R.string.jask_settings_glass))
                     Chips(listOf("auto" to stringResource(R.string.jask_glass_auto), "live" to stringResource(R.string.jask_glass_live),
@@ -230,31 +269,9 @@ fun JaskSettingsScreen(
                         Spacer(Modifier.height(6.dp))
                     }
                 }
-            }
-            item {
-                Group(stringResource(R.string.settings_section_content)) {
-                    Toggle(stringResource(R.string.nav_live_tv), stringResource(R.string.settings_content_live_subtitle), live, settings::setLiveEnabled)
-                    JaskDivider()
-                    Toggle(stringResource(R.string.nav_movies), stringResource(R.string.settings_content_movies_subtitle), movies, settings::setMoviesEnabled)
-                    JaskDivider()
-                    Toggle(stringResource(R.string.nav_shows), stringResource(R.string.settings_content_series_subtitle), shows, settings::setSeriesEnabled)
-                }
-            }
-            item {
-                Group(stringResource(R.string.settings_section_playback)) {
-                    Toggle(stringResource(R.string.settings_subtitles_title), stringResource(R.string.settings_subtitles_subtitle), subtitles, settings::setSubtitlesEnabled)
-                    JaskDivider()
-                    Toggle(stringResource(R.string.settings_resume_title), stringResource(R.string.settings_resume_subtitle), resume, settings::setResumeLastChannel)
-                    JaskDivider()
-                    Toggle(stringResource(R.string.jask_settings_live_pause), stringResource(R.string.jask_settings_live_pause_hint), livePause, settings::setLivePauseEnabled)
-                    JaskDivider()
-                    SleepTimerRows()
-                }
-            }
-            item {
-                Group(stringResource(R.string.settings_recording_title)) { RecordingRows(settings) }
-            }
-            item {
+            
+    }
+    @Composable fun sourceLinks() {
                 Group(stringResource(R.string.jask_settings_sources_guide)) {
                     Link(Icons.Outlined.Dns, stringResource(R.string.settings_providers_title),
                         pluralLabel(sources.size, sources.count { it.enabled }), onOpenProviders)
@@ -263,8 +280,9 @@ fun JaskSettingsScreen(
                     JaskDivider()
                     Link(Icons.Outlined.LiveTv, stringResource(R.string.common_channels), stringResource(R.string.settings_channels_subtitle), onOpenChannels)
                 }
-            }
-            item {
+            
+    }
+    @Composable fun services() {
                 Group(stringResource(R.string.jask_settings_services)) {
                     Link(Icons.Outlined.Movie, stringResource(R.string.jask_tmdb_title),
                         stringResource(if (tmdb.isBlank()) R.string.jask_tmdb_off else R.string.jask_tmdb_on)) { sheet = "tmdb" }
@@ -272,17 +290,94 @@ fun JaskSettingsScreen(
                     Link(Icons.Outlined.StarOutline, stringResource(R.string.jask_omdb_title),
                         stringResource(if (omdb.isBlank()) R.string.jask_omdb_off else R.string.jask_omdb_on)) { sheet = "omdb" }
                     JaskDivider()
+                    Link(Icons.Outlined.Dns, "TorrServer", torrServer.ifBlank { "Streams torrents · Not set" }) { sheet = "torrserver" }
+                    JaskDivider()
+                    Link(Icons.Outlined.Language, "Prowlarr", if (prowlarrUrl.isBlank()) "Finds torrents across your indexers · Not set"
+                        else if (prowlarrKey.isBlank()) "$prowlarrUrl · API key missing" else prowlarrUrl) { sheet = "prowlarr" }
+                    if (prowlarrUrl.isNotBlank()) { JaskDivider(); Link(Icons.Outlined.Lock, "Prowlarr API key", if (prowlarrKey.isBlank()) "Not set" else "Set") { sheet = "prowlarrKey" } }
+                    JaskDivider()
                     Link(Icons.Outlined.Extension, stringResource(R.string.settings_addons_title),
                         if (addons.isEmpty()) stringResource(R.string.settings_addons_subtitle) else "${addons.size} installed", onOpenAddons)
                 }
-            }
-            item {
+            
+    }
+    @Composable fun parentalLink() {
                 Group(stringResource(R.string.jask_settings_more)) {
                     Link(Icons.Outlined.Lock, stringResource(R.string.settings_parental_title), stringResource(R.string.settings_parental_subtitle), onOpenParental)
                 }
+            
+    }
+    @Composable fun about() {
+ AppVersionGroup() 
+    }
+
+    // The page takes the colour of what was last featured, like the rest of the app (black when nothing has been).
+    val ambient = remember { app.opentv.ui.JaskAmbient().also { it.art = app.opentv.ui.JaskLastArt } }
+    JaskSurfaceHost(Modifier.fillMaxSize().background(Color.Black), background = {
+        Box(Modifier.matchParentSize().then(Modifier.fillMaxSize()).jaskWavesBackground(ambient))
+        if (!wide) {
+            // Phone: one scrolling column; the longer lists (sources, guides, channels, parental) open their own pages.
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                item { header() }
+                item { account() }
+                item { browsing() }
+                item { appearance() }
+                item { playback() }
+                item { sourceLinks() }
+                item { services() }
+                item { parentalLink() }
+                item { about() }
+                item { Spacer(Modifier.navigationBarsPadding()) }
             }
-            item { AppVersionGroup() }
-            item { Spacer(Modifier.navigationBarsPadding()) }
+        } else {
+            // TV, tablet and desktop: sections on the left, the chosen one on the right. Every section is shown in
+            // place, sources, guides, channels and parental controls included; only forms open over it.
+            var section by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsSection.ACCOUNT) }
+            // Back inside a section returns to the list (TV convention); Back on the list leaves Settings.
+            val listFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+            var inPane by remember { mutableStateOf(false) }
+            androidx.activity.compose.BackHandler(inPane) { runCatching { listFocus.requestFocus() } }
+            Row(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 28.dp, end = 12.dp, top = 12.dp)) {
+                Column(Modifier.width(260.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(end = 20.dp, bottom = 24.dp)) {
+                    Row(Modifier.padding(bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        app.opentv.ui.JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.common_back), size = 44.dp, onClick = onBack)
+                        Spacer(Modifier.width(14.dp))
+                        Text(stringResource(R.string.nav_settings), color = JaskInk, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    }
+                    SettingsSection.entries.forEach { s ->
+                        SectionRow(s, s == section, if (s == section) Modifier.focusRequester(listFocus) else Modifier) { section = s }
+                    }
+                }
+                // Back is caught here, before the section's own page sees it (some pages handle Back themselves).
+                Box(Modifier.weight(1f).fillMaxSize().onFocusChanged { inPane = it.hasFocus }.onPreviewKeyEvent { e ->
+                    val back = e.key == androidx.compose.ui.input.key.Key.Back || e.key == androidx.compose.ui.input.key.Key.Escape
+                    if (back && inPane && e.type == androidx.compose.ui.input.key.KeyEventType.KeyUp) { runCatching { listFocus.requestFocus() }; true }
+                    else back && inPane
+                }) {
+                    androidx.compose.animation.Crossfade(section, label = "section") { shown ->
+                        when (shown) {
+                            SettingsSection.PLAYLISTS -> Embedded { JaskProvidersPage(onAddSource, onEditSource, onBack = {}) }
+                            SettingsSection.GUIDE -> Embedded { JaskGuidesPage(onBack = {}) }
+                            SettingsSection.CHANNELS -> Embedded { JaskChannelsPage(onBack = {}) }
+                            SettingsSection.PARENTAL -> Embedded { JaskParentalPage(onBack = {}) }
+                            else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(end = 16.dp, bottom = 32.dp)) {
+                                Text(shown.label, color = JaskInk, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(start = 6.dp, top = 6.dp, bottom = 16.dp))
+                                when (shown) {
+                                    SettingsSection.ACCOUNT -> account()
+                                    SettingsSection.BROWSING -> browsing()
+                                    SettingsSection.PLAYBACK -> playback()
+                                    SettingsSection.APPEARANCE -> appearance()
+                                    SettingsSection.SERVICES -> services()
+                                    SettingsSection.ABOUT -> about()
+                                    else -> Unit
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }) {
         app.opentv.ui.JaskBarScrim(Modifier.align(Alignment.TopCenter), top = true)
@@ -291,6 +386,12 @@ fun JaskSettingsScreen(
                 { settings.setTmdbApiKey(it) }) { sheet = null }
             "omdb" -> KeySheet(stringResource(R.string.jask_omdb_title), stringResource(R.string.jask_omdb_note), omdb,
                 { settings.setOmdbApiKey(it) }) { sheet = null }
+            "torrserver" -> KeySheet("TorrServer", "Its address on your network, e.g. http://192.168.1.20:8090. Torrents found by Prowlarr or add-ons play through it.",
+                torrServer, { settings.setTorrServerUrl(it) }) { sheet = null }
+            "prowlarr" -> KeySheet("Prowlarr", "Its address on your network, e.g. http://192.168.1.20:9696.", prowlarrUrl,
+                { settings.setProwlarrUrl(it) }) { sheet = null }
+            "prowlarrKey" -> KeySheet("Prowlarr API key", "In Prowlarr: Settings → General → API Key.", prowlarrKey,
+                { settings.setProwlarrKey(it) }) { sheet = null }
             "language" -> JaskSheet({ sheet = null }) {
                 LazyColumn(Modifier.heightIn(max = 520.dp)) {
                     item { LanguageRow(stringResource(R.string.settings_language_system), language.isBlank()) { sheet = null; changeLanguage(context, settings, "") } }
@@ -309,8 +410,8 @@ fun JaskSettingsScreen(
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(name, { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { renaming = false }) { Text(stringResource(R.string.common_cancel)) }
-                        TextButton(onClick = { profiles.rename(active.id, name); renaming = false }) { Text(stringResource(R.string.common_save)) }
+                        TextButton(onClick = { renaming = false }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_cancel)) }
+                        TextButton(onClick = { profiles.rename(active.id, name); renaming = false }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_save)) }
                     }
                 }
             }
@@ -344,7 +445,7 @@ internal fun Label(text: String) = Text(text, color = JaskDim, style = MaterialT
 
 @Composable
 internal fun Toggle(title: String, subtitle: String?, on: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable { onChange(!on) }.padding(horizontal = 16.dp, vertical = 13.dp),
+    Row(Modifier.jaskFocusLift(1.02f).fillMaxWidth().clickable { onChange(!on) }.padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, color = JaskInk, style = MaterialTheme.typography.bodyLarge)
@@ -357,7 +458,7 @@ internal fun Toggle(title: String, subtitle: String?, on: Boolean, onChange: (Bo
 
 @Composable
 internal fun Link(icon: ImageVector, title: String, subtitle: String?, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+    Row(Modifier.jaskFocusLift(1.02f).fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(Color.White.copy(alpha = .08f)), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = JaskInk, modifier = Modifier.size(19.dp))
@@ -377,8 +478,8 @@ internal fun <T> Chips(items: List<Pair<T, String>>, selected: (T) -> Boolean, o
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items.forEach { (value, label) ->
             val on = selected(value)
-            Text(label, color = if (on) Color(0xFF141312) else JaskInk, style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) JaskInk else Color.White.copy(alpha = .08f))
+            Text(label, color = if (on) JaskInk else JaskDim, style = MaterialTheme.typography.labelLarge, fontWeight = if (on) FontWeight.SemiBold else null,
+                modifier = Modifier.jaskFocusLift(1.06f).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = if (on) .26f else .07f))
                     .clickable { onPick(value) }.padding(horizontal = 14.dp, vertical = 8.dp))
         }
     }
@@ -386,9 +487,8 @@ internal fun <T> Chips(items: List<Pair<T, String>>, selected: (T) -> Boolean, o
 
 @Composable
 private fun Avatar(name: String, size: androidx.compose.ui.unit.Dp, selected: Boolean = true) {
-    // A stable colour per name, so each profile is recognisable at a glance.
-    val hue = (name.lowercase().hashCode().toLong() and 0xffff).toFloat() % 360f
-    val colour = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, .55f, .78f)))
+    // Neutral, like the account's initial (JaskAccountSection's Initial): the letter tells profiles apart, not a hue.
+    val colour = Color(0xFF3A3632)
     Box(Modifier.size(size).clip(CircleShape).background(if (selected) colour else colour.copy(alpha = .45f))
         .then(if (selected) Modifier.border(2.dp, Color.White.copy(alpha = .85f), CircleShape) else Modifier),
         contentAlignment = Alignment.Center) {
@@ -399,7 +499,7 @@ private fun Avatar(name: String, size: androidx.compose.ui.unit.Dp, selected: Bo
 
 @Composable
 private fun LanguageRow(name: String, on: Boolean, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.jaskFocusLift(1.02f).fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(name, color = JaskInk, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         if (on) Icon(Icons.Filled.Check, null, tint = JaskInk)
     }
@@ -418,10 +518,10 @@ internal fun KeySheet(title: String, note: String, saved: String, onSave: (Strin
             OutlinedTextField(field, { field = it.trim() }, singleLine = true, label = { Text(stringResource(R.string.jask_key_label)) },
                 visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                if (saved.isNotBlank()) TextButton(onClick = { onSave(""); onDismiss() }) { Text(stringResource(R.string.jask_key_remove)) }
+                if (saved.isNotBlank()) TextButton(onClick = { onSave(""); onDismiss() }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.jask_key_remove)) }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
-                TextButton(onClick = { onSave(field); onDismiss() }, enabled = field.isNotBlank()) { Text(stringResource(R.string.common_save)) }
+                TextButton(onClick = onDismiss, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(onClick = { onSave(field); onDismiss() }, enabled = field.isNotBlank(), modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_save)) }
             }
         }
     }
@@ -453,3 +553,42 @@ private fun AppVersionGroup() {
         }
     }
 }
+
+
+/** The settings sections, in the order the wide layout lists them. */
+internal enum class SettingsSection(val label: String, val icon: ImageVector) {
+    ACCOUNT("Account and profiles", Icons.Outlined.AccountCircle),
+    BROWSING("Movies and Shows", Icons.Outlined.Movie),
+    PLAYBACK("Playback and recording", Icons.Outlined.PlayCircle),
+    APPEARANCE("Appearance", Icons.Outlined.Palette),
+    PLAYLISTS("Playlists", Icons.Outlined.Dns),
+    GUIDE("TV guide", Icons.Outlined.CalendarViewDay),
+    CHANNELS("Channels", Icons.Outlined.LiveTv),
+    PARENTAL("Parental controls", Icons.Outlined.Lock),
+    SERVICES("Services and add-ons", Icons.Outlined.Extension),
+    ABOUT("About", Icons.Outlined.Info),
+}
+
+/** A section in the wide layout's list. On TV, moving onto it shows it (as Android TV settings do); clicking also does. */
+@Composable
+private fun SectionRow(section: SettingsSection, selected: Boolean, modifier: Modifier = Modifier, onSelect: () -> Unit) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    androidx.compose.runtime.LaunchedEffect(focused) { if (focused) onSelect() }
+    Row(modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(12.dp))
+        .background(if (selected) Color.White.copy(alpha = .1f) else Color.Transparent)
+        .clickable(interactionSource = interaction, indication = app.opentv.ui.JaskIndication, onClick = onSelect).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Icon(section.icon, null, tint = if (selected || focused) JaskInk else JaskDim, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(section.label, color = if (selected || focused) JaskInk else JaskDim, style = MaterialTheme.typography.bodyLarge,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** A settings page shown inside the wide layout's right side: no Back, no background of its own. */
+internal val LocalJaskSettingsEmbedded = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+@Composable
+private fun Embedded(content: @Composable () -> Unit) =
+    androidx.compose.runtime.CompositionLocalProvider(LocalJaskSettingsEmbedded provides true, content = content)

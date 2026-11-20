@@ -48,9 +48,19 @@ class SportsSchedule(context: Context) {
                 session.session == "Sprint qualifying" -> listOf("sprint qualifying", "sprint shootout")
                 else -> listOf(session.session.lowercase())
             }
+            // The schedule gives no end: a session's usual length plus a little for delays (more where red flags run long).
+            // Its 3-hour search window kept a 1-hour practice "live" for two hours after it ended.
+            val minutes = when {
+                session.session.startsWith("Practice") -> 70
+                session.session.startsWith("Sprint", ignoreCase = true) -> 60
+                session.session.startsWith("Quali", ignoreCase = true) -> 80
+                else -> 150
+            }
+            val end = session.scheduledEndUtcMillis ?: (session.startUtcMillis + minutes * 60_000L)
             SportEvent(session.id, "f1", "Formula 1", "${session.grandPrix} · ${session.session}", emptyList(),
-                session.startUtcMillis, session.scheduledEndUtcMillis, live = session.startUtcMillis <= now && now < session.searchWindowEnd,
-                finished = false, broadcasters = emptyList(), wordGroups = listOf(listOf(place, session.grandPrix), words),
+                session.startUtcMillis, end, live = session.startUtcMillis <= now && now < end,
+                // Over once past its end: the timeline then ticks it off and marks the following session Next.
+                finished = now >= end, broadcasters = emptyList(), wordGroups = listOf(listOf(place, session.grandPrix), words),
                 leagueLogo = "https://a.espncdn.com/i/teamlogos/leagues/500/f1.png",
                 meeting = "f1:" + session.grandPrix + ":" + Instant.ofEpochMilli(session.startUtcMillis).atZone(ZoneOffset.UTC).year,
                 session = session.session)

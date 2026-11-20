@@ -3,13 +3,13 @@ credentials = "1.5.0"
 googleid = "1.1.1"
 zxing = "3.5.3"
 codeScanner = "16.1.0"
-agp = "8.7.3"
+agp = "8.13.2"
 kotlin = "2.0.21"
 ksp = "2.0.21-1.0.28"
 coreKtx = "1.13.1"
 lifecycle = "2.8.7"
 activityCompose = "1.9.3"
-composeBom = "2024.11.00"
+composeBom = "2026.06.01"
 composeMultiplatform = "1.7.3"
 jna = "5.15.0"
 tvCompose = "1.0.0"
@@ -26,10 +26,6 @@ documentfile = "1.0.1"
 coil = "2.7.0"
 coil3 = "3.0.4"
 navigation = "2.8.4"
-junit = "4.13.2"
-truth = "1.4.4"
-robolectric = "4.13"
-androidxTestExt = "1.2.1"
 
 [libraries]
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
@@ -71,7 +67,6 @@ media3-datasource-okhttp = { group = "androidx.media3", name = "media3-datasourc
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
-room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
 room-paging = { group = "androidx.room", name = "room-paging", version.ref = "room" }
 sqlite-bundled = { group = "androidx.sqlite", name = "sqlite-bundled", version.ref = "sqlite" }
 androidx-paging-common = { group = "androidx.paging", name = "paging-common", version.ref = "paging" }
@@ -83,7 +78,6 @@ okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor",
 
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
-kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 
 androidx-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
@@ -96,10 +90,6 @@ coil3-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp
 # QR encoding for phone pairing. The core artifact is pure Java with no Android
 # dependency, so the bitmap rendering stays under our control.
 
-junit = { group = "junit", name = "junit", version.ref = "junit" }
-truth = { group = "com.google.truth", name = "truth", version.ref = "truth" }
-robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
-androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExt" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

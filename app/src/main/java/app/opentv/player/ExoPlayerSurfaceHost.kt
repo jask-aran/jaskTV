@@ -49,6 +49,7 @@ internal class ExoPlayerSurfaceHost(
             },
             update = { view ->
                 view.player = controller.player
+                if (!transparent) controller.videoView = view.videoSurfaceView
                 view.resizeMode = scale.toResizeMode()
             },
         )

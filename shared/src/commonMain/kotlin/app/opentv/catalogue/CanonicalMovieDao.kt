@@ -56,6 +56,18 @@ abstract class CanonicalMovieDao {
     """)
     abstract fun search(sourceId: Long?, query: String, languages: String = "", includeUnknown: Boolean = true): Flow<List<CanonicalMovieCard>>
 
+    /**
+     * Provider movies named like [query] that have no confident TMDB match yet (not looked up, ambiguous, or not
+     * found): without this, search could only find matched films, and most of a big catalogue isn't matched yet.
+     */
+    @Query("""SELECT m.* FROM movies m LEFT JOIN movie_identity_matches l ON l.sourceId = m.sourceId AND l.streamId = m.streamId
+        WHERE instr(lower(m.name), lower(:query)) > 0
+          AND EXISTS (SELECT 1 FROM sources provider WHERE provider.id = m.sourceId AND provider.enabled = 1)
+          AND (:sourceId IS NULL OR m.sourceId = :sourceId)
+          AND NOT (l.tmdbId IS NOT NULL AND (l.manual = 1 OR (l.confidence >= 0.95 AND l.evidence = m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, ''))))
+        ORDER BY m.name LIMIT :limit""")
+    abstract fun searchUnmatched(sourceId: Long?, query: String, limit: Int = 120): Flow<List<Movie>>
+
     @Query("""
         SELECT c.*,
             (SELECT MIN(m.id) FROM movie_identity_matches l JOIN movies m ON m.sourceId = l.sourceId AND m.streamId = l.streamId
@@ -142,6 +154,21 @@ abstract class CanonicalMovieDao {
         ORDER BY m.id LIMIT :limit""")
     abstract suspend fun pending(limit: Int): List<Movie>
 
+    /** [pending], best order for matching: titles the provider gave a TMDB id first (one exact request), then newest. */
+    @Query("""SELECT m.* FROM movies m LEFT JOIN movie_identity_matches l
+        ON l.sourceId = m.sourceId AND l.streamId = m.streamId
+        WHERE (l.sourceId IS NULL OR (l.manual = 0 AND l.evidence != m.name || char(31) || IFNULL(m.year, '') || char(31) || IFNULL(m.tmdbId, '')))
+        AND EXISTS (SELECT 1 FROM sources provider WHERE provider.id = m.sourceId AND provider.enabled = 1)
+                  AND (NOT EXISTS (SELECT 1 FROM movie_inventory_snapshots snap WHERE snap.sourceId = m.sourceId)
+                    OR EXISTS (SELECT 1 FROM movie_inventory_snapshots snap JOIN movie_inventory_assets present
+                        ON present.sourceId = snap.sourceId AND present.generation = snap.generation
+                        WHERE snap.sourceId = m.sourceId AND present.streamId = m.streamId))
+        ORDER BY (m.tmdbId IS NOT NULL AND trim(m.tmdbId) != '') DESC, m.addedMillis DESC, m.id LIMIT :limit""")
+    abstract suspend fun pendingByPriority(limit: Int): List<Movie>
+
+    @Query("SELECT * FROM movies WHERE id IN (:ids)")
+    abstract suspend fun moviesByIds(ids: List<Long>): List<Movie>
+
     /** Ranked TMDB ids that are available locally (any enabled, present, confidently matched version). */
     @Query("""
         SELECT * FROM (SELECT c.*,
@@ -184,6 +211,41 @@ abstract class CanonicalMovieDao {
     abstract suspend fun byEvidence(evidence: String): MovieIdentityMatch?
 
     @Upsert abstract suspend fun stageInventory(assets: List<MovieInventoryAsset>)
+
+    @Query("SELECT generation FROM movie_inventory_snapshots WHERE sourceId = :sourceId")
+    abstract suspend fun activeGeneration(sourceId: Long): String?
+
+    @Query("SELECT streamId FROM movie_inventory_assets WHERE sourceId = :sourceId AND generation = :generation")
+    abstract suspend fun inventoryIds(sourceId: Long, generation: String): List<String>
+
+    @Query("DELETE FROM movie_inventory_assets WHERE sourceId = :sourceId AND generation = :generation AND streamId IN (:streamIds)")
+    abstract suspend fun removeInventory(sourceId: Long, generation: String, streamIds: List<String>)
+
+    /** Only what changed: [changed] films added to the active snapshot, [removed] taken out (none yet: nothing to do). */
+    @Transaction
+    open suspend fun changeInventory(sourceId: Long, changed: Set<String>, removed: List<String>) {
+        val generation = activeGeneration(sourceId) ?: return
+        changed.chunked(500).forEach { ids -> stageInventory(ids.map { MovieInventoryAsset(sourceId, generation, it) }) }
+        removed.chunked(500).forEach { removeInventory(sourceId, generation, it) }
+    }
+
+    /**
+     * The active snapshot made to hold exactly [present], changing only the difference (a refresh where a few films
+     * came and went writes a few rows, not all of them). No snapshot yet: a new one with everything.
+     */
+    @Transaction
+    open suspend fun syncInventory(sourceId: Long, present: Set<String>) {
+        val generation = activeGeneration(sourceId)
+        if (generation == null) {
+            val fresh = java.util.UUID.randomUUID().toString()
+            present.chunked(500).forEach { ids -> stageInventory(ids.map { MovieInventoryAsset(sourceId, fresh, it) }) }
+            activateSnapshot(sourceId, fresh)
+            return
+        }
+        val held = inventoryIds(sourceId, generation).toHashSet()
+        present.filter { it !in held }.chunked(500).forEach { ids -> stageInventory(ids.map { MovieInventoryAsset(sourceId, generation, it) }) }
+        held.filter { it !in present }.chunked(500).forEach { removeInventory(sourceId, generation, it) }
+    }
     @Upsert protected abstract suspend fun putSnapshot(snapshot: MovieInventorySnapshot)
     @Query("DELETE FROM movie_inventory_assets WHERE sourceId = :sourceId AND generation != :generation")
     protected abstract suspend fun pruneSnapshots(sourceId: Long, generation: String)

@@ -5,6 +5,7 @@
  */
 package app.opentv.ui
 
+import app.opentv.account.CoreDirectory
 import app.opentv.data.repo.providerBrowseKey
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -30,7 +31,10 @@ import app.opentv.R
 import app.opentv.core.AppText
 import app.opentv.core.ServiceLocator
 import app.opentv.core.StatusBus
+import app.opentv.core.SyncPause
+import app.opentv.data.repo.browsePaging
 import app.opentv.data.model.Category
+import app.opentv.data.model.Download
 import app.opentv.data.model.Movie
 import app.opentv.data.model.PlaybackPosition
 import app.opentv.data.model.Series
@@ -137,12 +141,12 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
                 // "Show · S1E1 · Episode" reads cleanly; the raw provider title
                 // ("A+ - Show - S01E01 - Episode") doesn't fit a card.
                 val show = graph.catalogRepository.seriesByProviderId(it.sourceId, it.seriesId)
-                val episodeTitle = app.opentv.data.parser.episodeDisplayTitle(it.title, show?.name)
+                val episodeTitle = app.opentv.ui.vod.cleanEpisodeTitle(app.opentv.data.parser.episodeDisplayTitle(it.title, show?.name), it.episodeNumber)
                 ResumeItem(
                     pos.mediaKey,
                     listOfNotNull(
                         show?.let { s -> VodTitleCleaner.clean(s.name).replace(Regex("\\s*\\(\\d{4}\\)$"), "") },
-                        "S${it.season}E${it.episodeNumber}",
+                        "S${it.season} E${it.episodeNumber}",
                         episodeTitle.takeIf { t -> t.isNotBlank() },
                     ).joinToString(" · "),
                     it.stillUrl,
@@ -196,8 +200,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     val canonicalMoviePages = combine(selectedVodSource, settledBrowseQuery, movieOptions) { source, query, options ->
         Triple(source, query, options)
     }.flatMapLatest { (source, query, options) ->
-        androidx.paging.Pager(androidx.paging.PagingConfig(pageSize = 48, initialLoadSize = 96,
-            enablePlaceholders = false, maxSize = 480)) {
+        androidx.paging.Pager(browsePaging()) {
             canonical.browse(source, query, options.languages.sorted().joinToString("", transform = { "|$it|" }),
                 options.includeUnknown, options.sort.name)
         }.flow
@@ -236,7 +239,33 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         val network: String? = null, val status: String? = null, val networkLogo: String? = null, val quality: Int = 0,
         val tmdbId: Int? = null,
         /** False when no enabled source has it (only listed with [showUnavailable]). */
-        val available: Boolean = true)
+        val available: Boolean = true,
+        /** TMDB's release date ("2026-07-17"): a film's first release anywhere, cinemas included. */
+        val releaseDate: String? = null,
+        /** A recent film's first digital or disc release, when TMDB knows one; [digitalChecked]: it was asked. */
+        val digitalDate: String? = null, val digitalChecked: Boolean = false) {
+        /**
+         * Why no source has it, when it's simply not out yet (else null: "Not on your sources"):
+         *  - "Coming 16 Dec": not released anywhere yet (TMDB's release date is ahead);
+         *  - "In cinemas" (or "Digital 5 Jan"): released in cinemas, no digital or disc release yet.
+         * Copies can still turn up around those dates.
+         */
+        val comingSoon: String? get() {
+            if (available) return null
+            val today = java.time.LocalDate.now()
+            fun parse(d: String?) = d?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+            fun day(d: java.time.LocalDate) = d.format(java.time.format.DateTimeFormatter.ofPattern(if (d.year == today.year) "d MMM" else "d MMM yyyy"))
+            val released = parse(releaseDate) ?: return null
+            if (released.isAfter(today)) return "Coming " + day(released)
+            if (!digitalChecked) return null
+            val digital = parse(digitalDate)
+            return when {
+                digital == null -> "In cinemas"
+                digital.isAfter(today) -> "Digital " + day(digital)
+                else -> null
+            }
+        }
+    }
     enum class HomeStyle { POSTERS, WIDE }
     data class HomeSection(val key: String, val title: String, val style: HomeStyle, val items: List<HomeTitle>)
     data class CatalogueHome(val featured: List<HomeTitle>, val sections: List<HomeSection>)
@@ -245,7 +274,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Bumped when the home's own shows have been detailed (network logo, status), to rebuild it. */
     private val showDetailed = MutableStateFlow(0)
-    private val showResolver = CanonicalShowResolver(graph.httpClient, settings)
+    private val showResolver = CanonicalShowResolver(graph.httpClient, settings, urgent = true)
     private val detailing = java.util.Collections.synchronizedSet(HashSet<Int>())
 
     /**
@@ -281,7 +310,8 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
 
     /** A ranked title no source has, shown greyed with [HomeTitle.available] false. */
     private fun unavailable(prefix: String, r: RankedTitle) = HomeTitle("$prefix:${r.id}", r.title, r.poster, r.backdrop, r.year,
-        r.rating, r.language, r.overview, tmdbId = r.id, available = false)
+        r.rating, r.language, r.overview, tmdbId = r.id, available = false, releaseDate = r.releaseDate,
+        digitalDate = r.digitalDate, digitalChecked = r.digitalChecked)
 
     private fun arrange(lists: Map<String, List<RankedTitle>>, local: Map<Int, HomeTitle>,
         newTitle: String, kindTitle: String, missing: ((RankedTitle) -> HomeTitle)? = null): CatalogueHome {
@@ -296,7 +326,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
             HomeSection("new", newTitle, HomeStyle.WIDE, pick(TmdbRankings.NEW, 10) { it.backdrop != null }),
             HomeSection("popular", "Popular", HomeStyle.POSTERS, pick(TmdbRankings.POPULAR, 15)),
         ).filter { it.items.isNotEmpty() }
-        return CatalogueHome(featured, sections + HomeSection("all", kindTitle, HomeStyle.POSTERS, emptyList()))
+        return CatalogueHome(featured, sections)
     }
 
     private suspend fun buildMovieHome(lists: Map<String, List<RankedTitle>>, all: Boolean): CatalogueHome {
@@ -355,8 +385,10 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // Titles matched to TMDB first (a known film or show), by how fully the title matches; titles only the provider
+    // names (no TMDB match: often a mislabelled or adult item) after them, however exactly their name matches.
     private fun rankHits(hits: List<HomeTitle>, query: String, trending: Set<Int>): List<HomeTitle> =
-        hits.sortedWith(compareBy<HomeTitle>({ matchTier(it.title, query) }, { if (it.tmdbId in trending) 0 else 1 })
+        hits.sortedWith(compareBy<HomeTitle>({ if (it.tmdbId == null) 1 else 0 }, { matchTier(it.title, query) }, { if (it.tmdbId in trending) 0 else 1 })
             .thenByDescending { it.rating ?: 0.0 }.thenBy { it.title.lowercase() })
             .mapIndexed { i, t -> t.copy(rank = i + 1) }
 
@@ -367,12 +399,18 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     val movieSearch: StateFlow<List<HomeTitle>?> = combine(selectedVodSource, settledBrowseQuery, movieOptions) { source, query, options -> Triple(source, query, options) }
         .flatMapLatest { (source, query, options) ->
             if (query.isBlank()) kotlinx.coroutines.flow.flowOf(null)
-            else canonical.search(source, query, options.languages.sorted().joinToString("", transform = { "|$it|" }), options.includeUnknown)
-                .map { cards ->
-                    rankHits(cards.map { card -> val t = card.title
+            else combine(canonical.search(source, query, options.languages.sorted().joinToString("", transform = { "|$it|" }), options.includeUnknown),
+                canonical.searchUnmatched(source, query)) { cards, raw ->
+                    val matched = cards.map { card -> val t = card.title
                         HomeTitle("movie:${t.tmdbId}", t.title, t.posterUrl, t.backdropUrl, t.year, t.rating, t.originalLanguage, t.synopsis,
                             movieId = card.movieId, quality = card.bestQuality, tmdbId = t.tmdbId)
-                    }, query, trendingIds(TmdbRankings.Kind.MOVIES))
+                    }
+                    // Not matched to TMDB yet: the provider's own name and art, one card per cleaned name and year.
+                    val unmatched = raw.distinctBy { it.displayTitle.lowercase() to it.year }.map { m ->
+                        HomeTitle("raw:${m.id}", m.displayTitle, m.posterUrl, m.backdropUrl, m.year, m.rating, null, m.plot,
+                            movieId = m.id, quality = m.browseQualityRank)
+                    }
+                    rankHits(matched + unmatched, query, trendingIds(TmdbRankings.Kind.MOVIES))
                 }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -391,7 +429,10 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** Opens what a home card points at, choosing the version the same way the grid does. */
-    suspend fun openHomeMovie(title: HomeTitle): Movie? = title.movieId?.let { defaultMovieVersion(canonicalVersions(it)) }
+    suspend fun openHomeMovie(title: HomeTitle): Movie? = title.movieId?.let { id ->
+        // A search hit not matched to TMDB is one provider movie: open it as it is.
+        if (title.key.startsWith("raw:")) graph.database.movies().byId(id) else defaultMovieVersion(canonicalVersions(id))
+    }
     suspend fun openHomeShow(title: HomeTitle): Series? = title.groupKey?.let { key ->
         defaultSeriesVersion(seriesBrowseVariants(key))?.let { withCanonicalShow(it) }
     }
@@ -490,6 +531,91 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Whether anything can find other copies: a Stremio add-on, or Prowlarr. */
+    val hasFinders: StateFlow<Boolean> = combine(settings.stremioAddons, settings.prowlarrUrl, settings.prowlarrKey,
+        CoreDirectory.available) { addons, url, key, cores ->
+        addons.isNotEmpty() || (url.isNotBlank() && key.isNotBlank()) || cores.any { "stremio" in it.capabilities }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * Copies of a film outside the provider: add-on streams (direct, or torrents) and Prowlarr's torrents. Torrents
+     * are offered only with a TorrServer set. [imdbId] is looked up from TMDB when not given.
+     */
+    suspend fun findReleases(title: String, year: Int?, tmdbId: Int?, imdbId: String? = null): List<app.opentv.torrent.Release> {
+        val imdb = imdbId ?: graph.catalogRepository.imdbIdFor(title, year, tmdbId, movie = true)
+        return withContext(Dispatchers.IO) {
+            graph.releases.find(app.opentv.torrent.ReleaseQuery(title, year, imdb),
+                // A full jasktv-core answering: its torrent search (its Prowlarr) and streams (its TorrServer), as an add-on.
+                listOfNotNull(CoreDirectory.endpoint("stremio")?.let { it.name to it.addonManifest }) +
+                    settings.stremioAddons.value.map { it.name to it.manifestUrl },
+                settings.prowlarrUrl.value, settings.prowlarrKey.value, torrents = settings.torrServerUrl.value.isNotBlank())
+        }
+    }
+
+    suspend fun imdbIdFor(movie: Movie): String? = graph.catalogRepository.imdbIdFor(movie)
+
+    /** Copies of one episode outside the provider (add-ons, and core's Prowlarr through its TorrServer). */
+    suspend fun findEpisodeReleases(series: Series, season: Int, episode: Int): List<app.opentv.torrent.Release> {
+        val imdb = graph.catalogRepository.imdbIdFor(series)
+        return withContext(Dispatchers.IO) {
+            graph.releases.find(app.opentv.torrent.ReleaseQuery(series.name, series.year, imdb, season, episode),
+                listOfNotNull(CoreDirectory.endpoint("stremio")?.let { it.name to it.addonManifest }) +
+                    settings.stremioAddons.value.map { it.name to it.manifestUrl },
+                settings.prowlarrUrl.value, settings.prowlarrKey.value, torrents = settings.torrServerUrl.value.isNotBlank())
+        }
+    }
+
+    /** The core torrents come through, by name ("jasktv-core on DESKTOP"); null when none is on this network. */
+    fun torrentRoute(): String? = CoreDirectory.available.value.firstOrNull { "stremio" in it.capabilities }?.name
+
+    /** Which of [refs] are on your sources: "m:<tmdb>"/"t:<tmdb>" → the local film or show id. */
+    suspend fun onYourSources(refs: List<app.opentv.catalogue.TitleRef>): Map<String, Long> {
+        val movies = refs.filter { it.movie }.map { it.tmdbId }.distinct()
+        val shows = refs.filterNot { it.movie }.map { it.tmdbId }.distinct()
+        val m = movies.chunked(500).flatMap { canonical.availableByIds(it) }.associate { "m:${it.title.tmdbId}" to it.movieId }
+        val s = shows.chunked(500).flatMap { graph.database.series().groupsForHints(it) }
+            .mapNotNull { g -> g.primary.tmdbId?.trim()?.toIntOrNull()?.let { "t:$it" to g.primary.id } }.toMap()
+        return m + s
+    }
+
+    /** Saves [template] from [url] (one episode's file inside a torrent pack, through core). */
+    suspend fun downloadUrl(url: String, template: Download): String = downloadProvider(template.copy(sourceUrl = url))
+
+    /** Queues several downloads (a season, a show): they go one at a time. */
+    suspend fun downloadAll(downloads: List<Download>): String {
+        if (downloads.isEmpty()) return "Nothing to download"
+        var last: app.opentv.data.repo.DownloadRepository.Start? = null
+        for (d in downloads) { last = graph.downloadRepository.enqueue(d); if (last is app.opentv.data.repo.DownloadRepository.Start.NoSpace) break }
+        return if (last is app.opentv.data.repo.DownloadRepository.Start.NoSpace) "Not enough space on this device for all of them"
+            else "Downloading ${downloads.size} episodes, one at a time"
+    }
+
+    /** Saves a provider copy to this device. Returns what to tell the user. */
+    suspend fun downloadProvider(download: Download): String =
+        when (graph.downloadRepository.enqueue(download)) {
+            is app.opentv.data.repo.DownloadRepository.Start.NoSpace -> "Not enough space on this device"
+            app.opentv.data.repo.DownloadRepository.Start.Queued -> "Queued: ${download.title}"
+            else -> "Downloading ${download.title}"
+        }
+
+    /**
+     * Saves [release] to this device as [template] (its key, title, poster): the copy's stream (a torrent through
+     * core's TorrServer, read start to end) goes to Android's download manager like a provider film. Returns what
+     * to tell the user.
+     */
+    suspend fun downloadRelease(release: app.opentv.torrent.Release, template: Download): String {
+        val url = playableRelease(release) ?: return "Couldn't start that copy (is the core at home running?)"
+        return when (val r = graph.downloadRepository.enqueue(template.copy(sourceUrl = url, tag = release.summary.substringBefore(" · ")))) {
+            is app.opentv.data.repo.DownloadRepository.Start.NoSpace -> "Not enough space on this device"
+            app.opentv.data.repo.DownloadRepository.Start.Queued -> "Queued: ${template.title}"
+            else -> "Downloading ${template.title}"
+        }
+    }
+
+    /** The address the player opens for [release] (a TorrServer stream for a torrent), or null. */
+    suspend fun playableRelease(release: app.opentv.torrent.Release): String? =
+        withContext(Dispatchers.IO) { graph.releases.playable(release, settings.torrServerUrl.value) }
+
     /** Switch the Movies/Shows provider filter; category selections reset since they differ per source. */
     fun selectVodSource(sourceId: Long?) {
         if (selectedVodSource.value == sourceId) return
@@ -533,11 +659,13 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     private val VOD_TTL_MILLIS = 12L * 60 * 60 * 1000  // 12 hours
 
     fun ensureVodLoaded() {
+        // Once per launch, not on every visit to Movies or Shows: each start re-read the library and kept matching busy.
+        if (vodRequested) return
         app.opentv.catalogue.CanonicalMovieWorker.enqueue(getApplication())
         app.opentv.catalogue.CanonicalShowWorker.enqueue(getApplication())
-        if (vodRequested) return
+        if (SyncPause.isPaused(getApplication())) return
         vodRequested = true
-        viewModelScope.launch { syncVodIfStale(force = false) }
+        vodJob = viewModelScope.launch { syncVodIfStale(force = false) }
     }
 
     /**
@@ -547,7 +675,20 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun refreshVod() {
         vodRequested = true
-        viewModelScope.launch { syncVodIfStale(force = true) }
+        vodJob = viewModelScope.launch { syncVodIfStale(force = true) }
+    }
+
+    private var vodJob: kotlinx.coroutines.Job? = null
+
+    init {
+        // Pause syncing stops a provider download already under way (a partial import retries on resume).
+        viewModelScope.launch {
+            var first = true
+            SyncPause.paused.collect { paused ->
+                if (paused) vodJob?.cancel() else if (!first) { vodRequested = false; ensureVodLoaded() }
+                first = false
+            }
+        }
     }
 
     private suspend fun syncVodIfStale(force: Boolean) = vodSyncMutex.withLock {
@@ -573,9 +714,10 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         _vodLoading.value = true
         _vodFailed.value = false
         val synced = try {
-            StatusBus.during(AppText.get(R.string.msg_loading_vod)) {
+            StatusBus.during("vod", AppText.get(R.string.msg_loading_vod), StatusBus.Origin.PROVIDER) {
                 var complete = true
                 for (source in graph.sourceRepository.enabled()) {
+                    StatusBus.update("vod", detail = source.name)
                     if (!graph.catalogRepository.syncVod(source, now)) complete = false
                 }
                 complete
@@ -660,8 +802,20 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         return versions.firstOrNull { it.id == id } ?: graph.catalogRepository.movieDetail(id)
     }
 
-    /** The provider's own detail call; canonical titles don't store cast or director, the provider row may. */
-    suspend fun movieCredits(id: Long): Movie? = graph.catalogRepository.movieDetail(id)
+    /**
+     * The provider's own detail call; canonical titles don't store cast or director, the provider row may.
+     * A film matched to the catalogue is only read, not saved: saving fills in the row's year and TMDB id, which
+     * changes its identity evidence and so unlinks it from the catalogue. The next visit then found no versions
+     * ("Sources" lost its count) and fell back to the provider's raw name, year and all.
+     */
+    suspend fun movieCredits(id: Long): Movie? {
+        if (canonicalVersions(id).isEmpty()) return graph.catalogRepository.movieDetail(id)
+        val raw = graph.database.movies().byId(id) ?: return null
+        if (raw.cast != null && raw.director != null) return raw
+        val source = graph.database.sources().byId(raw.sourceId)?.takeIf { it.kind == app.opentv.data.model.SourceKind.XTREAM } ?: return raw
+        val info = runCatching { graph.xtreamApi.movieInfo(source, raw.streamId) }.getOrNull() ?: return raw
+        return raw.copy(cast = raw.cast ?: info.cast, director = raw.director ?: info.director)
+    }
 
     /** Loads a series, lazily enriching backdrop/cast/genre on first open. See CatalogRepository.seriesDetail. */
     suspend fun seriesDetail(id: Long): Series? = graph.catalogRepository.seriesDetail(id)?.let { withCanonicalShow(it) }

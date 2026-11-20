@@ -1,5 +1,6 @@
 package app.opentv.ui.channels
 
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,7 +38,7 @@ internal fun MyTvPrototype(width: Int, empty: Boolean = false) {
                 Column(Modifier.fillMaxSize().padding(LocalJaskContentPadding.current)) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                         Text("My TV", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                        TextButton({}) { Text("Add channels") }
+                        TextButton({}, modifier = Modifier.jaskFocusRing()) { Text("Add channels") }
                     }
                     if (empty) MyTvEmptyState({}) else PhoneTouchGuide(channels, clock, data, {}, { _, _ -> })
                 }

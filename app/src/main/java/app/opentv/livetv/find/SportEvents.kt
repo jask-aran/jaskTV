@@ -43,6 +43,8 @@ data class SportEvent(
 enum class WatchEvidence(val label: String) {
     /** The provider's own event stream names this game. */
     NAMED_BY_PROVIDER("Event stream"),
+    /** The provider's guide lists this game (or, for a race weekend, the sport) on this channel at this time. */
+    GUIDE("In the guide"),
     /** The schedule names this network; we have the channel. */
     BROADCASTER("On TV"),
     SPORT_CHANNEL("Sport channel"),
@@ -93,6 +95,19 @@ object EventMatcher {
     fun dayDistance(slotName: String, event: SportEvent): Long {
         val eventDay = Instant.ofEpochMilli(event.startUtc).atZone(ZoneOffset.UTC).toLocalDate()
         return slotDate(slotName, eventDay.year)?.let { abs(it.toEpochDay() - eventDay.toEpochDay()) } ?: 0
+    }
+
+    /** Guide names for national teams: "BLACKCAPS v India" is New Zealand v India. */
+    private val NICKNAMES = listOf("black caps" to "new zealand", "blackcaps" to "new zealand", "white ferns" to "new zealand",
+        "proteas" to "south africa", "windies" to "west indies", "southern stars" to "australia")
+
+    /** Whether a guide programme's title names both sides of [event] (the programme's time is checked by the caller). */
+    fun guideNames(title: String, event: SportEvent): Boolean {
+        if (event.competitors.size < 2) return false
+        var text = title.lowercase()
+        NICKNAMES.forEach { (nick, name) -> text = text.replace(nick, name) }
+        val folded = fold(text)
+        return event.competitors.all { side -> side.names.any { mentions(folded, it) } }
     }
 
     fun matchesFolded(slotName: String, text: String, event: SportEvent, now: Long): Boolean {
@@ -157,8 +172,14 @@ object EventMatcher {
         !settle(event, now).finished && (event.live || now in (event.startUtc - 10 * 60_000)..minOf(event.endUtc ?: Long.MAX_VALUE, event.startUtc + PLAY_WINDOW))
 
     /** Without a live flag from the schedule, an event is over [PLAY_WINDOW] after its start. One rule for every caller. */
-    fun settle(event: SportEvent, now: Long): SportEvent =
-        if (!event.finished && !event.live && event.startUtc + PLAY_WINDOW < now) event.copy(finished = true) else event
+    fun settle(event: SportEvent, now: Long): SportEvent = when {
+        event.finished -> event
+        // Past its known end and not flagged live (a match running over keeps ESPN's live flag): over. Catches cards
+        // restored from the last session that still call a finished F1 session "Next".
+        event.endUtc != null && now >= event.endUtc && !event.live -> event.copy(finished = true)
+        !event.live && event.startUtc + PLAY_WINDOW < now -> event.copy(finished = true)
+        else -> event
+    }
 
     private const val PLAY_WINDOW = 5 * 3_600_000L
 

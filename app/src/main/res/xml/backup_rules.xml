@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The account file holds secrets sealed by this device's Keystore key, which backups cannot carry. -->
+<full-backup-content>
+    <exclude domain="file" path="jask-account.json" />
+</full-backup-content>

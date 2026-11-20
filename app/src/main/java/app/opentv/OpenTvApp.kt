@@ -51,7 +51,23 @@ class OpenTvApp : Application(), ImageLoaderFactory {
             .allowRgb565(true)
             // Wikimedia (many IPTV-org channel logos) answers 403 to OkHttp's default User-Agent.
             .okHttpClient {
-                okhttp3.OkHttpClient.Builder().addInterceptor { chain ->
+                // OkHttp allows 5 downloads per host by default; nearly every poster is on image.tmdb.org, so a
+                // fast scroll queued behind 5 at a time. 16 keeps up with the grid and its prefetch.
+                okhttp3.OkHttpClient.Builder().dispatcher(okhttp3.Dispatcher().apply { maxRequests = 32; maxRequestsPerHost = 16 })
+                    // TMDB art from jasktv-core's cache on the home network when one answers; TMDB itself otherwise.
+                    .addInterceptor { chain ->
+                        val request = chain.request()
+                        val core = if (request.url.host == "image.tmdb.org") app.opentv.account.CoreDirectory.endpoint("images") else null
+                        if (core != null) {
+                            val viaCore = request.newBuilder().url("${core.base}/img${request.url.encodedPath}")
+                                .header("Authorization", "Bearer ${core.secret}").build()
+                            val response = runCatching { chain.proceed(viaCore) }.getOrNull()
+                            if (response != null && response.isSuccessful) return@addInterceptor response
+                            response?.close()
+                        }
+                        chain.proceed(request)
+                    }
+                    .addInterceptor { chain ->
                     val request = chain.request()
                     chain.proceed(if (request.header("User-Agent") != null) request
                         else request.newBuilder().header("User-Agent", IMAGE_USER_AGENT).build())
@@ -69,8 +85,12 @@ class OpenTvApp : Application(), ImageLoaderFactory {
         val graph = ServiceLocator.get(this)
         app.opentv.player.PlaybackErrors.context = this
         app.opentv.core.AppText.init(this)
+        app.opentv.account.CoreDirectory.init(this)
         app.opentv.widget.RecentWidgetUpdates.start(this, appScope)
         SyncWorker.schedule(this)
+        // A TV stick matches titles to TMDB slowly in the background (3 a second), leaving its CPU to the UI; a phone or
+        // computer on the same account matches at full speed and the TV copies those matches over the LAN.
+        if (isRunningOnTelevision(this)) app.opentv.catalogue.TmdbGate.backgroundPace(perSecond = 3, concurrent = 2)
         // jaskTV account (optional): if signed in, sync playlists and preferences.
         app.opentv.account.AccountManager.get(this).start()
         appScope.launch(Dispatchers.IO) {

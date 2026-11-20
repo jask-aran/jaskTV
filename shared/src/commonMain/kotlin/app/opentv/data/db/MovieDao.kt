@@ -179,14 +179,20 @@ abstract class MovieDao {
             val existing = batch.groupBy { it.sourceId }.flatMap { (source, rows) ->
                 existingProviderRows(source, rows.map { it.streamId })
             }.associateBy { it.sourceId to it.streamId }
-            upsertDerived(batch.map { movie ->
+            val changed = batch.mapNotNull { movie ->
                 val previous = existing[movie.sourceId to movie.streamId]
-                val key = MovieBrowseKey.from(movie.name, movie.year)
+                // Same name and year: the stored browse key holds (computing it is regex work on every row).
+                val (groupKey, qualityRank) = if (previous != null && previous.browseGroupKey.isNotEmpty() && previous.name == movie.name && previous.year == movie.year)
+                    previous.browseGroupKey to previous.browseQualityRank
+                else MovieBrowseKey.from(movie.name, movie.year).let { it.groupKey to it.qualityRank }
                 // Room's upsert updates by primary key, not the provider unique index. Reuse
                 // the stored id so refreshes update metadata and preserve playback/favourites.
-                movie.copy(id = previous?.id ?: movie.id, favourite = previous?.favourite ?: movie.favourite,
-                    browseGroupKey = key.groupKey, browseQualityRank = key.qualityRank)
-            })
+                val next = movie.copy(id = previous?.id ?: movie.id, favourite = previous?.favourite ?: movie.favourite,
+                    browseGroupKey = groupKey, browseQualityRank = qualityRank)
+                // Unchanged since the last refresh: no write. Each write also redoes the title search index.
+                next.takeIf { it != previous }
+            }
+            if (changed.isNotEmpty()) upsertDerived(changed)
         }
     }
 

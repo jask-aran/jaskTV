@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>jaskTV Control Panel</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='7' width='24' height='16' rx='4' fill='none' stroke='%23e8e9eb' stroke-width='2.5'/%3E%3Cpath d='M11 27h10' stroke='%23e8e9eb' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0b0c0e; --panel: rgba(255,255,255,0.055); --panel-2: rgba(255,255,255,0.09); --line: rgba(255,255,255,0.09);
+    --ink: #f2f3f5; --ink-2: #a9adb5; --ink-3: #6f747d; --ok: #d9dde3; --warn: #e8c37a; --bad: #ee8b84; --radius: 18px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { background: radial-gradient(1200px 600px at 15% -10%, #22252b 0%, transparent 60%), radial-gradient(900px 500px at 100% 0%, #1a1c21 0%, transparent 55%), var(--bg); min-height: 100vh; }
+  header { display: flex; align-items: center; gap: 14px; padding: 20px 24px 6px; max-width: 1180px; margin: 0 auto; flex-wrap: wrap; }
+  header h1 { font-size: 20px; font-weight: 750; letter-spacing: -0.01em; margin: 0; }
+  nav { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px; }
+  nav button { background: transparent; color: var(--ink-2); padding: 7px 14px; }
+  nav button[aria-current="page"] { background: var(--panel-2); color: var(--ink); }
+  .who { margin-left: auto; color: var(--ink-2); font-size: 13px; display: flex; gap: 10px; align-items: center; }
+  main { max-width: 1180px; margin: 0 auto; padding: 4px 24px 56px; }
+  h2 { font-size: 13px; font-weight: 650; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.08em; margin: 26px 4px 12px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; backdrop-filter: blur(18px); }
+  .card h3 { margin: 0; font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .sub { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--ink-2); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3); flex: none; display: inline-block; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 10px rgba(255,255,255,0.35); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  td, th { text-align: left; padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--ink-3); font-weight: 600; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .err { color: var(--bad); } .muted { color: var(--ink-3); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .row:first-child { border-top: 0; }
+  .row .v { color: var(--ink-2); text-align: right; overflow-wrap: anywhere; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .result { font-size: 12px; margin-top: 8px; color: var(--ink-2); min-height: 16px; }
+  label { display: block; font-size: 13px; color: var(--ink-2); margin: 12px 0 6px; }
+  input, select { width: 100%; background: rgba(0,0,0,0.35); border: 1px solid var(--line); color: var(--ink); border-radius: 12px; padding: 10px 12px; font: inherit; }
+  input:focus, select:focus { outline: none; border-color: rgba(255,255,255,0.4); }
+  button { background: var(--ink); color: #0b0c0e; border: 0; border-radius: 999px; padding: 9px 16px; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+  button.ghost { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); padding: 6px 12px; font-size: 13px; }
+  button.danger { background: transparent; color: var(--bad); border: 1px solid rgba(238,139,132,0.35); padding: 6px 12px; font-size: 13px; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 2px solid rgba(255,255,255,0.6); outline-offset: 2px; }
+  .login { max-width: 380px; margin: 12vh auto 0; }
+  .login .card { padding: 26px; }
+  .note { color: var(--ink-3); font-size: 12px; margin-top: 14px; }
+  #msg { color: var(--bad); font-size: 13px; min-height: 18px; margin-top: 12px; }
+  .bar { height: 6px; background: var(--panel-2); border-radius: 99px; overflow: hidden; margin-top: 6px; }
+  .bar > i { display: block; height: 100%; background: var(--ink-2); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .live { font-size: 12px; color: var(--ink-3); }
+  dialog { background: #16181c; color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; width: min(460px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgba(0,0,0,0.6); }
+  @media (max-width: 560px) { header, main { padding-left: 16px; padding-right: 16px; } .grid { grid-template-columns: 1fr; } .two { grid-template-columns: 1fr; } .who { margin-left: 0; width: 100%; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>jaskTV</h1>
+  <nav id="nav" hidden>
+    <button data-tab="overview" aria-current="page">Overview</button>
+    <button data-tab="playlists">Playlists</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <div class="who" id="who" hidden><span class="live" id="live"></span><span id="email"></span><button class="ghost" id="signout">Sign out</button></div>
+</header>
+<main>
+  <div class="login" id="login">
+    <div class="card">
+      <h3>Control Panel</h3>
+      <div class="sub">Sign in with your jaskTV account. Your data is decrypted here in the browser; the account server can't read it.</div>
+      <form id="form">
+        <label for="em">Email</label><input id="em" type="email" autocomplete="username" required>
+        <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required>
+        <div style="margin-top:18px"><button id="go">Sign in</button></div>
+        <div id="msg" role="alert"></div>
+      </form>
+      <div class="note">This browser appears in your account's devices as "Control Panel" until you sign out.</div>
+    </div>
+  </div>
+  <div id="view" hidden></div>
+</main>
+<dialog id="dlg"><form id="dlgForm" method="dialog"></form></dialog>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 package app.opentv.ui.channels
 
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,13 +18,15 @@ import app.opentv.data.model.Programme
 import app.opentv.data.model.shownName
 import app.opentv.livetv.MyTvRepository
 import app.opentv.ui.ChannelsViewModel
+import app.opentv.ui.settings.JaskDim
+import app.opentv.ui.settings.JaskInk
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Personal guide only. Never subscribes to ChannelsViewModel.rows or its catalogue-wide index. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MyTvScreen(query: String, onPlay: (Channel) -> Unit, vm: ChannelsViewModel = viewModel()) {
+fun MyTvScreen(query: String, onPlay: (Channel) -> Unit, sports: Boolean = false, vm: ChannelsViewModel = viewModel()) {
     val context = LocalContext.current
     val graph = remember(context) { ServiceLocator.get(context) }
     val repository = remember(context) { MyTvRepository(context) }
@@ -79,7 +82,7 @@ fun MyTvScreen(query: String, onPlay: (Channel) -> Unit, vm: ChannelsViewModel =
             app.opentv.livetv.find.LiveGenre.OTHER, listOf(row.primary.id), null)
     } }
     if (showFind) {
-        LiveFind(query, { play(it) }, findSheet, myTvTiles, onGuide = { guide = true })
+        LiveFind(query, { play(it) }, findSheet, myTvTiles, onGuide = { guide = true }, sports = sports)
         return
     }
     Column(Modifier.fillMaxSize().padding(app.opentv.ui.LocalJaskContentPadding.current)) {
@@ -106,29 +109,30 @@ fun MyTvScreen(query: String, onPlay: (Channel) -> Unit, vm: ChannelsViewModel =
             PhoneTouchGuide(rows, now, vm, onPlay = { play(it.primary) }, onProgramme = { row, item -> programme = row to item })
         }
     }
-    if (manage) ModalBottomSheet(onDismissRequest = { manage = false }) {
-        Text("My TV channels", Modifier.padding(16.dp), style = MaterialTheme.typography.titleLarge)
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp).navigationBarsPadding()) {
+    if (manage) app.opentv.ui.JaskSheet(onDismiss = { manage = false }) {
+        Text("My TV channels", Modifier.padding(16.dp), color = JaskInk, style = MaterialTheme.typography.titleLarge)
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
             items(entries, key = { it.saved.identity }) { entry ->
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text(entry.saved.label, style = MaterialTheme.typography.titleMedium)
-                    Text(entry.saved.identity, style = MaterialTheme.typography.bodySmall)
+                    Text(entry.saved.label, color = JaskInk, style = MaterialTheme.typography.titleMedium)
+                    Text(entry.saved.identity, color = JaskDim, style = MaterialTheme.typography.bodySmall)
                     Row {
-                        TextButton(onClick = { scope.launch { repository.move(saved, saved.indexOf(entry.saved), -1) } }) { Text("Move up") }
-                        TextButton(onClick = { scope.launch { repository.move(saved, saved.indexOf(entry.saved), 1) } }) { Text("Move down") }
-                        TextButton(onClick = { scope.launch { repository.remove(entry.saved) } }) { Text("Remove") }
+                        TextButton(onClick = { scope.launch { repository.move(saved, saved.indexOf(entry.saved), -1) } }, modifier = Modifier.jaskFocusRing()) { Text("Move up") }
+                        TextButton(onClick = { scope.launch { repository.move(saved, saved.indexOf(entry.saved), 1) } }, modifier = Modifier.jaskFocusRing()) { Text("Move down") }
+                        TextButton(onClick = { scope.launch { repository.remove(entry.saved) } }, modifier = Modifier.jaskFocusRing()) { Text("Remove") }
                     }
                     entry.variants.forEach { channel ->
-                        TextButton(onClick = { scope.launch { repository.prefer(entry.saved, channel) } }) {
+                        TextButton(onClick = { scope.launch { repository.prefer(entry.saved, channel) } }, modifier = Modifier.jaskFocusRing()) {
                             val source = sources.firstOrNull { it.id == channel.sourceId }?.name ?: "Source"
                             Text("${if (entry.primary?.id == channel.id) "✓ " else ""}$source · ${channel.qualityLabel.ifBlank { "Quality unknown" }}${if (channel.qualityLabel.isNotBlank()) " (inferred)" else ""}")
                         }
                     }
                     entry.primary?.let { channel ->
-                        TextButton(onClick = { mapping = entry }) { Text("Map channel identity") }
-                        Text("Guide: ${channel.epgOverrideId?.let { "manual · $it" } ?: channel.epgChannelId?.let { "provider · $it" } ?: channel.matchedEpgId?.let { "name match · $it" } ?: "unmapped"}", style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = { mapping = entry }, modifier = Modifier.jaskFocusRing()) { Text("Map channel identity") }
+                        Text("Guide: ${channel.epgOverrideId?.let { "manual · $it" } ?: channel.epgChannelId?.let { "provider · $it" } ?: channel.matchedEpgId?.let { "name match · $it" } ?: "unmapped"}",
+                            color = JaskDim, style = MaterialTheme.typography.bodySmall)
                     }
-                    HorizontalDivider()
+                    HorizontalDivider(color = androidx.compose.ui.graphics.Color.White.copy(alpha = .1f))
                 }
             }
         }
@@ -140,13 +144,13 @@ fun MyTvScreen(query: String, onPlay: (Channel) -> Unit, vm: ChannelsViewModel =
         }
     } }
     programme?.let { (row, item) ->
-        ModalBottomSheet(onDismissRequest = { programme = null }) {
-            Column(Modifier.fillMaxWidth().padding(20.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(item.title, style = MaterialTheme.typography.headlineSmall)
+        app.opentv.ui.JaskSheet(onDismiss = { programme = null }) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(item.title, color = JaskInk, style = MaterialTheme.typography.headlineSmall)
                 val zone = java.time.ZoneId.systemDefault()
-                Text("${PhoneGuideTimeline.timeLabel(item.startUtcMillis, zone)}–${PhoneGuideTimeline.timeLabel(item.endUtcMillis, zone)}")
-                item.description?.takeIf(String::isNotBlank)?.let { Text(it) }
-                TextButton(onClick = { programme = null; play(row.primary) }) { Text("Watch channel") }
+                Text("${PhoneGuideTimeline.timeLabel(item.startUtcMillis, zone)}–${PhoneGuideTimeline.timeLabel(item.endUtcMillis, zone)}", color = JaskDim)
+                item.description?.takeIf(String::isNotBlank)?.let { Text(it, color = JaskInk) }
+                TextButton(onClick = { programme = null; play(row.primary) }, modifier = Modifier.jaskFocusRing()) { Text("Watch channel") }
             }
         }
     }
@@ -160,7 +164,7 @@ internal fun MyTvEmptyState(onFindChannels: () -> Unit) {
         Spacer(Modifier.height(8.dp))
         Text("Add channels to build your programme guide.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(20.dp))
-        FilledTonalButton(onClick = onFindChannels) { Text("Find channels") }
+        FilledTonalButton(onClick = onFindChannels, modifier = Modifier.jaskFocusRing()) { Text("Find channels") }
     }
 }
 

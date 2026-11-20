@@ -28,4 +28,17 @@ object BackgroundWork {
             runnable.run()
         }, "opentv-sync-${count.incrementAndGet()}").apply { isDaemon = true }
     }.asCoroutineDispatcher()
+
+    /**
+     * TMDB matching: its own threads at the lowest priority, so it never takes CPU the UI or a catalogue sync wants.
+     * Mostly waiting on the network; up to as many threads as TmdbGate lets requests run at once. Threads are made
+     * only as needed (a TV stick, matching slowly, uses two or three).
+     */
+    val matching: CoroutineDispatcher = java.util.concurrent.ThreadPoolExecutor(16, 16, 30, java.util.concurrent.TimeUnit.SECONDS,
+        java.util.concurrent.LinkedBlockingQueue()) { runnable ->
+        Thread({
+            Process.setThreadPriority(Process.THREAD_PRIORITY_LOWEST)
+            runnable.run()
+        }, "jask-match-${count.incrementAndGet()}").apply { isDaemon = true }
+    }.apply { allowCoreThreadTimeOut(true) }.asCoroutineDispatcher()
 }

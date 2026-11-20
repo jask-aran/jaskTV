@@ -145,8 +145,13 @@ interface SeriesDao {
     @Query("UPDATE series SET favourite = 1 WHERE seriesId = :seriesId")
     suspend fun markFavouriteBySeriesId(seriesId: String)
 
+    /** Rows by primary key. A refresh goes through [CatalogRepository]'s merge, which first finds each show's
+     *  existing row ([existingProviderRows]): with id 0 every existing show would hit the unique provider index. */
     @Upsert
     suspend fun upsertAll(items: List<Series>)
+
+    @Query("SELECT * FROM series WHERE sourceId = :sourceId AND seriesId IN (:seriesIds)")
+    suspend fun existingProviderRows(sourceId: Long, seriesIds: List<String>): List<Series>
 
     @Query("DELETE FROM series WHERE sourceId = :sourceId")
     suspend fun deleteForSource(sourceId: Long)

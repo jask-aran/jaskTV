@@ -4,6 +4,7 @@
  */
 package app.opentv.ui.channels
 
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -50,8 +51,12 @@ fun ChannelMappingDialog(channel: Channel, onDismiss: () -> Unit) {
             busy = false
         }
     }
+    // Neutral dark glass like JaskSheet (no theme-tinted dialog surface).
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = androidx.compose.ui.graphics.Color(0xF0222120),
+        titleContentColor = app.opentv.ui.settings.JaskInk,
+        textContentColor = app.opentv.ui.settings.JaskInk,
         title = { Text("Map channel") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -60,7 +65,7 @@ fun ChannelMappingDialog(channel: Channel, onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall)
                 if (existing != null) {
                     Text("Mapped to ${existing.iptvOrgId}",
-                        color = MaterialTheme.colorScheme.primary)
+                        color = app.opentv.ui.settings.JaskDim)
                 }
                 OutlinedTextField(query, onValueChange = { query = it },
                     singleLine = true, label = { Text("Find channel identity") })
@@ -89,7 +94,7 @@ fun ChannelMappingDialog(channel: Channel, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Done") }
+            TextButton(onClick = onDismiss, modifier = Modifier.jaskFocusRing()) { Text("Done") }
         },
         dismissButton = {
             if (existing != null) TextButton(onClick = {
@@ -97,7 +102,7 @@ fun ChannelMappingDialog(channel: Channel, onDismiss: () -> Unit) {
                     dao.remove(channel.sourceId, channel.streamId)
                     onDismiss()
                 }
-            }) { Text("Clear mapping") }
+            }, modifier = Modifier.jaskFocusRing()) { Text("Clear mapping") }
         },
     )
 }

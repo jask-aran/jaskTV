@@ -1,5 +1,7 @@
 package app.opentv.ui.settings
 
+import app.opentv.ui.jaskFocusLift
+import app.opentv.ui.jaskFocusRing
 import android.app.Application
 import android.net.Uri
 import android.widget.Toast
@@ -32,6 +34,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Star
@@ -106,6 +109,20 @@ import kotlinx.coroutines.withContext
 internal fun JaskSettingsPage(title: String, onBack: (() -> Unit)?, action: (@Composable RowScope.() -> Unit)? = null,
     content: LazyListScope.() -> Unit) = JaskTheme {
     val list = rememberLazyListState()
+    if (LocalJaskSettingsEmbedded.current) {
+        // Inside the wide settings layout: the title and the groups, on the settings page's own background.
+        LazyColumn(Modifier.fillMaxSize().jaskWheelScroll(list), state = list, contentPadding = PaddingValues(end = 16.dp, bottom = 32.dp)) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(start = 6.dp, top = 6.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, color = JaskInk, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    action?.invoke(this)
+                }
+            }
+            content()
+        }
+        return@JaskTheme
+    }
     JaskSurfaceHost(Modifier.fillMaxSize().background(Color(0xFF0E0D0D)), background = {
         LazyColumn(Modifier.fillMaxSize().jaskWheelScroll(list), state = list,
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -129,10 +146,30 @@ internal fun JaskSettingsPage(title: String, onBack: (() -> Unit)?, action: (@Co
 /** Pill button: white for the main action, glass-grey otherwise. */
 @Composable
 internal fun JaskPill(label: String, primary: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
-    Box(Modifier.height(40.dp).clip(RoundedCornerShape(50))
-        .background(if (primary) Color.White.copy(alpha = if (enabled) 1f else .4f) else Color.White.copy(alpha = .1f))
+    Box(Modifier.jaskFocusLift(1.05f).height(40.dp).clip(RoundedCornerShape(50))
+        .background(Color.White.copy(alpha = if (primary) (if (enabled) .24f else .1f) else .1f))
         .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
-        Text(label, color = if (primary) Color(0xFF141312) else JaskInk.copy(alpha = if (enabled) 1f else .45f),
+        Text(label, color = JaskInk.copy(alpha = if (enabled) 1f else .45f),
+            style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+/**
+ * A choice, not an action: selected reads at a glance (light fill, dark type; a check when several can be on),
+ * unselected is an outline. JaskPill's "primary" only brightens the glass, which looked almost the same as off.
+ */
+@Composable
+internal fun JaskChoicePill(label: String, selected: Boolean, check: Boolean = false, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    androidx.compose.foundation.layout.Row(Modifier.jaskFocusLift(1.05f).height(40.dp).clip(shape)
+        .background(if (selected) Color(0xFFEDEDED) else Color.White.copy(alpha = .06f))
+        .then(if (selected) Modifier else Modifier.border(1.dp, Color.White.copy(alpha = .22f), shape))
+        .clickable(onClick = onClick).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (check && selected) {
+            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Check, null, tint = Color(0xFF141312),
+                modifier = Modifier.padding(end = 6.dp).size(16.dp))
+        }
+        Text(label, color = if (selected) Color(0xFF141312) else JaskInk,
             style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
@@ -184,11 +221,11 @@ fun JaskProvidersPage(onAddSource: () -> Unit, onEditSource: (Source) -> Unit, o
                             else "${source.kind.name} · ${hostOf(source.url)}", color = JaskDim, style = MaterialTheme.typography.bodySmall,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    if (source.isLocalPlaylist) TextButton(enabled = !ui.syncing, onClick = { importing = source; picker.launch(arrayOf("*/*")) }) {
+                    if (source.isLocalPlaylist) TextButton(enabled = !ui.syncing, onClick = { importing = source; picker.launch(arrayOf("*/*")) }, modifier = Modifier.jaskFocusRing()) {
                         Text(stringResource(R.string.local_playlist_reimport))
                     }
-                    TextButton(onClick = { onEditSource(source) }) { Text(stringResource(R.string.common_edit)) }
-                    TextButton(onClick = { removing = source }) { Text(stringResource(R.string.common_remove), color = ErrorInk) }
+                    TextButton(onClick = { onEditSource(source) }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_edit)) }
+                    TextButton(onClick = { removing = source }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_remove), color = ErrorInk) }
                 }
                 // Stream format is an Xtream panel setting; M3U sources carry their own URLs.
                 if (source.kind == SourceKind.XTREAM) {
@@ -350,7 +387,7 @@ private fun PasteButton(onPaste: (String) -> Unit) {
         val pasted = readClipboardText(context)
         if (pasted != null) onPaste(pasted)
         else Toast.makeText(context, context.getString(R.string.kbd_clipboard_empty), Toast.LENGTH_SHORT).show()
-    }) { Icon(Icons.Filled.ContentPaste, stringResource(R.string.kbd_paste)) }
+    }, modifier = Modifier.jaskFocusRing()) { Icon(Icons.Filled.ContentPaste, stringResource(R.string.kbd_paste)) }
 }
 
 // ---- Guides ---------------------------------------------------------------------------------
@@ -378,7 +415,7 @@ fun JaskGuidesPage(onBack: () -> Unit, viewModel: EpgViewModel = viewModel()) {
                             if (feed.lastResult.isNotEmpty()) Text(feed.lastResult, color = JaskDim, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                         }
                         // Only feeds you added can be removed; provider and built-in ones are switched off instead.
-                        if (!feed.builtIn && feed.providerSourceId == null) TextButton(onClick = { viewModel.remove(feed) }) {
+                        if (!feed.builtIn && feed.providerSourceId == null) TextButton(onClick = { viewModel.remove(feed) }, modifier = Modifier.jaskFocusRing()) {
                             Text(stringResource(R.string.common_remove), color = ErrorInk)
                         }
                         JaskGlassSwitch(feed.enabled)
@@ -524,8 +561,8 @@ fun JaskProfilesPage(onBack: () -> Unit, viewModel: ProfilesViewModel = viewMode
                             Text(profile.name, color = JaskInk, style = MaterialTheme.typography.bodyLarge, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
                             if (active) Text(stringResource(R.string.profiles_active), color = JaskDim, style = MaterialTheme.typography.bodySmall)
                         }
-                        TextButton(onClick = { editing = profile.id }) { Text(stringResource(R.string.profiles_rename)) }
-                        if (profile.id != 1L) TextButton(onClick = { viewModel.remove(profile.id) }) { Text(stringResource(R.string.common_remove), color = ErrorInk) }
+                        TextButton(onClick = { editing = profile.id }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.profiles_rename)) }
+                        if (profile.id != 1L) TextButton(onClick = { viewModel.remove(profile.id) }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_remove), color = ErrorInk) }
                     }
                 }
             }
@@ -626,7 +663,7 @@ fun JaskAddonsPage(onBack: () -> Unit) {
                             // Host only: a personalised manifest URL can carry a key.
                             Text(hostOf(addon.manifestUrl), color = JaskDim, style = MaterialTheme.typography.bodySmall)
                         }
-                        TextButton(onClick = { viewModel.remove(addon) }) { Text(stringResource(R.string.common_remove), color = ErrorInk) }
+                        TextButton(onClick = { viewModel.remove(addon) }, modifier = Modifier.jaskFocusRing()) { Text(stringResource(R.string.common_remove), color = ErrorInk) }
                     }
                 }
             }
@@ -671,8 +708,8 @@ fun JaskChannelsPage(onBack: () -> Unit, viewModel: ChannelsViewModel = viewMode
                     LazyRow(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(groups, key = { it.key }) { group ->
                             val on = group.key == selectedCategory
-                            Text(group.label, color = if (on) Color(0xFF141312) else JaskInk, style = MaterialTheme.typography.labelLarge, maxLines = 1,
-                                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) JaskInk else Color.White.copy(alpha = .08f))
+                            Text(group.label, color = if (on) JaskInk else JaskDim, style = MaterialTheme.typography.labelLarge, maxLines = 1,
+                                modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = if (on) .26f else .07f))
                                     .clickable { viewModel.selectManagerCategory(group.key) }.padding(horizontal = 14.dp, vertical = 8.dp))
                         }
                     }

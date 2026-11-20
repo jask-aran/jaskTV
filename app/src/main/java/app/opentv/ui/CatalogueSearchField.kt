@@ -1,6 +1,7 @@
 /* jaskTV — GPL-3.0-or-later. */
 package app.opentv.ui
 
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,7 +58,7 @@ internal fun CatalogueSearchField(
                 }
                 if (query.isNotEmpty() || onClose != null) IconButton(onClick = {
                     if (query.isNotEmpty()) onQuery("") else { keyboard?.hide(); onClose?.invoke() }
-                }, modifier = Modifier.size(32.dp)) {
+                }, modifier = Modifier.jaskFocusRing().then(Modifier.size(32.dp))) {
                     Icon(Icons.Filled.Close, stringResource(if (query.isNotEmpty())
                         R.string.search_recent_clear else R.string.common_cancel), Modifier.size(18.dp))
                 }

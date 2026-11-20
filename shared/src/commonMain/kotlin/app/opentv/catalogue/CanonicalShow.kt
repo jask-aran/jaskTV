@@ -105,16 +105,15 @@ object ShowMatching {
     }
 }
 
-class CanonicalShowResolver(private val http: OkHttpClient, private val settings: AppSettings) {
+/** [urgent]: for something on screen now (the home's shows), ahead of background matching's pace (see [TmdbGate]). */
+class CanonicalShowResolver(private val http: OkHttpClient, private val settings: AppSettings, private val urgent: Boolean = false) {
     private val json = Json { ignoreUnknownKeys = true }
 
     private suspend fun fetch(id: Int): JsonObject? {
-        delay(80) // TMDB allows far more; serial requests keep this gentle (~12/s).
         val url = "https://api.themoviedb.org/3/tv/$id".toHttpUrl().newBuilder()
             .addQueryParameter("api_key", settings.tmdbApiKey.value.trim()).build()
-        return http.newCall(Request.Builder().url(url).build()).execute().use {
-            if (it.code == 404) return null
-            if (!it.isSuccessful) throw IOException("Metadata service HTTP ${it.code}")
+        val request = Request.Builder().url(url).build()
+        return TmdbGate.request({ http.newCall(request) }, urgent) {
             json.parseToJsonElement(it.body?.string() ?: throw IOException("Empty metadata response")).jsonObject
         }
     }

@@ -8,6 +8,8 @@ import { DurableObject } from "cloudflare:workers";
 export interface Env {
   DB: D1Database;
   ACCOUNT: DurableObjectNamespace<Account>;
+  /** Each account's files (sealed on the device: the server can't read them), under "<user id>/". */
+  BLOBS?: R2Bucket;
   GOOGLE_CLIENT_IDS: string;
   ENVIRONMENT: string;
   DEV_AUTH?: string;
@@ -285,7 +287,9 @@ export class Account extends DurableObject<Env> {
     pair[1].serializeAttachment({ deviceId, net: request.headers.get("X-Jask-Net") ?? "" });
     pair[1].send(JSON.stringify({ t: "hello", rev: Number(this.meta("rev") ?? 0), seq: Number(this.meta("seq") ?? 0), now: Date.now(),
       net: request.headers.get("X-Jask-Net") ?? "" }));
-    return new Response(null, { status: 101, webSocket: pair[0] });
+    // The control panel signs in through a subprotocol (see authenticate): a browser needs one of its offers echoed.
+    const panel = (request.headers.get("Sec-WebSocket-Protocol") ?? "").split(",").some((p) => p.trim() === "jasktv");
+    return new Response(null, { status: 101, webSocket: pair[0], headers: panel ? { "Sec-WebSocket-Protocol": "jasktv" } : {} });
   }
 
   /**

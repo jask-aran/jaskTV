@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dev build's Android TV banner (320x180): the release banner inverted, dark wordmark on light grey, the way
+     Conduit marks its dev build, so the launcher shows at a glance which jaskTV is which. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item><shape android:shape="rectangle"><solid android:color="#FFEDEEF0" /></shape></item>
+    <item android:drawable="@drawable/banner_wordmark_dev" />
+    <!-- A dark strip along the bottom edge: still clear when the launcher draws the banner small. -->
+    <item android:gravity="bottom" android:height="14dp"><shape android:shape="rectangle"><solid android:color="#FF08090A" /></shape></item>
+</layer-list>

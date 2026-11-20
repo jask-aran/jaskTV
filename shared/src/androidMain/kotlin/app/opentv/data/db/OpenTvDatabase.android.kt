@@ -362,15 +362,36 @@ object OpenTvDatabaseAndroid {
             }
         }
 
+        /** 23 → 25 directly: version 24's browse tables were added and removed again (see BrowseTablesMigration). */
+        val MIGRATION_23_25 = object : Migration(23, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) = Unit
+        }
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                app.opentv.catalogue.BrowseTablesMigration.drop24to25.forEach(db::execSQL)
+            }
+        }
+
+        private val writeExecutor: java.util.concurrent.Executor = java.util.concurrent.Executors.newFixedThreadPool(2) { runnable ->
+            Thread({
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                runnable.run()
+            }, "jask-db-write").apply { isDaemon = true }
+        }
+
         fun build(context: Context): OpenTvDatabase =
             Room.databaseBuilder(context, OpenTvDatabase::class.java, "opentv.db")
                 // WAL keeps guide writes from blocking guide reads, so a background EPG
                 // refresh cannot make the UI stutter on a slow TV box.
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
+                // Writes (every Room write is a transaction) on background-priority threads: a catalogue or guide import
+                // writes for seconds at a time, and at normal priority that competed with layout and drawing on a TV
+                // stick's few cores. Reads stay on Room's default threads, so screens load at normal priority.
+                .setTransactionExecutor(writeExecutor)
                 .addMigrations(
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
-                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23,
+                    MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_25, MIGRATION_24_25,
                 )
                 // v1 predates the retained migration chain; all versions >= 2 must migrate.
                 .fallbackToDestructiveMigrationFrom(1)

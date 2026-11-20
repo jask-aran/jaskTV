@@ -4,6 +4,7 @@
  */
 package app.opentv.ui.library
 
+import app.opentv.ui.jaskFocusRing
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -52,10 +53,10 @@ fun CollectionPickerDialog(
                         dao.add(CollectionEntry(id, kind, sourceId, itemKey))
                         onDismiss()
                     }
-                }) { Text("Create and save") }
+                }, modifier = Modifier.jaskFocusRing()) { Text("Create and save") }
             },
             dismissButton = {
-                TextButton(onClick = { creating = false }) { Text("Back") }
+                TextButton(onClick = { creating = false }, modifier = Modifier.jaskFocusRing()) { Text("Back") }
             },
         )
     } else AlertDialog(
@@ -82,9 +83,9 @@ fun CollectionPickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        confirmButton = { TextButton(onClick = onDismiss, modifier = Modifier.jaskFocusRing()) { Text("Done") } },
         dismissButton = {
-            TextButton(onClick = { creating = true }) { Text("New collection") }
+            TextButton(onClick = { creating = true }, modifier = Modifier.jaskFocusRing()) { Text("New collection") }
         },
     )
 }

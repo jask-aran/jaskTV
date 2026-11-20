@@ -55,6 +55,8 @@ class LanLink(
     private val onLinked: (String) -> Unit = {},
     /** A device's address that worked, to remember for dialling straight away next time. */
     private val onEndpoint: (Endpoint) -> Unit = {},
+    /** Another device asked for a bulk copy: write it with [emit] (false: the connection broke, stop). */
+    private val onBulk: suspend (BulkRequest, emit: (BulkChunk) -> Boolean) -> Unit = { _, emit -> emit(BulkChunk(done = true, found = false)) },
     /** Whether a device is still on the account (a removed device keeps the key until it next reaches the server). */
     private val allowed: (String) -> Boolean = { true },
 ) {
@@ -64,7 +66,16 @@ class LanLink(
      */
     @Serializable data class Frame(val from: String, val at: Long, val records: List<WireRecord> = emptyList(), val presence: Presence? = null,
         val command: RemoteCommand? = null, val to: String? = null, val ping: Long? = null, val pong: Long? = null,
-        val nonce: String? = null, val sid: String? = null)
+        val nonce: String? = null, val sid: String? = null,
+        /** A one-off bulk copy asked for in the dialler's first frame (LAN sync, see [LanCatalogue]). */
+        val bulk: BulkRequest? = null, val chunk: BulkChunk? = null)
+
+    /** Asks a device for a playlist source's catalogue. [source] names the source portably ([LanCatalogue.sourceKey]). */
+    @Serializable data class BulkRequest(val source: String, val part: String)
+
+    /** Part of a bulk reply: rows of one table, or the end ([done]; [found] false: that device doesn't have it). */
+    @Serializable data class BulkChunk(val table: String = "", val columns: List<String> = emptyList(),
+        val rows: List<List<kotlinx.serialization.json.JsonElement>> = emptyList(), val done: Boolean = false, val found: Boolean = true)
 
     /** What a device is doing now. Never stored. */
     @Serializable data class Presence(
@@ -122,6 +133,10 @@ class LanLink(
         private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "jaskLan").apply { isDaemon = true } }
         @Volatile var heard = System.currentTimeMillis()
         @Volatile var closed = false
+        /** Set on a connection that asked for a bulk copy instead of a link. */
+        @Volatile var bulk: BulkRequest? = null
+        /** Writes straight to the socket on the calling thread (bulk replies: waits for the network, in order). */
+        fun sendNow(f: Frame): Boolean = !closed && runCatching { out.println(seal(f.copy(sid = f.sid ?: theirs))); !out.checkError() }.getOrDefault(false)
         /** Who opened this connection: of two connections between the same devices, both keep the one the lower id opened. */
         val opener get() = if (dialled) deviceId else device
         fun send(f: Frame): Boolean {
@@ -162,6 +177,8 @@ class LanLink(
 
     /** A device of this account (or, from network discovery, possibly someone else's) is at [endpoint]: dial until linked. */
     fun connect(endpoint: Endpoint) {
+        // Cores announce themselves like devices: this is a core's current home-network address.
+        app.opentv.account.CoreDirectory.seen(endpoint.device, endpoint.host)
         if (endpoint.device == deviceId || !allowed(endpoint.device)) return
         known[endpoint.device] = endpoint
         if (peers.containsKey(endpoint.device)) return
@@ -233,7 +250,7 @@ class LanLink(
                         // Step 2 (on the side that was dialled): the dialler's number; answer with ours.
                         !p.dialled && p.theirs == null && f.nonce != null && f.sid == null -> {
                             if (!allowed(f.from)) break
-                            p.device = f.from; p.theirs = f.nonce
+                            p.device = f.from; p.theirs = f.nonce; p.bulk = f.bulk
                             p.send(Frame(deviceId, now(), nonce = p.mine))
                         }
                         // Step 3 (dialler): our number came back with theirs: linked; confirm.
@@ -241,6 +258,16 @@ class LanLink(
                             p.theirs = f.nonce
                             p.send(Frame(deviceId, now(), ping = System.nanoTime() / 1_000_000))
                             link(p); everLinked = true
+                        }
+                        // Dialled side, a bulk request: answer it on this connection, then hang up (never a link).
+                        !p.dialled && p.theirs != null && p.bulk != null && f.sid == p.mine && f.from == p.device -> {
+                            p.authed = true; pending.decrementAndGet()
+                            p.socket.soTimeout = 60_000
+                            val req = p.bulk!!
+                            runCatching { onBulk(req) { chunk -> p.sendNow(Frame(deviceId, now(), chunk = chunk)) } }
+                                .onFailure { Log.w(TAG, "LAN bulk reply failed", it); p.sendNow(Frame(deviceId, now(), chunk = BulkChunk(done = true, found = false))) }
+                            p.close()
+                            return false
                         }
                         // Dialled side: the confirmation carries our number: linked.
                         !p.dialled && p.theirs != null && f.sid == p.mine && f.from == p.device -> { link(p); everLinked = true }
@@ -261,6 +288,38 @@ class LanLink(
         drop(p)
         return everLinked
     }
+
+    /**
+     * Asks [device] (linked, or at least known) for a bulk copy and hands each chunk to [onChunk] as it arrives.
+     * A separate connection, so the link (remote presses, presence) isn't held up. True: it arrived complete.
+     */
+    suspend fun fetch(device: String, request: BulkRequest, onChunk: suspend (BulkChunk) -> Unit): Boolean =
+        kotlinx.coroutines.withContext(io) {
+            val ep = known[device] ?: return@withContext false
+            val s = runCatching { Socket().apply { connect(InetSocketAddress(ep.host, ep.port), 1500); tcpNoDelay = true; soTimeout = 60_000 } }
+                .getOrNull() ?: return@withContext false
+            val p = Peer(device, s, dialled = true)
+            try {
+                if (!p.sendNow(Frame(deviceId, now(), nonce = p.mine, bulk = request))) return@withContext false
+                val reader = InputStreamReader(s.getInputStream(), Charsets.UTF_8).buffered(256 * 1024)
+                while (true) {
+                    val f = open(readLine(reader, MAX_FRAME) ?: return@withContext false) ?: return@withContext false
+                    if (f.from != device || f.sid != p.mine) return@withContext false
+                    if (p.theirs == null) {
+                        // Their number: confirm, and the reply starts.
+                        p.theirs = f.nonce ?: return@withContext false
+                        if (!p.sendNow(Frame(deviceId, now(), ping = 0))) return@withContext false
+                        continue
+                    }
+                    val c = f.chunk ?: continue
+                    if (c.done) return@withContext c.found
+                    onChunk(c)
+                }
+                @Suppress("UNREACHABLE_CODE") false
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Log.d(TAG, "LAN bulk fetch failed: ${e.message}"); false }
+            finally { p.close() }
+        }
 
     /** A line of at most [max] characters (longer: the connection is dropped), or null at the end. */
     private fun readLine(r: Reader, max: Int): String? {

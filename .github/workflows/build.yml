@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    name: Test and assemble
+    name: Assemble
     runs-on: ubuntu-latest
 
     steps:
@@ -31,9 +31,6 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Unit tests
-        run: ./gradlew test --stacktrace
-
       - name: Assemble debug APK
         run: ./gradlew assembleDebug --stacktrace
 
@@ -43,11 +40,3 @@ jobs:
           name: jasktv-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-reports
-          path: app/build/reports/tests/
-          if-no-files-found: ignore

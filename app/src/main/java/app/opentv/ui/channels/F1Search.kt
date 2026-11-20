@@ -1,5 +1,6 @@
 package app.opentv.ui.channels
 
+import app.opentv.ui.jaskFocusLift
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -29,7 +30,7 @@ internal fun F1SessionRow(session: F1Session, discovery: F1Discovery, onPlay: (C
         }
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(12.dp)) {
+        Column(Modifier.jaskFocusLift(1.02f).fillMaxWidth().clickable { expanded = !expanded }.padding(12.dp)) {
             Text("${session.grandPrix} · ${session.session}", style = MaterialTheme.typography.titleMedium)
             val time = Instant.ofEpochMilli(session.startUtcMillis).atZone(ZoneId.systemDefault())
                 .format(DateTimeFormatter.ofPattern("EEE d MMM · HH:mm z"))
@@ -42,7 +43,7 @@ internal fun F1SessionRow(session: F1Session, discovery: F1Discovery, onPlay: (C
             else if (candidates.isEmpty()) Text("No channel matches found. The session is still scheduled.", Modifier.padding(12.dp))
             candidates.forEach { candidate ->
                 Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f).clickable { onPlay(candidate.channel) }.padding(vertical = 12.dp)) {
+                    Column(Modifier.jaskFocusLift(1.02f).weight(1f).clickable { onPlay(candidate.channel) }.padding(vertical = 12.dp)) {
                         Text(candidate.channel.shownName)
                         Text(candidate.evidence.label, style = MaterialTheme.typography.labelMedium)
                         Text(candidate.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

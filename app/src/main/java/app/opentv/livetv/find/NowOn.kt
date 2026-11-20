@@ -19,11 +19,14 @@ class NowOn(context: Context) {
     suspend fun lookup(channels: List<FindChannel>, now: Long = System.currentTimeMillis()): Map<String, Programme> = withContext(Dispatchers.IO) {
         val fresh = channels.filter { (checked[it.key] ?: 0) < now - 60_000 }.take(60)
         if (fresh.isNotEmpty()) {
-            val rows = db.channels().byIds(fresh.map { it.streamIds.first() }).associateBy { it.id }
+            // Every copy of a card counts (its best copy often has no guide id when another does), and so does the
+            // card's real-channel identity: providers use IPTV-org's ids for their guides, so it names the guide channel.
+            val rows = db.channels().byIds(fresh.flatMap { it.streamIds.take(8) }).associateBy { it.id }
             val candidateIds = rows.values.flatMap { listOfNotNull(it.epgOverrideId, it.epgChannelId, it.matchedEpgId) }.distinct()
             val aliases = if (candidateIds.isEmpty()) emptyList() else db.epgAliases().forIds(candidateIds)
             val idsByCard = fresh.associate { card ->
-                card.key to (rows[card.streamIds.first()]?.let { GuideEvidence.ids(it, aliases) }.orEmpty())
+                card.key to (card.streamIds.take(8).flatMap { id -> rows[id]?.let { GuideEvidence.ids(it, aliases) }.orEmpty() } +
+                    listOfNotNull(card.identity)).distinct()
             }
             val programmes = idsByCard.values.flatten().distinct().takeIf { it.isNotEmpty() }
                 ?.let { db.programmes().nowOn(it, now) }.orEmpty().groupBy { it.epgChannelId }

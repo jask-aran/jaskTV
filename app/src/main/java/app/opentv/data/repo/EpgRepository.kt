@@ -72,6 +72,9 @@ class EpgRepository(
     /** Remembers when the matcher last ran (and its result) so a launch with nothing new skips it. */
     private val prefs: android.content.SharedPreferences? = null,
 ) {
+    /** The network guide failed on the last pass (see sync): fall back to the regional guides. This run only. */
+    @Volatile private var networkGuideFailed = false
+
 
     data class SyncSummary(
         val feedsSucceeded: Int,
@@ -148,6 +151,10 @@ class EpgRepository(
             }
         }
         val existing = feedDao.all()
+        // The network's guide (a core builds it for the account's channels; see NetworkGuide): always present.
+        if (existing.none { it.url == app.opentv.account.NetworkGuide.URL }) {
+            feedDao.insert(EpgFeed(name = "Your jaskTV network", url = app.opentv.account.NetworkGuide.URL, enabled = true))
+        }
         for ((name, url) in BUILT_IN_FEEDS) {
             // epgshare01 renames files (US1 → US2, CA1 → CA2): repair the stored row by name so the
             // user's enabled state survives and no duplicate appears beside the dead link.
@@ -179,7 +186,16 @@ class EpgRepository(
             // Feeds actually downloaded this pass (succeeded also counts fresh feeds it skipped).
             var downloaded = 0
 
+            // With the network's guide available, this device doesn't download the big free regional guides itself
+            // (a core already matched them to the account's channels); without it, it does, as before.
+            // A core can advertise the guide before it has one for these playlists: after a failed network pass, this
+            // device downloads the regional guides itself until the network guide lands again.
+            val networkOffered = app.opentv.account.NetworkGuide.available(
+                sourceDao.enabled().filter { it.kind == app.opentv.data.model.SourceKind.XTREAM }.map { app.opentv.account.sync.LanCatalogue.sourceKey(it) })
+            val network = networkOffered && !networkGuideFailed
             for (feed in feedDao.enabled()) {
+                if (feed.url == app.opentv.account.NetworkGuide.URL && !networkOffered) continue
+                if (network && feed.builtIn && feed.url?.contains("epgshare01") == true) continue
                 // A local file has no provider host from which xmltv.php can be inferred.
                 val provider = feed.providerSourceId?.let { sourceDao.byId(it) }
                 if (provider?.isLocalPlaylist == true && provider.epgUrl.isNullOrBlank()) continue
@@ -189,6 +205,7 @@ class EpgRepository(
                 }
                 when (val result = syncFeed(feed, nowUtcMillis)) {
                     is FeedResult.Success -> {
+                        if (feed.url == app.opentv.account.NetworkGuide.URL) networkGuideFailed = false
                         succeeded++
                         downloaded++
                         written += result.programmes
@@ -201,6 +218,7 @@ class EpgRepository(
                         guideChanged()
                     }
                     is FeedResult.Failed -> {
+                        if (feed.url == app.opentv.account.NetworkGuide.URL) networkGuideFailed = true
                         failed++
                         // The stamp is NOT advanced on failure, so the next sync retries
                         // rather than waiting out the interval on a feed that never landed.
@@ -240,7 +258,9 @@ class EpgRepository(
     }
 
     private suspend fun syncFeed(feed: EpgFeed, nowUtcMillis: Long): FeedResult {
-        val batch = ArrayList<Programme>(BATCH_SIZE)
+        // Programmes are written in large transactions: each one tells every open guide screen to query again, and a
+        // big guide written 500 at a time did that several hundred times a refresh.
+        val batch = ArrayList<Programme>(PROGRAMME_BATCH)
         val aliases = ArrayList<EpgChannelAlias>(256)
         var written = 0
 
@@ -262,7 +282,7 @@ class EpgRepository(
                         // writing rows we are about to prune.
                         if (programme.endUtcMillis >= nowUtcMillis - RETENTION_PAST_MILLIS) {
                             batch += programme
-                            if (batch.size >= BATCH_SIZE) {
+                            if (batch.size >= PROGRAMME_BATCH) {
                                 programmeDao.upsertAll(batch)
                                 written += batch.size
                                 batch.clear()
@@ -318,6 +338,11 @@ class EpgRepository(
                     checkNotNull(response.body).byteStream()
                 } else api.openEpgStream(source)
             }
+            feed.url == app.opentv.account.NetworkGuide.URL -> {
+                val keys = sourceDao.enabled().filter { it.kind == app.opentv.data.model.SourceKind.XTREAM }.map { app.opentv.account.sync.LanCatalogue.sourceKey(it) }
+                keys.firstNotNullOfOrNull { app.opentv.account.NetworkGuide.open(it, http) }
+                    ?: throw IllegalStateException("No core or account copy of the network guide yet.")
+            }
             feed.url != null -> {
                 val response = http.newCall(Request.Builder().url(feed.url!!).build()).execute()
                 if (!response.isSuccessful) {
@@ -330,7 +355,17 @@ class EpgRepository(
             else -> throw IllegalStateException("Feed has no URL and no provider.")
         }
 
-        val buffered = BufferedInputStream(raw, 8 * 1024)
+        // Save the whole guide first, then read it from the file. Reading straight from the network while writing
+        // every programme to the database took longer than the HTTP client allows on a Fire TV (60 MB, ~180k
+        // programmes): the download was cut off and retried every few minutes, holding one of the provider
+        // account's connections the whole time. Saving takes seconds and lets the connection go.
+        val file = java.io.File.createTempFile("guide", ".xml", java.io.File(System.getProperty("java.io.tmpdir") ?: "/data/local/tmp"))
+        try { raw.use { input -> file.outputStream().use { input.copyTo(it, 64 * 1024) } } }
+        catch (e: Exception) { file.delete(); throw e }
+        val fromFile = object : java.io.FileInputStream(file) {
+            override fun close() { try { super.close() } finally { file.delete() } }
+        }
+        val buffered = BufferedInputStream(fromFile, 64 * 1024)
         buffered.mark(2)
         val b1 = buffered.read()
         val b2 = buffered.read()
@@ -354,15 +389,17 @@ class EpgRepository(
         val channels = channelDao.allForMatching()
         var matched = 0
 
+        // Changed matches are written together at the end: one write instead of one per channel, each of which made
+        // the open channel lists query again.
+        val changes = ArrayList<Pair<Long, String?>>()
         for (channel in channels) {
             val newMatch = index.match(channel.groupKey)
-            if (newMatch != channel.matchedEpgId) {
-                channelDao.setMatchedEpgId(channel.id, newMatch)
-            }
+            if (newMatch != channel.matchedEpgId) changes += channel.id to newMatch
             val works = channel.epgCandidates.any { it in populated } ||
                 (newMatch != null && newMatch in populated)
             if (works) matched++
         }
+        if (changes.isNotEmpty()) channelDao.setMatchedEpgIds(changes)
 
         Log.i(
             TAG,
@@ -431,6 +468,7 @@ class EpgRepository(
 
         /** Writes per transaction. Large enough to be fast, small enough not to hold WAL open. */
         const val BATCH_SIZE = 500
+        private const val PROGRAMME_BATCH = 10_000
 
         /** Keep finished programmes for a day so "what was on" still works. */
         val RETENTION_PAST_MILLIS: Long = TimeUnit.DAYS.toMillis(1)

@@ -147,6 +147,18 @@ class CatalogRepository(
     private val tmdb = TmdbClient(http, settings)
     private val vodInventoryMutex = Mutex()
 
+    /**
+     * LAN sync: fills an empty catalogue part ([app.opentv.account.sync.LanCatalogue.LIVE] or VOD) from another of
+     * the account's devices on this Wi-Fi before downloading it from the provider. Returns whether it did. Set by
+     * the account once its direct link is up ([fromNearby]); null without an account.
+     */
+    private suspend fun fillFromNearby(source: Source, part: String): Boolean {
+        val fill = fromNearby ?: return false
+        val db = database ?: return false
+        if (app.opentv.account.sync.LanCatalogue.has(db.openHelper.readableDatabase, source.id, part)) return false
+        return runCatching { fill(source, part) }.getOrDefault(false)
+    }
+
     sealed interface SyncResult {
         data class Success(
             val channelCount: Int,
@@ -226,6 +238,11 @@ class CatalogRepository(
      */
     suspend fun imdbIdFor(movie: Movie): String? = withContext(Dispatchers.IO) {
         tmdb.imdbId(title = movie.name, year = movie.year, isMovie = true, tmdbId = movie.tmdbId)
+    }
+
+    /** A TMDB title's IMDb id (what add-ons search by), for titles no source has. */
+    suspend fun imdbIdFor(title: String, year: Int?, tmdbId: Int?, movie: Boolean): String? = withContext(Dispatchers.IO) {
+        tmdb.imdbId(title = title, year = year, isMovie = movie, tmdbId = tmdbId?.toString())
     }
 
     suspend fun imdbIdFor(series: Series): String? = withContext(Dispatchers.IO) {
@@ -658,7 +675,8 @@ class CatalogRepository(
         val live =
             if (settings.liveEnabled.value) syncLive(source, nowUtcMillis)
             else SyncResult.Success(0, 0, 0)
-        if (live is SyncResult.Success && source.kind == SourceKind.XTREAM) {
+        if (live is SyncResult.Success && source.kind == SourceKind.XTREAM &&
+            !fillFromNearby(source, app.opentv.account.sync.LanCatalogue.VOD)) {
             runCatching { syncXtreamVod(source, nowUtcMillis) }
                 .onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
         }
@@ -668,6 +686,7 @@ class CatalogRepository(
     /** Live channels only — the fast path so the guide can show before VOD and the guide load. */
     suspend fun syncLive(source: Source, nowUtcMillis: Long): SyncResult = withContext(Dispatchers.IO) {
         if (!source.canRefreshCatalogue()) return@withContext SyncResult.Success(0, 0, 0)
+        if (fillFromNearby(source, app.opentv.account.sync.LanCatalogue.LIVE)) return@withContext SyncResult.Success(0, 0, 0)
         try {
             when (source.kind) {
                 SourceKind.XTREAM -> syncXtreamLive(source, nowUtcMillis)
@@ -686,7 +705,23 @@ class CatalogRepository(
      * remain retryable; live channels and already imported titles remain available. */
     suspend fun syncVod(source: Source, nowUtcMillis: Long): Boolean = withContext(BackgroundWork.dispatcher) {
         if (source.kind != SourceKind.XTREAM) return@withContext true
+        if (fillFromNearby(source, app.opentv.account.sync.LanCatalogue.VOD)) return@withContext true
         syncXtreamVod(source, nowUtcMillis)
+    }
+
+    /**
+     * Takes jasktv-core's changes to the live list (renamed event slots, mostly): one small request. Null: no core
+     * answered with changes, nothing written. Else how many channels changed or went.
+     */
+    suspend fun liveChangesFromCore(source: Source, nowUtcMillis: Long = System.currentTimeMillis()): Int? = withContext(Dispatchers.IO) {
+        if (source.kind != SourceKind.XTREAM || !source.enabled) return@withContext null
+        val (channels, copy) = api.liveChangesFromCore(source) ?: return@withContext null
+        if (channels.isNotEmpty() || copy.removed.isNotEmpty()) {
+            val names = categoryDao.allByKind(StreamKind.LIVE).filter { it.sourceId == source.id }.associate { it.id to it.name }
+            channelDao.applyChanges(source.id, normalized(channels, names), copy.removed, nowUtcMillis)
+        }
+        copy.commit()
+        channels.size + copy.removed.size
     }
 
     private suspend fun syncXtreamLive(source: Source, nowUtcMillis: Long): SyncResult {
@@ -695,7 +730,16 @@ class CatalogRepository(
         api.authenticate(source)
 
         val liveCategories = api.liveCategories(source)
-        val channels = api.liveStreams(source)
+        val (channels, copy) = api.liveStreamsCopy(source)
+        if (copy.delta) {
+            // From jasktv-core, only what changed since this device's last copy (often nothing).
+            categoryDao.upsertAll(liveCategories)
+            channelDao.applyChanges(source.id, normalized(channels, liveCategories.associate { it.id to it.name }), copy.removed, nowUtcMillis)
+            copy.commit()
+            sourceDao.markCatalogSynced(source.id, nowUtcMillis)
+            Log.i(TAG, "Live channels from core: ${channels.size} changed, ${copy.removed.size} removed")
+            return SyncResult.Success(channelDao.countForSource(source.id), 0, 0)
+        }
         if (channels.isEmpty()) {
             return SyncResult.Failed(
                 AppText.get(R.string.err_no_channels_xtream),
@@ -706,6 +750,7 @@ class CatalogRepository(
         categoryDao.upsertAll(liveCategories)
         val categoryNames = liveCategories.associate { it.id to it.name }
         channelDao.replaceCatalogue(source.id, normalized(channels, categoryNames), nowUtcMillis)
+        copy.commit()
         sourceDao.markCatalogSynced(source.id, nowUtcMillis)
         return SyncResult.Success(channels.size, 0, 0)
     }
@@ -738,6 +783,16 @@ class CatalogRepository(
      * create_link from the channel's [Channel.cmd]. Falls back to the stored streamUrl if resolution
      * fails, so the player surfaces an error rather than silently doing nothing.
      */
+    /**
+     * The URL for a muted preview of [channel]: on Xtream, raw MPEG-TS whatever the playback setting. HLS has to
+     * fetch a playlist and then a whole first segment (often 6-10 s of video, several MB) before showing a frame;
+     * a TS stream starts drawing after its first keyframe arrives.
+     */
+    suspend fun previewUrl(channel: Channel, source: Source?): String =
+        if (source?.kind == SourceKind.XTREAM && source.liveFormat != app.opentv.data.model.LiveStreamFormat.MPEG_TS)
+            api.liveStreamUrl(source.copy(liveFormat = app.opentv.data.model.LiveStreamFormat.MPEG_TS), channel.streamId)
+        else resolvePlaybackUrl(channel, source)
+
     suspend fun resolvePlaybackUrl(channel: Channel, source: Source?): String {
         if (source?.kind != SourceKind.STALKER) return channel.streamUrl
         val cmd = channel.cmd?.takeIf { it.isNotBlank() } ?: return channel.streamUrl
@@ -765,22 +820,55 @@ class CatalogRepository(
         }
         // Shows must not wait behind a provider's much larger movie catalogue. A failure
         // in either kind leaves existing data intact and still allows the other to import.
+        // Timings in the log: how long each kind took, and how much of that was database writes.
+        fun timed(what: String, started: Long, rows: Int, writing: Long) =
+            Log.i(TAG, "VOD timing ${source.id} $what: $rows rows in ${System.currentTimeMillis() - started} ms, writes ${writing} ms")
         if (seriesOn) {
             importKind { categoryDao.upsertAll(api.seriesCategories(source)) }
-            importKind { api.series(source) { seriesDao.upsertAll(it) } }
+            importKind {
+                val started = System.currentTimeMillis(); var writing = 0L; var rows = 0
+                val writes = Coalesced<Series> { batch ->
+                    val t = System.currentTimeMillis()
+                    // Each show onto its existing row (keeping its id and favourite); unchanged shows aren't written.
+                    batch.chunked(500).forEach { part ->
+                        val existing = seriesDao.existingProviderRows(source.id, part.map { it.seriesId }).associateBy { it.seriesId }
+                        val changed = part.mapNotNull { s ->
+                            val previous = existing[s.seriesId]
+                            s.copy(id = previous?.id ?: 0, favourite = previous?.favourite ?: s.favourite).takeIf { it != previous }
+                        }
+                        if (changed.isNotEmpty()) seriesDao.upsertAll(changed)
+                    }
+                    rows += batch.size; writing += System.currentTimeMillis() - t
+                }
+                val copy = api.series(source) { writes.add(it) }
+                writes.finish()
+                // Shows gone from the provider aren't deleted on a whole copy either (playback history points at them).
+                copy.commit()
+                timed(if (copy.delta) "series (changes from core)" else "series", started, rows, writing)
+            }
         }
         if (moviesOn) {
             importKind { categoryDao.upsertAll(api.movieCategories(source)) }
             importKind {
-                val generation = java.util.UUID.randomUUID().toString()
                 val identities = database?.canonicalMovies()
-                api.movies(source) { batch ->
+                val started = System.currentTimeMillis(); var writing = 0L; var rows = 0
+                // Which films the provider lists now: the inventory changes by the difference once the list is complete
+                // (a list cut off halfway leaves the previous inventory as it was).
+                val present = HashSet<String>(200_000)
+                val writes = Coalesced<Movie> { batch ->
+                    val t = System.currentTimeMillis()
                     movieDao.upsertAll(batch)
-                    identities?.stageInventory(batch.map {
-                        app.opentv.catalogue.MovieInventoryAsset(it.sourceId, generation, it.streamId)
-                    })
+                    batch.forEach { present += it.streamId }
+                    rows += batch.size; writing += System.currentTimeMillis() - t
                 }
-                identities?.activateSnapshot(source.id, generation)
+                val copy = api.movies(source) { writes.add(it) }
+                writes.finish()
+                val t = System.currentTimeMillis()
+                // Changes only: the inventory gains the changed films and loses the removed ones; whole: it becomes the list.
+                if (copy.delta) identities?.changeInventory(source.id, present, copy.removed) else identities?.syncInventory(source.id, present)
+                copy.commit()
+                timed(if (copy.delta) "movies (changes from core)" else "movies", started, rows, writing)
+                Log.i(TAG, "VOD timing ${source.id} movie inventory: ${System.currentTimeMillis() - t} ms")
             }
         }
         complete
@@ -993,6 +1081,8 @@ class CatalogRepository(
     }
 
     private suspend fun deleteSourceRows(sourceId: Long) {
+        // Re-added later, the playlist must get whole lists from jasktv-core, not just the changes since the old copy.
+        sourceDao.byId(sourceId)?.let { app.opentv.account.CoreDirectory.forgetCopies(app.opentv.account.sync.LanCatalogue.sourceKey(it)) }
         channelDao.deleteForSource(sourceId)
         categoryDao.deleteForSource(sourceId)
         movieDao.deleteForSource(sourceId)
@@ -1054,7 +1144,28 @@ class CatalogRepository(
         }
     }
 
+    /**
+     * Groups an import's rows into few, larger writes. Every write makes Room re-run the queries of whatever is on
+     * screen (the browse grids, the home's shelves): written every 1,000 rows, a 180,000-title import reloaded the
+     * page the user was on ~180 times. The first rows go in at once (a first sync shows something quickly); after
+     * that, at most one write every [EVERY_MS] or [ROWS] rows.
+     */
+    private class Coalesced<T>(private val write: suspend (List<T>) -> Unit) {
+        private val pending = ArrayList<T>()
+        private var lastWrite = 0L
+        suspend fun add(rows: List<T>) {
+            pending += rows
+            val now = System.currentTimeMillis()
+            if (lastWrite == 0L || pending.size >= ROWS || now - lastWrite >= EVERY_MS) flush(now)
+        }
+        suspend fun finish() { if (pending.isNotEmpty()) flush(System.currentTimeMillis()) }
+        private suspend fun flush(now: Long) { write(pending.toList()); pending.clear(); lastWrite = now }
+        companion object { const val ROWS = 15_000; const val EVERY_MS = 5_000L }
+    }
+
     companion object {
+        /** See [fillFromNearby]. */
+        @Volatile var fromNearby: (suspend (Source, String) -> Boolean)? = null
         private const val TAG = "CatalogRepository"
         val SEPARATOR_CHARS = setOf('#', '*', '=', '~', '-', '_', '•', '█', '▓', '|')
 

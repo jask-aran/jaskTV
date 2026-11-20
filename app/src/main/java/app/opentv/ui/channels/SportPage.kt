@@ -52,7 +52,12 @@ import app.opentv.livetv.find.EventCard
 import app.opentv.livetv.find.Sport
 import app.opentv.livetv.find.SportCalendar
 import app.opentv.livetv.find.WatchOption
+import app.opentv.ui.jaskCard
+import app.opentv.ui.jaskCardArt
+import app.opentv.ui.jaskFocusEntry
 import app.opentv.ui.jaskFocusLift
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import app.opentv.ui.settings.JaskDim
 import coil.compose.AsyncImage
 import java.time.LocalDate
@@ -73,7 +78,7 @@ private const val WINDOW_DAYS = 8
  * Games on none of your channels are left out until asked for.
  */
 @Composable
-internal fun SportPage(sport: Sport, cards: List<EventCard>, now: Long, onBack: () -> Unit, onOpen: (EventCard) -> Unit,
+internal fun SportPage(sport: Sport, cards: List<EventCard>, now: Long, onBack: () -> Unit, backLabel: String = "Live TV", onOpen: (EventCard) -> Unit,
     onPlay: (WatchOption) -> Unit) {
     androidx.activity.compose.BackHandler(onBack = onBack)
     val padding = app.opentv.ui.LocalJaskContentPadding.current
@@ -91,6 +96,15 @@ internal fun SportPage(sport: Sport, cards: List<EventCard>, now: Long, onBack: 
     var picked by rememberSaveable { mutableStateOf(days.firstOrNull { !it.isBefore(today) && (counts[it] ?: 0) > 0 }?.toEpochDay() ?: today.toEpochDay()) }
     val day = LocalDate.ofEpochDay(picked)
     var open by rememberSaveable { mutableStateOf(setOf<String>()) }
+    // The page opens with the chosen day focused (the tile that opened it is gone, and focus would fall to the top bar);
+    // Down from the back pill lands on that day too, not the strip's first.
+    val dayFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val tv = app.opentv.ui.LocalLayoutClass.current == app.opentv.ui.LayoutClass.TV
+    androidx.compose.runtime.LaunchedEffect(sport.key) {
+        if (!tv) return@LaunchedEffect
+        androidx.compose.runtime.withFrameNanos { }
+        runCatching { dayFocus.requestFocus() }
+    }
     app.opentv.ui.JaskAmbientFrom(sport.logo ?: calendar.events.firstNotNullOfOrNull { e -> e.sample.competitors.firstNotNullOfOrNull { it.logo } })
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -99,7 +113,7 @@ internal fun SportPage(sport: Sport, cards: List<EventCard>, now: Long, onBack: 
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + 24.dp)) {
             item(key = "head") {
                 Column(Modifier.fillMaxWidth().padding(top = padding.calculateTopPadding() + 8.dp, start = 16.dp, end = 16.dp, bottom = 12.dp)) {
-                    app.opentv.ui.settings.JaskPill("‹ Live TV", onClick = onBack)
+                    Box(androidx.compose.ui.Modifier.focusProperties { down = dayFocus }) { app.opentv.ui.settings.JaskPill("‹ $backLabel", onClick = onBack) }
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SportMark(sport, Modifier.size(width = 72.dp, height = 48.dp))
@@ -107,7 +121,14 @@ internal fun SportPage(sport: Sport, cards: List<EventCard>, now: Long, onBack: 
                         Column {
                             Text(sport.label, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                             val live = calendar.parts.count { it.live }
-                            Text(listOfNotNull(if (live > 0) "$live on now" else null, "${calendar.events.count { !it.done }} coming up this week")
+                            val coming = calendar.events.count { !it.done }
+                            // Never "0 coming up" beside games that are on: say where they are instead.
+                            val week = when {
+                                coming > 0 -> "$coming coming up this week"
+                                hidden > 0 && !everything -> "Nothing on your channels this week · $hidden more elsewhere"
+                                else -> "Nothing coming up this week"
+                            }
+                            Text(listOfNotNull(if (live > 0) "$live on now" else null, week)
                                 .joinToString(" · "), color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.bodyMedium)
                         }
                     }
@@ -115,7 +136,8 @@ internal fun SportPage(sport: Sport, cards: List<EventCard>, now: Long, onBack: 
             }
             item(key = "days") {
                 Row(Modifier.padding(horizontal = 16.dp)) {
-                    days.forEach { d -> DayChip(d, today, counts[d] ?: 0, d == day, Modifier.width(column)) { picked = d.toEpochDay() } }
+                    days.forEach { d -> DayChip(d, today, counts[d] ?: 0, d == day,
+                        Modifier.width(column).then(if (d == day) Modifier.focusRequester(dayFocus).jaskFocusEntry() else Modifier)) { picked = d.toEpochDay() } }
                 }
             }
             val spans = calendar.spans(zone)
@@ -144,7 +166,7 @@ internal fun SportPage(sport: Sport, cards: List<EventCard>, now: Long, onBack: 
             }
             if (hidden > 0 || everything) item(key = "everything") {
                 Text(if (everything) "Only what's on your channels" else "$hidden more not on your channels · Show",
-                    Modifier.padding(start = 8.dp, top = 12.dp).clip(RoundedCornerShape(50)).clickable { everything = !everything }
+                    Modifier.jaskFocusLift(1.06f).padding(start = 8.dp, top = 12.dp).clip(RoundedCornerShape(50)).clickable { everything = !everything }
                         .padding(horizontal = 8.dp, vertical = 8.dp), color = JaskDim, style = MaterialTheme.typography.labelLarge)
             }
         }
@@ -183,30 +205,31 @@ private fun PageTitle(text: String) =
     Text(text, Modifier.padding(start = 16.dp, top = 20.dp, bottom = 6.dp), color = Color(0xFFF4F4F4),
         style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
 
-private fun partWhen(utc: Long, zone: ZoneId): String =
-    DateTimeFormatter.ofPattern("EEE d MMM · h:mm a").format(java.time.Instant.ofEpochMilli(utc).atZone(zone)).replace("AM", "am").replace("PM", "pm")
+private fun partWhen(utc: Long, zone: ZoneId): String = liveWhen(utc, zone)
 
 @Composable
 private fun TimeLabel(utc: Long, zone: ZoneId, modifier: Modifier) {
-    val t = java.time.Instant.ofEpochMilli(utc).atZone(zone)
-    Column(modifier) {
-        Text(DateTimeFormatter.ofPattern("h:mm").format(t), color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-        Text(DateTimeFormatter.ofPattern("a").format(t).lowercase(), color = JaskDim, style = MaterialTheme.typography.labelSmall)
-    }
+    // One clock everywhere ("9:00 am"); the day is the page's heading.
+    Text(liveClock(utc, zone), modifier, color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold,
+        maxLines = 1, softWrap = false)
 }
 
 /** A day in the strip: weekday, date and a dot per thing starting (up to three). */
 @Composable
 private fun DayChip(day: LocalDate, today: LocalDate, count: Int, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    Column(modifier.padding(horizontal = 2.dp).jaskFocusLift().clip(RoundedCornerShape(12.dp))
-        .background(if (selected) Color.White else Color.Transparent).clickable(onClick = onClick).padding(vertical = 8.dp),
+    // Chosen: an outline on a darker fill, like the timeline's next session. A white fill would read as focus.
+    val shape = RoundedCornerShape(12.dp)
+    Column(modifier.padding(horizontal = 2.dp).jaskFocusLift().clip(shape)
+        .background(if (selected) Color.Black.copy(alpha = .35f) else Color.Transparent)
+        .border(1.dp, if (selected) Color.White.copy(alpha = .85f) else Color.Transparent, shape)
+        .clickable(onClick = onClick).padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        val ink = if (selected) Color.Black else if (day.isBefore(today)) JaskDim else Color.White
+        val ink = if (selected) Color.White else if (day.isBefore(today)) JaskDim else Color.White
         Text(if (day == today) "Today" else DateTimeFormatter.ofPattern("EEE").format(day), color = ink,
             style = MaterialTheme.typography.labelSmall, maxLines = 1)
         Text(day.dayOfMonth.toString(), color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Row(Modifier.height(8.dp).padding(top = 3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            repeat(minOf(count, 3)) { Box(Modifier.size(4.dp).clip(CircleShape).background(if (selected) Color.Black else LiveRed.copy(alpha = .9f))) }
+            repeat(minOf(count, 3)) { Box(Modifier.size(4.dp).clip(CircleShape).background(LiveRed.copy(alpha = .9f))) }
         }
     }
 }
@@ -285,7 +308,8 @@ private fun PartRow(part: CalPart, event: CalEvent?, time: String?, zone: ZoneId
                 Text(title, color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val sub = listOfNotNull(time, part.label.takeIf { titled && it.isNotBlank() },
-                    event?.series?.takeIf { titled }, if (part.done) "Replay" else null).joinToString(" · ")
+                    event?.series?.takeIf { titled },
+                    if (!part.done) null else if (part.card.options.any { it.state == app.opentv.livetv.find.WatchState.REPLAY }) "Replay" else "Ended").joinToString(" · ")
                 if (sub.isNotBlank()) Text(sub, color = Color.White.copy(alpha = .6f), style = MaterialTheme.typography.labelSmall,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -298,7 +322,7 @@ private fun PartRow(part: CalPart, event: CalEvent?, time: String?, zone: ZoneId
         else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             options.take(4).forEach { option ->
-                Text("▶ " + option.title, Modifier.jaskFocusLift(1.05f).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = .14f))
+                Text("▶ " + liveName(option.title), Modifier.jaskFocusLift(1.05f).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = .14f))
                     .clickable { onPlay(option) }.padding(horizontal = 10.dp, vertical = 5.dp),
                     color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1)
             }
@@ -324,13 +348,15 @@ internal fun SportMark(sport: Sport, modifier: Modifier) {
 /** A followed sport on the home: its mark, name and how many of its games are on now. Opens its page. */
 @Composable
 internal fun SportTile(sport: Sport, live: Int, onClick: () -> Unit) {
-    Column(Modifier.width(112.dp).jaskFocusLift().clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick)) {
-        Box {
-            SportMark(sport, Modifier.fillMaxWidth().height(64.dp))
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    // The ring goes round the mark only (jaskCard + jaskCardArt), so it never runs into the name under it.
+    Column(Modifier.width(112.dp).jaskCard(source, key = "sport:${sport.key}", onClick = onClick)) {
+        Box(Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(12.dp)).jaskCardArt(source, 12.dp)) {
+            SportMark(sport, Modifier.fillMaxSize())
             if (live > 0) Text("$live live", Modifier.align(Alignment.TopEnd).padding(5.dp).clip(RoundedCornerShape(6.dp)).background(LiveRed)
                 .padding(horizontal = 5.dp, vertical = 1.dp), color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
         }
-        Text(sport.label, Modifier.padding(top = 5.dp, start = 2.dp), color = Color.White, style = MaterialTheme.typography.labelMedium,
+        Text(sport.label, Modifier.padding(top = 7.dp, start = 2.dp), color = Color.White, style = MaterialTheme.typography.labelMedium,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

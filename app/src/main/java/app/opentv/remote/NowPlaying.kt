@@ -37,6 +37,8 @@ data class CastItem(
     val series: String? = null,
     val title: String = "",
     val positionMs: Long = 0,
+    /** The sender's duration, so a device that has never played this doesn't think the resume spot is the end. */
+    val durationMs: Long = 0,
 )
 
 /** A remote's request to a device on the same network. */

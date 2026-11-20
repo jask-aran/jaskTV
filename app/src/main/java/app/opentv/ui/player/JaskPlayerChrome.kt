@@ -1,5 +1,7 @@
 package app.opentv.ui.player
 
+import app.opentv.ui.jaskWhiteFill
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -57,6 +59,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,7 +89,7 @@ internal fun BoxScope.JaskPlayerScrims() {
 internal fun JaskPlayerTopBar(title: String, onBack: () -> Unit, modifier: Modifier = Modifier, overline: (@Composable () -> Unit)? = null,
     subtitle: String? = null, tools: @Composable RowScope.() -> Unit = {}) {
     Row(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, "Back", size = 44.dp, onClick = onBack)
+        JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, "Back", size = 40.dp, onClick = onBack)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             overline?.invoke()
@@ -103,21 +106,22 @@ internal fun JaskPlayerTopBar(title: String, onBack: () -> Unit, modifier: Modif
 /** A round tool button for the top bar. */
 @Composable
 internal fun JaskPlayerTool(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) =
-    JaskGlassCircle(icon, label, size = 44.dp, active = active, onClick = onClick)
+    JaskGlassCircle(icon, label, size = 40.dp, active = active, onClick = onClick)
 
 /** Big middle transport: back, play/pause (white), forward. [back]/[forward] null hides them (live without timeshift). */
 @Composable
 internal fun JaskTransport(paused: Boolean, onPlayPause: () -> Unit, playFocus: FocusRequester, modifier: Modifier = Modifier,
     buffering: Boolean = false, backIcon: ImageVector? = null, onBack: (() -> Unit)? = null, forwardIcon: ImageVector? = null, onForward: (() -> Unit)? = null) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(36.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (onBack != null && backIcon != null) JaskGlassCircle(backIcon, "Back 15 seconds", size = 60.dp, onClick = onBack)
-        Box(Modifier.jaskFocusLift(1.08f).size(84.dp).clip(CircleShape).background(Color.White).focusRequester(playFocus)
+    // Sized to the thumb, not to fill the picture: the film stays the main thing on screen.
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (onBack != null && backIcon != null) JaskGlassCircle(backIcon, "Back 15 seconds", size = 48.dp, onClick = onBack)
+        Box(Modifier.jaskFocusLift(1.12f).size(64.dp).clip(CircleShape).jaskWhiteFill(CircleShape).focusRequester(playFocus)
             .clickable(onClick = onPlayPause), contentAlignment = Alignment.Center) {
             Icon(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (paused) "Play" else "Pause",
-                tint = Color(0xFF141312), modifier = Modifier.size(44.dp))
-            if (buffering) androidx.compose.material3.CircularProgressIndicator(Modifier.size(84.dp), color = Color(0xFF8A8A8A), strokeWidth = 3.dp)
+                tint = Color.White, modifier = Modifier.size(34.dp))
+            if (buffering) androidx.compose.material3.CircularProgressIndicator(Modifier.size(64.dp), color = Color.White.copy(alpha = .6f), strokeWidth = 3.dp)
         }
-        if (onForward != null && forwardIcon != null) JaskGlassCircle(forwardIcon, "Forward 15 seconds", size = 60.dp, onClick = onForward)
+        if (onForward != null && forwardIcon != null) JaskGlassCircle(forwardIcon, "Forward 15 seconds", size = 48.dp, onClick = onForward)
     }
 }
 
@@ -140,19 +144,26 @@ internal fun JaskScrubber(positionMs: Long, durationMs: Long, onSeek: (Long) -> 
         keyTarget != null -> keyTarget!!
         else -> positionMs
     }.coerceIn(0L, duration)
-    // Remote scrubbing: commit after a short pause in key presses.
+    // Remote scrubbing: OK jumps at once, Back stays where you were, and a pause in presses commits.
     LaunchedEffect(keyTarget) {
         val target = keyTarget ?: return@LaunchedEffect
-        delay(650)
+        delay(1_500)
         onSeek(target); keyTarget = null; onScrubbing(false)
     }
+    androidx.activity.compose.BackHandler(keyTarget != null) { keyTarget = null; onScrubbing(false); onInteraction() }
     val density = LocalDensity.current
     Column(modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().height(28.dp).onSizeChanged { width = it.width.coerceAtLeast(1) }
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown || durationMs <= 0) return@onKeyEvent false
-                val step = when (e.key) { Key.DirectionLeft -> -stepMs; Key.DirectionRight -> stepMs; else -> return@onKeyEvent false }
+                if ((e.key == Key.DirectionCenter || e.key == Key.Enter) && keyTarget != null) {
+                    onSeek(keyTarget!!); keyTarget = null; onScrubbing(false); onInteraction(); return@onKeyEvent true
+                }
+                // Holding an arrow goes faster: 1×, then 3×, then 6× the step.
+                val repeat = e.nativeKeyEvent.repeatCount
+                val speed = when { repeat > 15 -> 6; repeat > 5 -> 3; else -> 1 }
+                val step = when (e.key) { Key.DirectionLeft -> -stepMs; Key.DirectionRight -> stepMs; else -> return@onKeyEvent false } * speed
                 keyTarget = ((keyTarget ?: positionMs) + step).coerceIn(0L, duration)
                 onScrubbing(true); onInteraction(); true
             }
@@ -175,8 +186,25 @@ internal fun JaskScrubber(positionMs: Long, durationMs: Long, onSeek: (Long) -> 
                     .background(Color.White.copy(alpha = 0.3f)))
                 Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.coerceIn(0f, 1f)).background(Color.White))
             }
-            val knob = if (active) 18.dp else 12.dp
-            Box(Modifier.offset(x = with(density) { (fraction * width).toDp() } - knob / 2).size(knob).clip(CircleShape).background(Color.White))
+            // Focused (remote): a large ringed knob, so it reads from across the room.
+            val knob = when { focused && !dragging -> 26.dp; active -> 18.dp; else -> 12.dp }
+            // While scrubbing: where you'll land, and how far that is from where you are.
+            if (keyTarget != null || dragging) {
+                val delta = shown - positionMs
+                Column(Modifier.layout { m, c ->
+                    val p = m.measure(c.copy(minWidth = 0, maxWidth = androidx.compose.ui.unit.Constraints.Infinity))
+                    layout(0, 0) { p.place((fraction * width - p.width / 2f).toInt(), -p.height - 18.dp.roundToPx()) }
+                }.clip(RoundedCornerShape(14.dp)).background(Color(0xDB141312)).padding(horizontal = 18.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                    val tabular = MaterialTheme.typography.headlineSmall.copy(fontFeatureSettings = "tnum")
+                    Text(formatClock(shown), color = Color.White, style = tabular, fontWeight = FontWeight.Bold)
+                    Text((if (delta >= 0) "+" else "−") + formatClock(kotlin.math.abs(delta)), color = Color(0xFFD6D2CC),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"))
+                }
+            }
+            Box(Modifier.offset(x = with(density) { (fraction * width).toDp() } - knob / 2).size(knob)
+                .then(if (focused) Modifier.border(3.dp, Color.White.copy(alpha = 0.45f), CircleShape).padding(5.dp) else Modifier)
+                .clip(CircleShape).background(Color.White))
         }
         Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
             val tabular = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum")

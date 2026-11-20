@@ -12,6 +12,9 @@ import app.opentv.ui.player.PlayerGestureLayer
 import app.opentv.ui.player.ImmersiveSystemBars
 import app.opentv.ui.player.JaskPlayerPanel
 import app.opentv.ui.player.JaskPlayerScrims
+import app.opentv.ui.player.JaskPlayerOverlayHost
+import app.opentv.ui.player.JaskPlayerHeader
+import app.opentv.ui.jaskRowEnds
 import app.opentv.ui.player.JaskPlayerTool
 import app.opentv.ui.player.JaskPlayerTopBar
 import app.opentv.ui.player.JaskScrubber
@@ -55,6 +58,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
@@ -63,6 +67,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -177,10 +182,17 @@ fun VodPlayerScreen(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var displayMenuOpen by remember { mutableStateOf(false) }
+    var playOnOpen by remember { mutableStateOf(false) }
     val touch = LocalLayoutClass.current.isTouch
     var interaction by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val barFocus = remember { FocusRequester() }
     val rootFocus = remember { FocusRequester() }
+    val audioFocus = remember { FocusRequester() }
+    // Closing the Audio & subtitles menu hands focus back to its button.
+    fun closeTracks() {
+        vodPanel = VodPanel.NONE; interaction++
+        scope.launch { delay(40); runCatching { audioFocus.requestFocus() } }
+    }
 
     fun reveal() { controlsVisible = true; interaction++ }
 
@@ -232,6 +244,9 @@ fun VodPlayerScreen(
         }
     }
 
+    // The TV switches to a refresh rate that suits the video while this player is open.
+    app.opentv.ui.player.JaskFrameRateMatch(controller, key = mediaKey, rewind = true)
+
     LaunchedEffect(mediaKey) {
         val resumeFrom = if (sessionPosition >= 0) sessionPosition else
             graph.playbackPositions.get(settings.activeProfileId.value, mediaKey)
@@ -252,6 +267,60 @@ fun VodPlayerScreen(
             delay(15_000)
             savePosition()
         }
+    }
+
+    // Every copy of this film on the provider, same language first: the Version menu, and what to fall back on.
+    var copies by remember { mutableStateOf<List<app.opentv.data.model.Movie>>(emptyList()) }
+    var playingUrl by remember { mutableStateOf(streamUrl) }
+    // Between a refused copy and the next one starting: no error flashing up in between.
+    var switching by remember { mutableStateOf(false) }
+    // Said instead of "no longer exists" when the provider account is busy elsewhere.
+    var busyNote by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(mediaKey) {
+        val id = mediaKey.takeIf { it.startsWith("movie:") }?.removePrefix("movie:")?.toLongOrNull() ?: return@LaunchedEffect
+        copies = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val dao = graph.database.canonicalMovies()
+            val raw = graph.database.movies().byId(id) ?: return@withContext emptyList()
+            val tmdb = dao.match(raw.sourceId, raw.streamId)?.tmdbId ?: return@withContext emptyList()
+            val language = raw.name.substringBefore(" - ", "").trim()
+            dao.versions(tmdb).sortedByDescending { it.name.substringBefore(" - ", "").trim() == language }
+        }
+    }
+    fun playCopy(copy: app.opentv.data.model.Movie) {
+        playingUrl = copy.streamUrl
+        controller.play(PlaybackRequest(url = copy.streamUrl, title = title, userAgent = userAgent,
+            startPositionMillis = maxOf(positionMs, if (sessionPosition >= 0) sessionPosition else 0L), isLive = false), debounce = false)
+    }
+    val goneTried = remember { mutableSetOf<String>() }
+    LaunchedEffect(state) {
+        if (state is PlaybackState.Playing) { switching = false; busyNote = null; return@LaunchedEffect }
+        val failed = state as? PlaybackState.Error ?: return@LaunchedEffect
+        if (failed.httpCode !in setOf(404, 407, 410) || copies.isEmpty()) { switching = false; return@LaunchedEffect }
+        goneTried += playingUrl
+        // A provider allowing one stream at a time refuses every copy while that stream is in use: say so,
+        // rather than trying each copy in turn.
+        if (goneTried.size == 1) {
+            val busy = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                runCatching {
+                    val source = graph.database.sources().byId(copies.first().sourceId) ?: return@runCatching null
+                    graph.xtreamApi.authenticate(source).takeIf { info ->
+                        val max = info.maxConnections ?: return@takeIf false
+                        max > 0 && (info.activeConnections ?: 0) >= max
+                    }
+                }.getOrNull()
+            }
+            if (busy != null) {
+                busyNote = "Your provider allows ${busy.maxConnections} stream at a time, and it's in use on another device or app. " +
+                    "Stop it there, then try again."
+                switching = false
+                return@LaunchedEffect
+            }
+        }
+        val next = copies.firstOrNull { it.streamUrl !in goneTried }
+        if (next == null) { switching = false; return@LaunchedEffect }
+        switching = true
+        android.util.Log.i("jaskPlayer", "copy gone (HTTP ${failed.httpCode}); trying another copy of the film")
+        playCopy(next)
     }
 
     // Sleep timer: leave the film when the armed deadline passes (position is saved on dispose).
@@ -282,33 +351,42 @@ fun VodPlayerScreen(
     // Auto-hide when playing and not paused/scrubbing and no picker open. A growing recording dips in
     // and out of Buffering as it rides the write head, so for that case Buffering counts as "playing"
     // here — otherwise a single hiccup would pin the transport bar on screen for the rest of the watch.
-    LaunchedEffect(controlsVisible, interaction, state, paused, scrubbing, vodPanel, displayMenuOpen) {
+    LaunchedEffect(controlsVisible, interaction, state, paused, scrubbing, vodPanel, displayMenuOpen, playOnOpen) {
         val activelyPlaying = state is PlaybackState.Playing ||
             (growingRec && state is PlaybackState.Buffering)
-        if (controlsVisible && !displayMenuOpen && !paused && !scrubbing && vodPanel == VodPanel.NONE && activelyPlaying) {
+        if (controlsVisible && !displayMenuOpen && !playOnOpen && !paused && !scrubbing && vodPanel == VodPanel.NONE && activelyPlaying) {
             delay(5_000)
             controlsVisible = false
         }
     }
 
-    LaunchedEffect(controlsVisible, vodPanel) {
+    LaunchedEffect(controlsVisible) {
         if (controlsVisible) {
             delay(40)
-            runCatching { if (vodPanel != VodPanel.NONE) panelFocus.requestFocus() else barFocus.requestFocus() }
+            runCatching { barFocus.requestFocus() }
         } else {
+            vodPanel = VodPanel.NONE
             runCatching { rootFocus.requestFocus() }
         }
     }
+    LaunchedEffect(vodPanel) { if (vodPanel == VodPanel.TRACKS) { delay(40); runCatching { panelFocus.requestFocus() } } }
 
-    BackHandler {
-        val activelyPlaying = state is PlaybackState.Playing ||
-            (growingRec && state is PlaybackState.Buffering)
+    // Back closes an open panel; otherwise it leaves the film at once, controls showing or not. (Hiding the
+    // controls first made a second press necessary.) Open menus (display size, Play on) and remote scrubbing
+    // take Back before this through their own handlers.
+    fun handleBack() {
         when {
+            vodPanel == VodPanel.TRACKS -> closeTracks()
             vodPanel != VodPanel.NONE -> vodPanel = VodPanel.NONE
-            controlsVisible && activelyPlaying && !paused -> controlsVisible = false
             else -> onBack()
         }
     }
+    BackHandler { handleBack() }
+    // A remote's Back is taken here, before Compose sees it: with a control focused, Compose turns an unclaimed
+    // Back into "move focus out" (to the focusable root below), which swallowed the first press and left no ring.
+    // Down is consumed and the action runs on Up, as the system's own Back does. Menus and remote scrubbing still
+    // get Back through their own handlers.
+    var backArmed by remember { mutableStateOf(false) }
 
     Box(
         Modifier
@@ -317,7 +395,12 @@ fun VodPlayerScreen(
             .onPreviewKeyEvent { event ->
                 val down = event.type == KeyEventType.KeyDown
                 when {
-                    event.key == Key.Back || event.key == Key.Escape -> false
+                    event.key == Key.Back || event.key == Key.Escape -> when {
+                        displayMenuOpen || playOnOpen || scrubbing -> { backArmed = false; false }
+                        down -> { backArmed = true; true }
+                        event.type == KeyEventType.KeyUp && backArmed -> { backArmed = false; handleBack(); true }
+                        else -> false
+                    }
                     // The remote's media keys act at once, controls up or not (Android TV convention).
                     down && (event.key == Key.MediaPlayPause || event.key == Key.MediaPlay || event.key == Key.MediaPause) -> {
                         controller.setPlaying(when (event.key) { Key.MediaPlay -> true; Key.MediaPause -> false; else -> !controller.status.value.isPlaying })
@@ -378,7 +461,9 @@ fun VodPlayerScreen(
                 }
             }
 
-            is PlaybackState.Error ->
+            is PlaybackState.Error -> if (switching) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Color.White)
+                } else
                 Box(
                     Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.85f)),
                     contentAlignment = Alignment.Center,
@@ -389,79 +474,112 @@ fun VodPlayerScreen(
                     ) {
                         Text(current.title, style = MaterialTheme.typography.headlineSmall, color = Color.White)
                         Spacer(Modifier.height(12.dp))
-                        Text(current.message, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center)
+                        Text(busyNote ?: current.message, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center)
                         Spacer(Modifier.height(24.dp))
-                        Button(onClick = { controller.retry() }) { Text(stringResource(R.string.common_try_again)) }
+                        app.opentv.ui.settings.JaskPill(stringResource(R.string.common_try_again), primary = true) {
+                            goneTried.clear(); busyNote = null; controller.retry()
+                        }
                     }
                 }
 
             else -> Unit
         }
 
-        if (!inPip) JaskTheme {
+        if (!inPip) JaskTheme { JaskPlayerOverlayHost {
+            val reading by app.opentv.ui.player.rememberStreamReading(controller)
+            val buffering = state is PlaybackState.Buffering
             AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxSize()) {
                     JaskPlayerScrims()
-                    JaskPlayerTopBar(title, onBack,
-                        Modifier.align(Alignment.TopCenter).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)),
+                    val top = Modifier.windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top))
+                    val bottom = Modifier.windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                    // Title top-left; clock, "Ends at" and the quality badge top-right (design: player chrome canvas).
+                    JaskPlayerHeader(title, Modifier.align(Alignment.TopCenter).then(top)
+                            .padding(if (touch) androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 14.dp)
+                                else androidx.compose.foundation.layout.PaddingValues(start = 48.dp, end = 48.dp, top = 36.dp)),
+                        endsAtMillis = if (!growingRec && durationMs > 0) System.currentTimeMillis() + (durationMs - positionMs) else null,
+                        reserveEndsAt = !growingRec,
+                        quality = reading, infoOpen = vodPanel == VodPanel.INFO,
+                        onQuality = { vodPanel = if (vodPanel == VodPanel.INFO) VodPanel.NONE else VodPanel.INFO; interaction++ },
+                        leading = if (touch) ({ app.opentv.ui.JaskGlassCircle(Icons.AutoMirrored.Filled.ArrowBack, "Back", size = 40.dp, onClick = onBack) }) else null,
                         overline = if (growingRec) ({
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Filled.FiberManualRecord, null, tint = Color(0xFFE53935), modifier = Modifier.size(12.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text(stringResource(R.string.rec_watching_live_badge), style = MaterialTheme.typography.labelLarge, color = Color(0xFFFF8A80))
                             }
-                        }) else null) {
-                        JaskPlayerTool(Icons.Filled.ClosedCaption, stringResource(R.string.player_subtitles), active = vodPanel == VodPanel.SUBTITLES) {
-                            vodPanel = if (vodPanel == VodPanel.SUBTITLES) VodPanel.NONE else VodPanel.SUBTITLES; interaction++
+                        }) else null, compact = touch) {
+                        // Which copy of the film: language and quality, as the provider names them.
+                        if (copies.size > 1) app.opentv.ui.player.JaskPlayerPill(Icons.Filled.Layers, "Version", {
+                            vodPanel = if (vodPanel == VodPanel.COPIES) VodPanel.NONE else VodPanel.COPIES; interaction++
+                        }, active = vodPanel == VodPanel.COPIES, plain = touch, header = !touch)
+                        // Play on another device, from this exact spot. Touch: here in the header; TV: in the bottom row.
+                        if (touch) app.opentv.ui.JaskPlayOn(null, onSent = onBack, onOpenChange = { playOnOpen = it }) { open ->
+                            JaskPlayerTool(Icons.Filled.Cast, "Play on another device") { open(); interaction++ }
                         }
-                        JaskPlayerTool(Icons.Filled.Audiotrack, stringResource(R.string.player_audio), active = vodPanel == VodPanel.AUDIO) {
-                            vodPanel = if (vodPanel == VodPanel.AUDIO) VodPanel.NONE else VodPanel.AUDIO; interaction++
-                        }
-                        PlayerDisplayControls(settings, onMenuVisibilityChanged = { displayMenuOpen = it }) { interaction++ }
-                        if (activity?.pipSupported() == true) JaskPlayerTool(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pop_out)) {
+                        if (touch && activity?.pipSupported() == true) JaskPlayerTool(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pop_out)) {
                             activity.enterPipNow(); interaction++
                         }
                     }
-                    if (vodPanel != VodPanel.NONE) TrackPanel(vodPanel, controller, tracks, panelFocus,
-                        Modifier.align(Alignment.TopEnd).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top))
-                            .padding(top = 76.dp, end = 20.dp)) { vodPanel = VodPanel.NONE; interaction++ }
-                    JaskTransport(paused, { controller.setPlaying(paused); interaction++ }, barFocus, Modifier.align(Alignment.Center),
-                        buffering = state is PlaybackState.Buffering,
+                    if (vodPanel == VodPanel.COPIES) JaskPlayerPanel("Version", copies.map { copy ->
+                        Triple(copy.name, copy.streamUrl == playingUrl, { goneTried.clear(); busyNote = null; vodPanel = VodPanel.NONE; playCopy(copy) })
+                    }, "", panelFocus, Modifier.align(Alignment.TopEnd).then(top).padding(top = if (touch) 64.dp else 150.dp, end = if (touch) 20.dp else 36.dp))
+                    if (vodPanel == VodPanel.INFO) app.opentv.ui.player.JaskStreamInfoCard(reading, buffering,
+                        Modifier.align(Alignment.TopEnd).then(top).padding(top = if (touch) 64.dp else 150.dp, end = if (touch) 20.dp else 36.dp))
+                    // Touch: the big centre transport, under the thumb. TV keeps the middle of the picture clear.
+                    // Not over an error: its message and Try again sit in the middle.
+                    if (touch && state !is PlaybackState.Error) JaskTransport(paused, { controller.setPlaying(paused); interaction++ }, barFocus, Modifier.align(Alignment.Center),
+                        buffering = buffering,
                         backIcon = Icons.Filled.FastRewind, onBack = { if (growingRec) seekRelative(-15_000) else controller.seekBackward(); interaction++ },
                         forwardIcon = Icons.Filled.FastForward, onForward = { if (growingRec) seekRelative(15_000) else controller.seekForward(); interaction++ })
-                    JaskScrubber(positionMs, durationMs, onSeek = { controller.seekTo(it); positionMs = it; interaction++ },
-                        Modifier.align(Alignment.BottomCenter).windowInsetsPadding(PlayerChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
-                            .padding(horizontal = 28.dp, vertical = 18.dp),
-                        onInteraction = { interaction++ }, onScrubbing = { scrubbing = it })
+                    Column(Modifier.align(Alignment.BottomCenter).then(bottom)
+                        .padding(start = if (touch) 28.dp else 48.dp, end = if (touch) 28.dp else 48.dp, bottom = if (touch) 8.dp else 36.dp)) {
+                        // Touch: one row, the scrubber between nothing on the left and the tools on the right.
+                        if (touch) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                            JaskScrubber(positionMs, durationMs, onSeek = { controller.seekTo(it); positionMs = it; interaction++ },
+                                Modifier.weight(1f).padding(end = 12.dp), onInteraction = { interaction++ }, onScrubbing = { scrubbing = it })
+                            Box(Modifier.focusRequester(audioFocus)) {
+                                JaskPlayerTool(Icons.Filled.ClosedCaption, "Audio & subtitles", active = vodPanel == VodPanel.TRACKS) {
+                                    if (vodPanel == VodPanel.TRACKS) closeTracks() else { vodPanel = VodPanel.TRACKS; interaction++ }
+                                }
+                            }
+                            PlayerDisplayControls(settings, onMenuVisibilityChanged = { displayMenuOpen = it }, size = 40.dp) { interaction++ }
+                        } else {
+                        JaskScrubber(positionMs, durationMs, onSeek = { controller.seekTo(it); positionMs = it; interaction++ },
+                            onInteraction = { interaction++ }, onScrubbing = { scrubbing = it })
+                        Spacer(Modifier.height(16.dp))
+                        Row(Modifier.fillMaxWidth().then(if (touch) Modifier else Modifier.jaskRowEnds()),
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(if (touch) 4.dp else 14.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            if (!touch) {
+                                app.opentv.ui.player.JaskPlayPausePill(paused, buffering, barFocus) { controller.setPlaying(paused); interaction++ }
+                                app.opentv.ui.player.JaskPlayerCircle(Icons.Filled.FastRewind, "Back 15 seconds") {
+                                    if (growingRec) seekRelative(-15_000) else controller.seekBackward(); interaction++
+                                }
+                                app.opentv.ui.player.JaskPlayerCircle(Icons.Filled.FastForward, "Forward 15 seconds") {
+                                    if (growingRec) seekRelative(15_000) else controller.seekForward(); interaction++
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Box(Modifier.focusRequester(audioFocus)) {
+                                app.opentv.ui.player.JaskPlayerPill(Icons.Filled.ClosedCaption, "Audio & subtitles", {
+                                    if (vodPanel == VodPanel.TRACKS) closeTracks() else { vodPanel = VodPanel.TRACKS; interaction++ }
+                                }, active = vodPanel == VodPanel.TRACKS, plain = touch)
+                            }
+                            if (!touch) app.opentv.ui.JaskPlayOn(null, onSent = onBack, onOpenChange = { playOnOpen = it }) { open ->
+                                app.opentv.ui.player.JaskPlayerCircle(Icons.Filled.Cast, "Play on another device") { open(); interaction++ }
+                            }
+                            PlayerDisplayControls(settings, onMenuVisibilityChanged = { displayMenuOpen = it }) { interaction++ }
+                        }
+                        }
+                    }
+                    if (vodPanel == VodPanel.TRACKS) app.opentv.ui.player.JaskTracksMenu(controller, tracks, panelFocus,
+                        Modifier.align(Alignment.BottomEnd).then(bottom).padding(end = if (touch) 28.dp else 48.dp, bottom = if (touch) 64.dp else 112.dp)) { closeTracks() }
                 }
             }
-        }
+        } }
     }
 }
 
-private enum class VodPanel { NONE, SUBTITLES, AUDIO }
-
-@Composable
-private fun TrackPanel(panel: VodPanel, controller: PlayerEngine, tracks: List<PlayerTrack>, firstFocus: FocusRequester,
-    modifier: Modifier = Modifier, onDone: () -> Unit) {
-    val trackType = if (panel == VodPanel.SUBTITLES) PlayerTrackType.TEXT else PlayerTrackType.AUDIO
-    val tracksOfType = tracks.filter { it.type == trackType }
-    val options = mutableListOf<Triple<String, Boolean, () -> Unit>>()
-    if (panel == VodPanel.SUBTITLES) {
-        val anySelected = tracksOfType.any { it.isSelected }
-        options += Triple(stringResource(R.string.player_subtitles_off), !anySelected) { controller.disableText(); onDone() }
-    }
-    tracksOfType.filter { it.isSupported }.forEach { track ->
-        options += Triple(vodTrackLabel(track.label, track.language, options.size), track.isSelected) { controller.selectTrack(track); onDone() }
-    }
-    JaskPlayerPanel(stringResource(if (panel == VodPanel.SUBTITLES) R.string.player_subtitles else R.string.player_audio), options,
-        stringResource(R.string.player_none_available), firstFocus, modifier)
-}
-
-private fun vodTrackLabel(label: String?, language: String?, index: Int): String {
-    if (!label.isNullOrBlank()) return label
-    if (!language.isNullOrBlank() && language != "und") {
-        return runCatching { java.util.Locale(language).displayLanguage.ifBlank { language } }.getOrDefault(language)
-    }
-    return "Track ${index + 1}"
-}
+private enum class VodPanel { NONE, TRACKS, INFO, COPIES }

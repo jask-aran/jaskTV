@@ -1,15 +1,27 @@
 package app.opentv.ui.channels
 
+import kotlinx.coroutines.launch
+import app.opentv.ui.jaskWhiteFill
+import app.opentv.ui.jaskCard
+import app.opentv.ui.jaskCardArt
+import app.opentv.ui.jaskTouchOnly
+import app.opentv.ui.jaskFocusLift
+import app.opentv.ui.jaskFocusEntry
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +55,7 @@ import app.opentv.ui.JaskSheet
 import app.opentv.ui.settings.JaskDim
 import app.opentv.ui.settings.JaskInk
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 private val Canvas = Color(0xFF141312)
 private val LiveRed = Color(0xFFE5484D)
@@ -69,7 +82,8 @@ internal fun SportEvent.colours(): Pair<Color, Color> = when {
  * logo (F1) on its colour. Sport has no posters; this is its poster.
  */
 @Composable
-internal fun MatchupArt(event: SportEvent, modifier: Modifier, logoSize: Dp, content: @Composable BoxScope.() -> Unit = {}) {
+// logoAt: where the logos sit. A card with its title over the art (the phone hero) lifts them clear of a two-line title.
+internal fun MatchupArt(event: SportEvent, modifier: Modifier, logoSize: Dp, logoAt: Alignment = Alignment.Center, content: @Composable BoxScope.() -> Unit = {}) {
     val (a, b) = event.colours()
     // A smooth blend between the two sides (a hard seam read as a rendering fault).
     Box(modifier.background(Brush.linearGradient(0f to a, 0.3f to a, 0.7f to b, 1f to b))) {
@@ -77,7 +91,7 @@ internal fun MatchupArt(event: SportEvent, modifier: Modifier, logoSize: Dp, con
         Box(Modifier.matchParentSize().background(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .45f)))))
         val sides = event.competitors.take(2)
         if (sides.size == 2 && sides.any { it.logo != null }) {
-            Row(Modifier.align(Alignment.Center).padding(bottom = logoSize * 0.35f), verticalAlignment = Alignment.CenterVertically,
+            Row(Modifier.align(logoAt).padding(bottom = logoSize * 0.35f), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(logoSize * 0.28f)) {
                 sides.forEach { side ->
                     Box(Modifier.size(logoSize), contentAlignment = Alignment.Center) {
@@ -88,73 +102,181 @@ internal fun MatchupArt(event: SportEvent, modifier: Modifier, logoSize: Dp, con
                 }
             }
         } else if (event.leagueLogo != null) {
-            AsyncImage(event.leagueLogo, event.league, Modifier.align(Alignment.Center).padding(bottom = logoSize * 0.35f).size(logoSize * 1.4f),
+            AsyncImage(event.leagueLogo, event.league, Modifier.align(logoAt).padding(bottom = logoSize * 0.35f).size(logoSize * 1.4f),
                 contentScale = ContentScale.Fit)
-        } else Text(event.league, Modifier.align(Alignment.Center).padding(bottom = logoSize * 0.35f), color = Color.White,
+        } else Text(event.league, Modifier.align(logoAt).padding(bottom = logoSize * 0.35f), color = Color.White,
+            // Sized to the art, not a fixed headline: "MotoGP" was cut to "Moto" in a list thumbnail.
+            fontSize = with(androidx.compose.ui.platform.LocalDensity.current) { (logoSize * 0.42f).toSp() }, maxLines = 1, softWrap = false,
             style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
         content()
     }
 }
 
-/** Swipeable hero of followed games, like the Movies home's featured hero. Advances every 10 seconds. */
-@OptIn(ExperimentalFoundationApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+/**
+ * Streams found to send only black frames (a provider's event channel before or after its event, a dead feed): not
+ * really live. Parked for 10 minutes, since an event channel can come on later; previews skip them and the games
+ * they belong to drop below games with a picture. Kept for this run of the app only.
+ */
+internal object NoPicture {
+    /** Long enough not to retry on every visit, short enough to catch an event slot coming on. */
+    private const val PARK_MILLIS = 10 * 60_000L
+    private val marks = androidx.compose.runtime.mutableStateMapOf<Long, Long>()
+    fun mark(channelId: Long) { marks[channelId] = System.currentTimeMillis() }
+    fun parked(channelId: Long): Boolean = marks[channelId]?.let { System.currentTimeMillis() - it < PARK_MILLIS } == true
+    /** A game whose live channels have all shown no picture. */
+    fun parked(card: EventCard): Boolean =
+        card.liveStreams().let { ids -> ids.isNotEmpty() && ids.all(::parked) }
+
+    /** Channels a preview has shown a real picture on (this run of the app). */
+    private val pictures = androidx.compose.runtime.mutableStateMapOf<Long, Long>()
+    fun confirm(channelId: Long) { pictures[channelId] = System.currentTimeMillis(); marks.remove(channelId) }
+    /** A preview (or a check) saw video on this channel in the last few minutes. */
+    fun seen(channelId: Long): Boolean = pictures[channelId]?.let { System.currentTimeMillis() - it < 3 * 60_000 } == true
+
+    /**
+     * Whether a live game can be counted as on ("2 live"). A real channel (the guide or a broadcaster says so) counts
+     * unless parked. A game only provider event slots carry counts once a preview has seen a picture on one: those
+     * slots are often black before and after their event, and counting them first made the badge flash.
+     */
+    fun showing(card: EventCard): Boolean {
+        if (parked(card)) return false
+        val now = System.currentTimeMillis()
+        // Any live way to watch counts, not just the first: a dead event slot listed first mustn't hide the guide's channels.
+        return card.options.filter { it.state == WatchState.LIVE }.ifEmpty { card.options }.any { o ->
+            !o.streamIds.all(::parked) && (o.evidence != app.opentv.livetv.find.WatchEvidence.NAMED_BY_PROVIDER ||
+                o.streamIds.any { pictures[it]?.let { t -> now - t < PARK_MILLIS } == true })
+        }
+    }
+}
+
+/** The way to watch a game to name and play first: the best by rankedOptions (known-good, not just shown dead). */
+internal fun EventCard.leadOption(): WatchOption? = rankedOptions().firstOrNull()
+
+/** Every live way to watch, in order: a game has "no picture" only when all of them have none, not just the first. */
+
+private fun EventCard.liveStreams(): List<Long> =
+    options.filter { it.state == WatchState.LIVE }.ifEmpty { options.take(1) }.flatMap { it.streamIds }.distinct()
+
+/**
+ * The top of Live TV: one large card for the selected game, with its live picture, and beside it (below on a phone)
+ * a short list of the other games. Focusing a game in the list selects it, so there is only ever one preview stream,
+ * and nothing scrolls or cycles. The large card's Watch plays the game; on touch, tapping its art lists where to watch.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun LiveHero(cards: List<EventCard>, previewEnabled: Boolean, onWatch: (EventCard) -> Unit, onOpen: (EventCard) -> Unit) {
-    val pager = rememberPagerState { cards.size }
-    val settled = cards.getOrNull(pager.settledPage)
-    app.opentv.ui.JaskAmbientFrom(settled?.event?.let { it.competitors.firstNotNullOfOrNull { c -> c.logo } ?: it.leagueLogo })
-    LaunchedEffect(pager.settledPage, cards.size) {
-        delay(10_000)
-        if (!pager.isScrollInProgress && cards.size > 1)
-            pager.animateScrollToPage((pager.settledPage + 1) % cards.size, animationSpec = androidx.compose.animation.core.tween(900))
+    // Games with a picture first: a parked one (see NoPicture) drops below them. The order is set when the games
+    // change, not each time a preview parks one, so the list doesn't reshuffle under you while previews are tried.
+    val order = remember(cards.map { it.event.id }) { cards.sortedBy { if (NoPicture.parked(it)) 1 else 0 }.map { it.event.id } }
+    val shown = order.mapNotNull { id -> cards.firstOrNull { it.event.id == id } }.take(4)
+    var selectedId by remember { mutableStateOf(shown.firstOrNull()?.event?.id) }
+    val selected = shown.firstOrNull { it.event.id == selectedId } ?: shown.firstOrNull() ?: return
+    // The preview follows the selection a moment after it settles, so moving through the list doesn't open a stream per game.
+    var previewId by remember { mutableStateOf(selected.event.id) }
+    LaunchedEffect(selected.event.id) { delay(500); previewId = selected.event.id }
+    // What the preview may play: an event slot only while its name, re-read from the provider, still names this game
+    // (slots are renamed as events end). Checked once per game per 10 minutes.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val finder = remember(context) { app.opentv.livetv.find.LiveFinder(context) }
+    val verified = remember { androidx.compose.runtime.mutableStateMapOf<String, Pair<Long, List<Long>>>() }
+    val previewWay = remember { androidx.compose.runtime.mutableStateMapOf<String, LiveFallback.Way>() }
+    // How many of the game's ways have shown no picture: when the preview finds one dead, it moves to the next.
+    val deadWays = shown.firstOrNull { it.event.id == previewId }?.options?.count { o -> o.streamIds.isNotEmpty() && o.streamIds.all(NoPicture::parked) } ?: 0
+    LaunchedEffect(previewId, previewEnabled, deadWays) {
+        if (!previewEnabled) return@LaunchedEffect
+        val card = shown.firstOrNull { it.event.id == previewId } ?: return@LaunchedEffect
+        val at = System.currentTimeMillis()
+        if (verified[previewId]?.let { at - it.first < 10 * 60_000 && !it.second.all(NoPicture::parked) } == true) return@LaunchedEffect
+        val live = rankWays(card.event.sport, card.options.filter { it.state == WatchState.LIVE }.ifEmpty { card.options })
+        val option = live.firstOrNull { o -> !o.streamIds.all(NoPicture::parked) } ?: live.firstOrNull() ?: return@LaunchedEffect
+        previewWay[card.event.id] = LiveFallback.Way(card.event.sport, option.title)
+        val ids = if (option.evidence == app.opentv.livetv.find.WatchEvidence.NAMED_BY_PROVIDER)
+            runCatching { finder.stillShowing(option.streamIds, card.event) }.getOrDefault(emptyList()) else option.streamIds
+        verified[card.event.id] = at to ids
     }
-    val wash = app.opentv.ui.LocalJaskAmbient.current?.wash ?: Canvas
-    val tail = with(androidx.compose.ui.platform.LocalDensity.current) { 200.dp.toPx() }
-    // As on the Movies hero: below its edge the hero's colour fades into the page over [tail], under the rows.
-    // A phone's hero is nearly square; on a landscape screen it leaves room for What's on below the fold's edge.
-    val heroSize = if (androidx.compose.ui.platform.LocalConfiguration.current.let { it.screenWidthDp > it.screenHeightDp })
-        Modifier.fillMaxWidth().height((androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.72f).dp)
-        else Modifier.fillMaxWidth().aspectRatio(0.92f)
-    Box(heroSize.drawBehind {
-        drawRect(Brush.verticalGradient(listOf(wash, wash.copy(alpha = 0f)), startY = size.height - 1f, endY = size.height + tail),
-            topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - 1f), size = androidx.compose.ui.geometry.Size(size.width, tail))
-    }) {
-        HorizontalPager(pager, Modifier.fillMaxSize(), key = { cards[it].event.id }) { page ->
-            val card = cards[page]
-            val event = card.event
-            val live = EventMatcher.isLive(event, System.currentTimeMillis())
-            MatchupArt(event, Modifier.fillMaxSize().clickable { onOpen(card) }, logoSize = 112.dp) {
-                // Live games show the actual broadcast, muted, once it is settled on this page.
-                if (live && previewEnabled && page == pager.settledPage) LivePreview((card.options.firstOrNull { it.state == WatchState.LIVE } ?: card.options.first()).streamIds,
-                    enabled = true, modifier = Modifier.fillMaxSize())
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = .5f), 0.22f to Color.Transparent,
-                    0.55f to Color.Transparent, 0.82f to wash.copy(alpha = .8f), 1f to wash)))
-                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 22.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(heroTitle(event), color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(10.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    app.opentv.ui.JaskAmbientFrom(selected.event.let { it.competitors.firstNotNullOfOrNull { c -> c.logo } ?: it.leagueLogo })
+    val wide = androidx.compose.ui.platform.LocalConfiguration.current.let { it.screenWidthDp > it.screenHeightDp }
+    val top = app.opentv.ui.LocalJaskContentPadding.current.calculateTopPadding()
+    val big: @Composable (Modifier) -> Unit = { modifier ->
+        val event = selected.event
+        val parked = NoPicture.parked(selected)
+        val live = EventMatcher.isLive(event, System.currentTimeMillis()) && !parked
+        MatchupArt(event, modifier.clip(RoundedCornerShape(16.dp)).jaskTouchOnly().clickable { onOpen(selected) }, logoSize = if (wide) 84.dp else 56.dp,
+            logoAt = if (wide) Alignment.Center else androidx.compose.ui.BiasAlignment(0f, -0.55f)) {
+            if (live && previewEnabled && previewId == event.id) LivePreview(verified[event.id]?.second.orEmpty(), enabled = true, modifier = Modifier.fillMaxSize(), way = previewWay[event.id])
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = .78f))))
+            Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Text(heroTitle(event), color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(8.dp))
+                    // One line: the status chip, then the league and channel as plain facts.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         if (live) Chip(LiveRed.copy(alpha = .9f)) { Text("LIVE", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold) }
-                        else Chip { Text(when { event.finished -> "Ended"; else -> whenLabel(event.startUtc) }, color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold) }
-                        Chip { Text(leagueLabel(event), color = Color(0xFFEDEDED), style = MaterialTheme.typography.labelMedium, maxLines = 1) }
-                        card.options.firstOrNull()?.let { Chip { Text(it.title, color = Color(0xFFEDEDED), style = MaterialTheme.typography.labelMedium, maxLines = 1) } }
-                        if (card.options.size > 1) Chip { Text("+${card.options.size - 1} more", color = Color(0xFFD6D6D6), style = MaterialTheme.typography.labelMedium) }
+                        else if (parked) Chip { Text("No picture yet", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold) }
+                        else Chip { Text(if (event.finished) "Ended" else whenLabel(event.startUtc), color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold) }
+                        val facts = listOfNotNull(leagueLabel(event), selected.leadOption()?.title?.let { liveName(it) }).joinToString(" · ")
+                        Text(facts, color = Color(0xFFEDEDED), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = 10.dp))
                     }
-                    Spacer(Modifier.height(14.dp))
-                    Row(Modifier.height(46.dp).clip(RoundedCornerShape(50)).background(Color.White).clickable { onWatch(card) }.padding(horizontal = 24.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(22.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (live) "Watch live" else "Watch", color = Color.Black, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Row(Modifier.jaskFocusLift(key = "live:watch").jaskFocusEntry().height(44.dp).clip(RoundedCornerShape(50)).jaskWhiteFill(RoundedCornerShape(50))
+                    .clickable { onWatch(selected) }.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (live) "Watch live" else "Watch", color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
-        if (cards.size > 1) Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            repeat(cards.size) { i ->
-                Box(Modifier.size(if (i == pager.currentPage) 7.dp else 5.dp).clip(CircleShape)
-                    .background(if (i == pager.currentPage) Color.White else Color.White.copy(alpha = .4f)))
+    }
+    // Entering the list (Right from the large card) lands on the game it shows, not the nearest row.
+    val entry = remember { androidx.compose.ui.focus.FocusRequester() }
+    val list: @Composable (Modifier, Boolean) -> Unit = { modifier, fill ->
+        @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+        Column(modifier.focusProperties { enter = { entry } }.focusGroup(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            shown.forEach { card ->
+                val isSelected = card.event.id == selected.event.id
+                // Wide: the rows share the large card's height, so all of them fit without scrolling.
+                LiveListRow(card, Modifier.then(if (fill) Modifier.weight(1f) else Modifier.height(58.dp))
+                    .then(if (isSelected) Modifier.focusRequester(entry) else Modifier),
+                    selected = isSelected, onFocus = { selectedId = card.event.id }) {
+                    if (card.event.id == selected.event.id) onWatch(card) else { selectedId = card.event.id; if (!wide) onOpen(card) }
+                }
+            }
+        }
+    }
+    if (wide) Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = top + 4.dp, bottom = 8.dp)
+        .height((androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.42f).dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        big(Modifier.weight(1.6f).fillMaxHeight())
+        if (shown.size > 1) list(Modifier.weight(1f).fillMaxHeight(), true)
+    } else Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = top + 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        big(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+        if (shown.size > 1) list(Modifier.fillMaxWidth(), false)
+    }
+}
+
+/** One game in the Live TV top's list: a small matchup, its title and whether it's live. Focus selects it. */
+@Composable
+private fun LiveListRow(card: EventCard, modifier: Modifier, selected: Boolean, onFocus: () -> Unit, onClick: () -> Unit) {
+    val event = card.event
+    val parked = NoPicture.parked(card)
+    val live = EventMatcher.isLive(event, System.currentTimeMillis()) && !parked
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val focused by source.collectIsFocusedAsState()
+    LaunchedEffect(focused) { if (focused) onFocus() }
+    // The usual ring on the focused row; a faint fill on the one shown in the large card.
+    Row(modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+        .background(Color.White.copy(alpha = if (selected) .08f else 0f))
+        .clickable(source, app.opentv.ui.JaskIndication, onClick = onClick).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        MatchupArt(event, Modifier.fillMaxHeight().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)), logoSize = 18.dp)
+        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+            Text(heroTitle(event), color = Color(0xFFF6F3EF), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (live) SmallChip(LiveRed) { Text("LIVE", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
+                Text(if (live) leagueLabel(event) else if (parked) "No picture yet" else if (event.finished) "Ended" else whenLabel(event.startUtc), color = JaskDim,
+                    style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -165,14 +287,15 @@ internal fun LiveHero(cards: List<EventCard>, previewEnabled: Boolean, onWatch: 
 internal fun EventTile(card: EventCard, modifier: Modifier, onClick: () -> Unit) {
     val event = card.event
     val live = EventMatcher.isLive(event, System.currentTimeMillis())
-    Column(modifier.clickable(onClick = onClick)) {
-        MatchupArt(event, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), logoSize = 46.dp) {
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Column(modifier.jaskCard(source, key = "event:${event.id}", onClick = onClick)) {
+        MatchupArt(event, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).jaskCardArt(source), logoSize = 46.dp) {
             Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = .75f))))
             Row(Modifier.align(Alignment.TopStart).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (live) SmallChip(LiveRed) { Text("LIVE", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
-                else if (event.finished) SmallChip { Text("Replay", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                else if (event.finished) SmallChip { Text(if (card.options.any { it.state == WatchState.REPLAY }) "Replay" else "Ended", color = Color.White, style = MaterialTheme.typography.labelSmall) }
             }
-            Text(card.options.firstOrNull()?.title.orEmpty() + if (card.options.size > 1) "  +${card.options.size - 1}" else "",
+            Text(card.leadOption()?.title?.let { liveName(it) }.orEmpty() + if (card.options.size > 1) "  +${card.options.size - 1}" else "",
                 Modifier.align(Alignment.BottomStart).padding(8.dp), color = Color(0xFFE6E6E6), style = MaterialTheme.typography.labelSmall,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -198,14 +321,35 @@ internal fun ChannelTile(channel: FindChannel, modifier: Modifier, showRegion: B
             delay(60_000)
         }
     }
-    Column(modifier.clickable(onClick = onClick)) {
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    // Hold OK (press and hold on a phone): add the channel to My TV, its best copy, as the search results' Add does.
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val addToMyTv: () -> Unit = {
+        scope.launch {
+            val graph = app.opentv.core.ServiceLocator.get(context)
+            val best = graph.database.channels().byIds(channel.streamIds.take(1)).firstOrNull()
+            val message = if (best == null) "Couldn't add ${channel.name}" else runCatching {
+                app.opentv.livetv.MyTvRepository(context).add(best); "Added ${channel.name} to My TV"
+            }.getOrElse { "Couldn't add ${channel.name}" }
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    Column(modifier.jaskCard(source, key = "channel:${channel.key}", onLongClick = addToMyTv, onClick = onClick)) {
         val art = programme?.iconUrl?.takeIf(String::isNotBlank)
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(10.dp))) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(10.dp)).jaskCardArt(source)) {
+            // The big logo plate until the programme's picture has actually loaded: a slow or broken picture otherwise
+            // left a dark box with a small badge, next to tiles showing a full logo.
+            var artShown by remember(art) { mutableStateOf(false) }
+            val label = liveName(channel.name.substringBefore(" · "), channel.key.startsWith("slot:"))
+            if (!artShown) LogoPlate(channel.logoUrl, label, Modifier.matchParentSize())
             if (art != null) {
-                AsyncImage(art, null, Modifier.fillMaxSize().background(Color(0xFF26231F)), contentScale = ContentScale.Crop)
-                Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = .7f))))
-                LogoPlate(channel.logoUrl, channel.name.substringBefore(" · "), Modifier.align(Alignment.TopStart).padding(6.dp).size(46.dp, 29.dp), corner = 6.dp)
-            } else LogoPlate(channel.logoUrl, channel.name.substringBefore(" · "), Modifier.matchParentSize())
+                AsyncImage(art, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
+                    onSuccess = { artShown = true }, onError = { artShown = false })
+                if (artShown) {
+                    Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = .7f))))
+                    LogoPlate(channel.logoUrl, label, Modifier.align(Alignment.TopStart).padding(6.dp).size(46.dp, 29.dp), corner = 6.dp)
+                }
+            }
             programme?.let { p ->
                 val now = System.currentTimeMillis()
                 val done = ((now - p.startUtcMillis).toFloat() / (p.endUtcMillis - p.startUtcMillis).coerceAtLeast(1)).coerceIn(0f, 1f)
@@ -214,7 +358,7 @@ internal fun ChannelTile(channel: FindChannel, modifier: Modifier, showRegion: B
                 }
             }
         }
-        Text(channel.name, Modifier.padding(top = 5.dp), color = Color(0xFFF6F3EF), style = MaterialTheme.typography.labelLarge,
+        Text(liveName(channel.name, channel.key.startsWith("slot:")), Modifier.padding(top = 5.dp), color = Color(0xFFF6F3EF), style = MaterialTheme.typography.labelLarge,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
         // What's on beats metadata; otherwise the region when several are chosen. Service bundles ("AT&T") are never shown.
         val detail = programme?.title ?: LiveClassifier.regionLabel(channel.region).takeIf { showRegion && channel.region.isNotEmpty() }
@@ -263,26 +407,42 @@ internal fun LogoPlate(url: String?, name: String, modifier: Modifier, corner: D
 @Composable
 internal fun WatchSheet(card: EventCard, regions: Set<String>, onDismiss: () -> Unit, onPlay: (WatchOption) -> Unit) {
     JaskSheet(onDismiss) {
+        // The sheet's own scroll (JaskSheet caps it at 85% of the screen): a game on many channels lists them all, and a
+        // swipe on the sheet moves the sheet, not the page behind it.
+        Column(Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState())) {
         MatchupArt(card.event, Modifier.padding(horizontal = 16.dp).fillMaxWidth().aspectRatio(2.2f).clip(RoundedCornerShape(14.dp)), logoSize = 56.dp)
         Text(heroTitle(card.event), Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp), color = Color.White,
             style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(listOf(if (EventMatcher.isLive(card.event, System.currentTimeMillis())) "Live now" else whenLabel(card.event.startUtc), leagueLabel(card.event)).joinToString(" · "),
             Modifier.padding(horizontal = 20.dp), color = JaskDim, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(8.dp))
-        card.options.forEach { option -> WatchRow(option, regions) { onDismiss(); onPlay(option) } }
+        // Ways known to have no picture right now (NoPicture) go last, so the top row is one that plays.
+        val liveNow = EventMatcher.isLive(card.event, System.currentTimeMillis())
+        // Order and whether to show stills are settled when the sheet opens, so rows don't move while stills arrive.
+        val ordered = remember(card.event.id) { card.rankedOptions() }
+        val withFrames = remember(card.event.id) { framesWorthShowing(card, liveNow) }
+        val frames = if (withFrames) rememberSheetFrames(card, ordered.filter { o -> o.streamIds.isNotEmpty() && !o.streamIds.all(NoPicture::parked) }) else null
+        ordered.forEach { option ->
+            WatchRow(option, regions, liveNow, frames) { LiveFallback.picked = frames != null; onDismiss(); onPlay(option) }
+        }
         Spacer(Modifier.height(8.dp))
+        }
     }
 }
 
 @Composable
-private fun WatchRow(option: WatchOption, regions: Set<String>, onClick: () -> Unit) {
+// liveNow: the game is on by the clock now. Cards saved before kick-off still call their ways "upcoming" until rebuilt.
+private fun WatchRow(option: WatchOption, regions: Set<String>, liveNow: Boolean, frames: SheetFrames? = null, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(36.dp).clip(CircleShape).background(if (option.state == WatchState.LIVE) LiveRed else Color.White.copy(alpha = .12f)),
+        // A neutral play button like everywhere else; "Live" in the line beside it (and the red LIVE chip) says it's live.
+        if (frames != null) FrameSlot(frames, option.title, Modifier.size(96.dp, 54.dp))
+        else Box(Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = if (option.state == WatchState.LIVE) .2f else .12f)),
             contentAlignment = Alignment.Center) { Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(option.title, color = JaskInk, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val state = when (option.state) { WatchState.LIVE -> "Live"; WatchState.REPLAY -> "Replay"; WatchState.UPCOMING -> null }
-            Text(listOfNotNull(state, LiveClassifier.regionLabel(option.region).takeIf { option.region !in regions }, option.evidence.label).joinToString(" · "),
+            Text(liveName(option.title), color = JaskInk, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val dead = option.streamIds.isNotEmpty() && option.streamIds.all(NoPicture::parked)
+            val state = if (dead) "No picture right now" else when (option.state) { WatchState.LIVE -> "Live"; WatchState.REPLAY -> "Replay"; WatchState.UPCOMING -> if (liveNow) "Live" else null }
+            Text(listOfNotNull(state, LiveClassifier.regionLabel(option.region).takeIf { option.region !in regions }, option.evidence.label.takeUnless { it.equals(option.title, ignoreCase = true) }).joinToString(" · "),
                 color = JaskDim, style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -310,17 +470,8 @@ internal fun heroTitle(event: SportEvent): String {
 private fun leagueLabel(event: SportEvent): String =
     app.opentv.livetv.find.Sports.byKey(event.sport)?.label?.takeIf { event.sport != "cricket" } ?: event.league
 
-internal fun whenLabel(utc: Long): String {
-    val zone = java.time.ZoneId.systemDefault()
-    val at = java.time.Instant.ofEpochMilli(utc).atZone(zone)
-    val today = java.time.LocalDate.now(zone)
-    val day = when (at.toLocalDate()) {
-        today -> "Today"
-        today.plusDays(1) -> "Tomorrow"
-        else -> at.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM"))
-    }
-    return day + " " + at.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"))
-}
+/** When a game starts, in Live TV's one format (see [liveWhen]): "9:00 am", "Tomorrow 9:00 am", "Fri 9:00 am". */
+internal fun whenLabel(utc: Long): String = liveWhen(utc)
 
 
 /**
@@ -328,28 +479,39 @@ internal fun whenLabel(utc: Long): String {
  * logos fanned in the corner. Opens the genre's page.
  */
 @Composable
-internal fun GenreCard(label: String, count: Int, channels: List<FindChannel>, modifier: Modifier, onClick: () -> Unit) {
+internal fun GenreCard(label: String, count: Int, channels: List<FindChannel>, modifier: Modifier,
+    /** Shown on a plate when none of the channels has a logo (24/7 shows). */
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null, onClick: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val logos = remember(channels) { channels.mapNotNull { c -> c.logoUrl?.let { c to it } }.take(3) }
     var colours by remember(logos) { mutableStateOf<List<Color>?>(null) }
     LaunchedEffect(logos) {
+        // The logos' hue as a hint over neutral glass, not a coloured card: low chroma, and blues and purples (which
+        // read as an accent) almost grey.
         colours = logos.mapNotNull { (_, url) -> app.opentv.ui.artworkAccent(context, url) }
-            .map { a -> app.opentv.ui.JaskColor.toColor(app.opentv.ui.JaskColor.Lch(0.36f, (a.c * 0.8f).coerceAtMost(0.14f), a.h)) }
+            .map { a -> app.opentv.ui.JaskColor.toColor(app.opentv.ui.JaskColor.Lch(0.33f,
+                (a.c * 0.35f).coerceAtMost(if (a.h in 225f..335f) 0.018f else 0.04f), a.h)) }
             .takeIf { it.isNotEmpty() }
     }
     // Always three stops, animated, so the card eases from neutral into its channels' colours instead of snapping.
     val goal = colours.orEmpty().let { c -> if (c.isEmpty()) listOf(Color(0xFF34302C), Color(0xFF2C2925), Color(0xFF26231F))
         else List(3) { i -> c.getOrElse(i) { lerp(c.last(), Color.Black, .3f * i) } } }
     val fill = goal.mapIndexed { i, c -> androidx.compose.animation.animateColorAsState(c, androidx.compose.animation.core.tween(500), label = "genre$i").value }
-    Box(modifier.aspectRatio(1.45f).clip(RoundedCornerShape(14.dp))
-        .background(Brush.linearGradient(fill + lerp(fill.last(), Color.Black, .4f)))
-        .clickable(onClick = onClick)) {
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Box(modifier.jaskCard(source, key = "genre:$label", onClick = onClick).aspectRatio(1.45f).clip(RoundedCornerShape(14.dp))
+        .background(Brush.linearGradient(fill + lerp(fill.last(), Color.Black, .4f))).jaskCardArt(source, 14.dp)) {
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.35f to Color.Transparent, 1f to Color.Black.copy(alpha = .45f))))
+        // No logos: the genre's icon on a plate where the logos would sit.
+        if (logos.isEmpty()) Box(Modifier.align(Alignment.TopEnd).padding(top = 12.dp, end = 12.dp).size(66.dp, 42.dp)
+            .clip(RoundedCornerShape(7.dp)).background(Color.White.copy(alpha = .1f))
+            .border(1.dp, Color.White.copy(alpha = .08f), RoundedCornerShape(7.dp)), contentAlignment = Alignment.Center) {
+            Icon(icon ?: Icons.Filled.LiveTv, null, tint = Color.White.copy(alpha = .85f), modifier = Modifier.size(24.dp))
+        }
         // Fanned logos, top-right, each on its own plate.
         logos.reversed().forEachIndexed { i, (channel, url) ->
             val n = logos.size - 1 - i
             // Spread like cards in a hand: the best-known in front on the right, the others stepping left and up.
-            LogoPlate(url, channel.name, Modifier.align(Alignment.TopEnd).padding(top = 12.dp + (n * 10).dp, end = 10.dp + (n * 40).dp)
+            LogoPlate(url, liveName(channel.name), Modifier.align(Alignment.TopEnd).padding(top = 12.dp + (n * 10).dp, end = 10.dp + (n * 40).dp)
                 .size(66.dp, 42.dp).graphicsLayerRotation(-4f + n * -5f), corner = 7.dp)
         }
         Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
@@ -386,7 +548,8 @@ internal fun GenrePage(label: String, channels: List<FindChannel>, regionOrder: 
                     }
                 }
             }
-            (regionOrder.filter { it in byRegion } + byRegion.keys.filterNot { it in regionOrder }).distinct().forEach { region ->
+            val orderedRegions = (regionOrder.filter { it in byRegion } + byRegion.keys.filterNot { it in regionOrder }).distinct()
+            orderedRegions.forEach { region ->
                 if (byRegion.size > 1) item(key = "r:$region") {
                     Text(LiveClassifier.regionLabel(region), Modifier.padding(start = 16.dp, top = 16.dp, bottom = 2.dp), color = Color(0xFFF4F4F4),
                         style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -394,7 +557,11 @@ internal fun GenrePage(label: String, channels: List<FindChannel>, regionOrder: 
                 byRegion.getValue(region).chunked(columns).forEachIndexed { row, chunk ->
                     item(key = "t:$region:$row") {
                         Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            chunk.forEach { ChannelTile(it, Modifier.weight(1f)) { onPlay(it) } }
+                            chunk.forEachIndexed { i, c ->
+                                // The d-pad starts on the first channel, not the back pill above it.
+                                ChannelTile(c, Modifier.weight(1f).then(if (row == 0 && i == 0 && region == orderedRegions.first())
+                                    Modifier.jaskFocusEntry() else Modifier)) { onPlay(c) }
+                            }
                             repeat(columns - chunk.size) { Spacer(Modifier.weight(1f)) }
                         }
                     }
@@ -410,7 +577,7 @@ internal fun GenrePage(label: String, channels: List<FindChannel>, regionOrder: 
  * before starting real playback. Honours Settings → Live TV → preview video and sound.
  */
 @Composable
-internal fun LivePreview(streamIds: List<Long>, enabled: Boolean, modifier: Modifier) {
+internal fun LivePreview(streamIds: List<Long>, enabled: Boolean, modifier: Modifier, way: LiveFallback.Way? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val graph = remember(context) { app.opentv.core.ServiceLocator.get(context) }
     val allowed by graph.settings.guidePreviewVideo.collectAsState()
@@ -428,20 +595,90 @@ internal fun LivePreview(streamIds: List<Long>, enabled: Boolean, modifier: Modi
         graph.playerEngines.create(scope, app.opentv.player.PlayerEngineConfig(subtitlesEnabled = false, preview = true))
     }
     DisposableEffect(engine) { onDispose { engine.stop(); engine.release() } }
+    // The channel this preview is trying, so a black picture parks the right one (see NoPicture).
+    val tried = remember(engine) { arrayOfNulls<Long>(1) }
+    val triedChannel = remember(engine) { arrayOfNulls<app.opentv.data.model.Channel>(1) }
+    // What the preview finds goes to the record too (StreamHealth): the channel's, and the way's it belongs to.
+    fun learned(picture: Boolean, weight: Float = 1f) {
+        val c = triedChannel[0] ?: return
+        val h = app.opentv.livetv.StreamHealth
+        if (picture) { h.good(c); way?.let { h.wayGood(it.sport, it.title) } }
+        else { h.bad(c, weight); way?.let { h.wayBad(it.sport, it.title, weight) } }
+    }
     LaunchedEffect(engine, streamIds) {
-        delay(1_200) // only for a hero that stays on screen
-        val channel = graph.database.channels().byIds(streamIds.take(3)).let { found -> streamIds.firstNotNullOfOrNull { id -> found.firstOrNull { it.id == id } } }
-            ?: return@LaunchedEffect
+        delay(300) // only for a hero that stays on screen (it's already settled on this page)
+        // The lowest-quality copy of the broadcast: a muted preview in a corner of the screen doesn't need 4K, and a
+        // smaller stream reaches its first frame sooner. Same order as listed otherwise.
+        val found = graph.database.channels().byIds(streamIds.take(12))
+        val candidates = streamIds.filterNot(NoPicture::parked).mapNotNull { id -> found.firstOrNull { it.id == id } }
+        // Known-poor copies only if nothing else is left; a known-good one first, else the lightest.
+        val usable = candidates.filterNot { app.opentv.livetv.StreamHealth.of(it).poor }.ifEmpty { candidates }
+        val channel = usable.firstOrNull { app.opentv.livetv.StreamHealth.of(it).trusted } ?: usable.minByOrNull { previewQuality(it.name) } ?: return@LaunchedEffect
+        tried[0] = channel.id
+        triedChannel[0] = channel
         val source = graph.sourceRepository.byId(channel.sourceId)
+        android.util.Log.i("jaskPreview", "channel '${channel.name}' stream ${channel.streamId} (of ${streamIds.size} candidates)")
         val url = runCatching { graph.catalogRepository.resolvePlaybackUrl(channel, source) }.getOrNull() ?: return@LaunchedEffect
+        // A download holds the provider's connection (one-connection accounts): no preview from it meanwhile.
+        if (!app.opentv.data.repo.DownloadEngine.mayConnect(url)) return@LaunchedEffect
         engine.setVolume(if (sound) 1f else 0f)
-        engine.play(app.opentv.player.PlaybackRequest(url, channel.name, source?.userAgent ?: "OpenTV/0.1 (Android)", isLive = true), debounce = false)
+        val agent = source?.userAgent ?: "OpenTV/0.1 (Android)"
+        engine.play(app.opentv.player.PlaybackRequest(url, channel.name, agent, isLive = true), debounce = false)
+        // The channel's usual stream first (measured on the emulator: HLS 1.6 s on a channel whose TS form took 26 s,
+        // TS 1.8 s on another); if it isn't playing within 5 seconds, or fails, try the other form.
+        val other = runCatching { graph.catalogRepository.previewUrl(channel, source) }.getOrNull()
+        val started = kotlinx.coroutines.withTimeoutOrNull(5_000) {
+            engine.state.first { it is app.opentv.player.PlaybackState.Error || it is app.opentv.player.PlaybackState.Playing }
+        }
+        if (other != null && other != url && started !is app.opentv.player.PlaybackState.Playing) {
+            android.util.Log.i("jaskPreview", "usual stream ${if (started == null) "slow" else "failed"}; trying TS")
+            engine.play(app.opentv.player.PlaybackRequest(other, channel.name, agent, isLive = true), debounce = false)
+        }
     }
     val state by engine.state.collectAsState()
     LaunchedEffect(state) { android.util.Log.i("jaskPreview", "streams=${streamIds.take(3)} state=${state::class.simpleName}") }
     // Shown only once a frame has actually rendered, then faded in.
     var rendered by remember(engine) { mutableStateOf(false) }
-    val alpha by androidx.compose.animation.core.animateFloatAsState(if (rendered) 1f else 0f, androidx.compose.animation.core.tween(700), label = "preview")
+    // Shown only once a frame has a picture in it. A provider's event slot with nothing on, or a dead feed, sends a
+    // frame that is one flat colour (pure video black here: every pixel the same, frame after frame). A real picture,
+    // however dark, always varies across the frame. Two flat frames half a second apart: the channel is parked as
+    // not really live (see NoPicture) and the connection freed. Checked on a 64x36 copy of the frame.
+    var bright by remember(engine) { mutableStateOf(false) }
+    val texture = remember(engine) { arrayOfNulls<android.view.TextureView>(1) }
+    // No frame at all within 12 seconds (a slot that's "on" but sends nothing): the same as a flat one.
+    LaunchedEffect(engine) {
+        // Playing counts as alive: the first-frame callback can lag (or not fire while the card is covered).
+        val playing = kotlinx.coroutines.withTimeoutOrNull(12_000) { engine.state.first { it is app.opentv.player.PlaybackState.Playing } }
+        if (playing == null && !rendered) {
+            android.util.Log.i("jaskPreview", "no frame in 12 s; channel parked as not really live")
+            engine.stop()
+            tried[0]?.let(NoPicture::mark)
+            learned(false, app.opentv.livetv.StreamHealth.NO_FRAME)
+        }
+    }
+    LaunchedEffect(rendered) {
+        if (!rendered) return@LaunchedEffect
+        var flat = 0
+        repeat(16) {
+            delay(500)
+            val frame = texture[0]?.takeIf { it.isAvailable }?.getBitmap(64, 36) ?: return@repeat
+            val px = IntArray(64 * 36).also { frame.getPixels(it, 0, 64, 0, 0, 64, 36) }
+            frame.recycle()
+            val luma = DoubleArray(px.size) { i -> val c = px[i]; 0.299 * (c shr 16 and 255) + 0.587 * (c shr 8 and 255) + 0.114 * (c and 255) }
+            val mean = luma.average()
+            val spread = kotlin.math.sqrt(luma.sumOf { (it - mean) * (it - mean) } / luma.size)
+            if (spread >= 2.0) { bright = true; tried[0]?.let(NoPicture::confirm); learned(true); return@LaunchedEffect }
+            // Three seconds of flat frames, before any real picture: a fade or a dark scene is shorter than that.
+            if (++flat >= 6) {
+                android.util.Log.i("jaskPreview", "flat picture (mean ${mean.toInt()}, spread ${"%.1f".format(spread)}); channel parked as not really live")
+                engine.stop()
+                tried[0]?.let(NoPicture::mark)
+                learned(false, app.opentv.livetv.StreamHealth.FLAT)
+                return@LaunchedEffect
+            }
+        }
+    }
+    val alpha by androidx.compose.animation.core.animateFloatAsState(if (rendered && bright) 1f else 0f, androidx.compose.animation.core.tween(700), label = "preview")
     val exo = (engine as? app.opentv.player.PlayerController)?.player ?: return
     DisposableEffect(exo) {
         val listener = object : androidx.media3.common.Player.Listener {
@@ -466,10 +703,27 @@ internal fun LivePreview(streamIds: List<Long>, enabled: Boolean, modifier: Modi
             val boxRatio = maxWidth / maxHeight
             val w = if (ratio > boxRatio) maxHeight * ratio else maxWidth
             val h = if (ratio > boxRatio) maxHeight else maxWidth / ratio
-            androidx.compose.ui.viewinterop.AndroidView(
-                factory = { ctx -> android.view.TextureView(ctx).also { exo.setVideoTextureView(it) } },
-                modifier = Modifier.align(Alignment.Center).requiredSize(w, h),
-            )
+            // A view per player: the preview's player changes (another channel after a dead one), and a view bound to the
+            // old player left the new one drawing nowhere.
+            androidx.compose.runtime.key(exo) {
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { ctx -> android.view.TextureView(ctx).also { texture[0] = it; exo.setVideoTextureView(it) } },
+                    modifier = Modifier.align(Alignment.Center).requiredSize(w, h),
+                )
+            }
         }
+    }
+}
+
+/** A channel's quality from its name tags, lowest first (SD, untagged, HD, FHD, 4K, 8K), for picking a preview copy. */
+private fun previewQuality(name: String): Int {
+    val n = name.uppercase()
+    return when {
+        "8K" in n -> 6
+        "4K" in n || "UHD" in n || "2160" in n -> 5
+        "FHD" in n || "1080" in n -> 4
+        Regex("\\bHD\\b|720").containsMatchIn(n) -> 3
+        Regex("\\bSD\\b|576|480").containsMatchIn(n) -> 1
+        else -> 2
     }
 }
